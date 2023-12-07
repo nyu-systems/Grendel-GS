@@ -50,14 +50,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    # DEBUG: print shape of gaussians to know how much data to communicate. 
+    # print("xyz shape: ", gaussians._xyz.shape)
+    # print("f_dc shape: ", gaussians._features_dc.shape)
+    # print("f_rest shape: ", gaussians._features_rest.shape)
+    # print("opacity shape: ", gaussians._opacity.shape)
+    # print("scaling shape: ", gaussians._scaling.shape)
+    # print("rotation shape: ", gaussians._rotation.shape)
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         # DEBUG: early stop
-        if iteration == 50:
+        if iteration == 502:
             break
+        os.environ['ITERATION'] = str(iteration)
 
         if network_gui.conn == None:
             network_gui.try_connect()
