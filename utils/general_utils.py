@@ -14,6 +14,20 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
+import os
+import torch.distributed as dist
+
+LOCAL_RANK = 0
+WORLD_SIZE = 1
+
+def init_distributed():
+    global LOCAL_RANK, WORLD_SIZE
+    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+    if WORLD_SIZE > 1:
+        dist.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
+        assert torch.cuda.is_available(), "Distributed mode requires CUDA"
+        assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -110,6 +124,7 @@ def build_scaling_rotation(s, r):
     return L
 
 def safe_state(silent):
+    from utils.general_utils import LOCAL_RANK
     old_f = sys.stdout
     class F:
         def __init__(self, silent):
@@ -130,4 +145,4 @@ def safe_state(silent):
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
-    torch.cuda.set_device(torch.device("cuda:0"))
+    torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))

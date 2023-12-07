@@ -11,12 +11,15 @@
 
 import os
 import torch
+import numpy as np
+import json
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, init_distributed
+import utils.general_utils as utils
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -27,8 +30,11 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+import torch.distributed as dist
+from diff_gaussian_rasterization import get_local_pixel_rect
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+    log_folder = os.environ['LOG_FOLDER']
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -49,8 +55,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
+        # DEBUG: early stop
+        if iteration == 50:
+            break
+
         if network_gui.conn == None:
             network_gui.try_connect()
+            # check whether connection is established
+            # if network_gui.conn == None:
+            #     print("local rank {}: no network_gui connection established".format(utils.LOCAL_RANK))
         while network_gui.conn != None:
             try:
                 net_image_bytes = None
@@ -75,7 +88,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        camera_id = randint(0, len(viewpoint_stack)-1)
+        viewpoint_cam = viewpoint_stack.pop(camera_id)
 
         # Render
         if (iteration - 1) == debug_from:
@@ -86,26 +100,69 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+        if utils.WORLD_SIZE > 1:
+            torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
+
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+
+        # DEBUG: modify the label to let the loss only comes from local tiles.
+        # print("gt_image shape: ", gt_image.shape) # torch.Size([3, 545, 980])
+        # if utils.WORLD_SIZE > 1:
+        #     # set bg_color (shape=(3,)) to position out of [x0, x1]*[y0, y1]
+        #     # image shape: (3, 545, 980)
+        #     x0, x1, y0, y1 = get_local_pixel_rect(viewpoint_cam.image_width, viewpoint_cam.image_height)
+        #     # print("local rank {}: width {} height {} x0 {}, y0 {}, x1 {}, y1 {}".format(utils.LOCAL_RANK, 980, 545, x0, y0, x1, y1))
+        #     gt_image[:, :y0, :] = background.reshape(3, 1, 1)
+        #     gt_image[:, y1:, :] = background.reshape(3, 1, 1)
+        #     gt_image[:, :, :x0] = background.reshape(3, 1, 1)
+        #     gt_image[:, :, x1:] = background.reshape(3, 1, 1)# redundany value setting.
+        
+        # DEBUG: save gt_image and image
+        # gt_image_cpu = gt_image.clone().detach().cpu().numpy().tolist()
+        # image_cpu = image.clone().detach().cpu().numpy().tolist()
+        # with open(log_folder+"/gt_image_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".json", 'w') as f:
+        #     json.dump(gt_image_cpu, f)
+        # with open(log_folder+"/image_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".json", 'w') as f:
+        #     json.dump(image_cpu, f)
+
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # print shape and value of loss
+        # save in log folder
+        with open(log_folder+"/loss_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", 'a') as f:
+            f.write("iteration {} local rank {} loss value: {}\n".format(iteration, utils.LOCAL_RANK, loss.item()))
+
         loss.backward()
+
+        # DEBUG: save gradient data
+        # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
+        # scaling_grad_data = gaussians._scaling.grad.data.clone().detach().cpu()
+        # rotation_grad_data = gaussians._rotation.grad.data.clone().detach().cpu()
+        # np.savetxt(log_folder+"/_xyz_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(xyz_grad_data))
+        # np.savetxt(log_folder+"/_scaling_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(scaling_grad_data))
+        # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
+
+        if utils.WORLD_SIZE > 1:
+            gaussians.sync_gradients()
+            dist.all_reduce(radii, op=dist.ReduceOp.MAX)
 
         iter_end.record()
 
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
-                progress_bar.update(10)
-            if iteration == opt.iterations:
-                progress_bar.close()
+
+            if utils.LOCAL_RANK == 0:
+                if iteration % 10 == 0:
+                    progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                    progress_bar.update(10)
+                if iteration == opt.iterations:
+                    progress_bar.close()
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
+            if (iteration in saving_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
@@ -127,7 +184,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
-            if (iteration in checkpoint_iterations):
+            if (iteration in checkpoint_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
@@ -138,9 +195,10 @@ def prepare_output_and_logger(args):
         else:
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
-        
+
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
+    if utils.LOCAL_RANK == 0:
+        print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
@@ -205,16 +263,24 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--log_folder", type=str, default = "logs")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-    
-    print("Optimizing " + args.model_path)
+
+    init_distributed()
+    print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
+
+    # create log folder
+    if utils.LOCAL_RANK == 0:
+        os.makedirs(args.log_folder, exist_ok = True)
+    # set log folder to env variable
+    os.environ['LOG_FOLDER'] = args.log_folder
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    # Start GUI server, configure and run training 
+    network_gui.init(args.ip, args.port+utils.LOCAL_RANK)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 

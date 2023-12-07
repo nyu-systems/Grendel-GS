@@ -19,7 +19,9 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.general_utils import strip_symmetric, build_scaling_rotation, LOCAL_RANK, WORLD_SIZE
+import utils.general_utils as utils
+import torch.distributed as dist
 
 class GaussianModel:
 
@@ -123,13 +125,20 @@ class GaussianModel:
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
+
+        # DEBUG: save pcd.points
+        # log_folder = os.environ["LOG_FOLDER"]
+        # np.savetxt(log_folder+"/pcdpoints_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(pcd.points))
+
+        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()# It is not contiguous
+        fused_point_cloud = fused_point_cloud.contiguous()# Now it's contiguous
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+        if utils.LOCAL_RANK == 0:
+            print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -165,6 +174,14 @@ class GaussianModel:
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
+
+    def sync_gradients(self):# TODO: optimize it
+        dist.all_reduce(self._xyz.grad.data, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._features_dc.grad.data, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._features_rest.grad.data, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._opacity.grad.data, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._scaling.grad.data, op=dist.ReduceOp.SUM)
+        dist.all_reduce(self._rotation.grad.data, op=dist.ReduceOp.SUM)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
