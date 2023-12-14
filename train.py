@@ -33,7 +33,7 @@ except ImportError:
 import torch.distributed as dist
 from diff_gaussian_rasterization import get_local_pixel_rect
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file):
     log_folder = os.environ['LOG_FOLDER']
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -64,8 +64,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
         # DEBUG: early stop
-        if iteration == 502:
-            break
         os.environ['ITERATION'] = str(iteration)
 
         if network_gui.conn == None:
@@ -139,8 +137,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         # print shape and value of loss
         # save in log folder
-        with open(log_folder+"/loss_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", 'a') as f:
-            f.write("iteration {} local rank {} loss value: {}\n".format(iteration, utils.LOCAL_RANK, loss.item()))
+        log_file.write("iteration {} loss value: {}\n".format(iteration, loss.item()))
 
         loss.backward()
 
@@ -148,7 +145,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
         # scaling_grad_data = gaussians._scaling.grad.data.clone().detach().cpu()
         # rotation_grad_data = gaussians._rotation.grad.data.clone().detach().cpu()
-        # np.savetxt(log_folder+"/_xyz_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(xyz_grad_data))
+        # np.savetxt(log_folder+"/_xyz_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".txt", np.asarray(xyz_grad_data))
         # np.savetxt(log_folder+"/_scaling_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(scaling_grad_data))
         # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
@@ -257,6 +254,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
+def print_all_args(log_file):
+    # print all arguments in a readable format, each argument in a line.
+    log_file.write("arguments:\n")
+    log_file.write("-"*30+"\n")
+    for arg in vars(args):
+        log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
+    log_file.write("-"*30+"\n\n")
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -273,17 +278,26 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--log_folder", type=str, default = "logs")
+    parser.add_argument("--zhx_debug", action='store_true', default=False)
+    parser.add_argument("--zhx_time", action='store_true', default=False)
+    parser.add_argument("--log_interval", type=int, default=50)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 
+    args.model_path = args.log_folder + "/model_data"
     # create log folder
     if utils.LOCAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
+        os.makedirs(args.model_path, exist_ok = True)
     # set log folder to env variable
     os.environ['LOG_FOLDER'] = args.log_folder
+    os.environ['LOG_INTERVAL'] = str(args.log_interval)
+
+    os.environ['ZHX_DEBUG'] = "true" if args.zhx_debug else "false"
+    os.environ['ZHX_TIME'] = "true" if args.zhx_time else "false"
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
@@ -291,7 +305,12 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training 
     network_gui.init(args.ip, args.port+utils.LOCAL_RANK)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+
+    # initialize log file
+    log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
+    print_all_args(log_file)
+
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, log_file)
 
     # All done
     print("\nTraining complete.")
