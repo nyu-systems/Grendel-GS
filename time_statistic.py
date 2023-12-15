@@ -4,24 +4,23 @@ import numpy as np
 import pandas as pd
 import os
 
-folder = "expe24_1/"
+folder = "experiments/timertest/"
 file_names = [
-    "time_rk=0_ws=1.log",
-    "time_rk=0_ws=2.log",
-    "time_rk=1_ws=2.log",
-    "time_rk=0_ws=4.log",
-    "time_rk=1_ws=4.log",
-    "time_rk=2_ws=4.log",
-    "time_rk=3_ws=4.log"
+    "gpu_time_ws=1_rk=0.log",
+    "gpu_time_ws=2_rk=0.log",
+    "gpu_time_ws=2_rk=1.log",
+    "time_ws=1_rk=0.log",
+    "time_ws=2_rk=0.log",
+    "time_ws=2_rk=1.log",
 ]
+
 num_render_file_names = [
-    "num_rendered_rk=0_ws=1.log",
-    "num_rendered_rk=0_ws=2.log",
-    "num_rendered_rk=1_ws=2.log",
-    "num_rendered_rk=0_ws=4.log",
-    "num_rendered_rk=1_ws=4.log",
-    "num_rendered_rk=2_ws=4.log",
-    "num_rendered_rk=3_ws=4.log"
+    "num_rendered_ws=1_rk=0.log",
+    "num_rendered_ws=2_rk=0.log",
+    "num_rendered_ws=2_rk=1.log",
+    "num_rendered_ws=1_rk=0.log",
+    "num_rendered_ws=2_rk=0.log",
+    "num_rendered_ws=2_rk=1.log",
 ]
 
 def read_file(file_name, num_render_file_name):
@@ -30,6 +29,7 @@ def read_file(file_name, num_render_file_name):
     # get rk and ws
     rk = int(file_name[file_name.find("rk=")+3])
     ws = int(file_name[file_name.find("ws=")+3])
+    prefix = file_name[:file_name.find("ws=")]
     print("rk: ", rk, "ws: ", ws)
 
 
@@ -52,12 +52,16 @@ def read_file(file_name, num_render_file_name):
 
     # Parsing the file and constructing the JSON object
     stats_json = []
-    iteration = 0
+    last_iteration = -1
 
     for line in file_contents:
         if line.startswith("it="):
             iteration = int(line[3:line.find(",")])
-            stats_json.append({"iteration": iteration, "rk": rk, "ws": ws})
+            if iteration != last_iteration:
+                last_iteration = iteration
+            else:
+                continue
+            stats_json.append({"iteration": iteration, "prefix": prefix, "rk": rk, "ws": ws})
             continue
 
         print(line)
@@ -88,6 +92,7 @@ def read_file(file_name, num_render_file_name):
 
 def extract_stats_from_file():
     file2stats = {}
+    assert len(file_names) == len(num_render_file_names), "file_names and num_render_file_names should have same length"
     for file_name, num_render_file_name in zip(file_names, num_render_file_names):
 
         if not os.path.exists(folder + file_name):
@@ -96,7 +101,7 @@ def extract_stats_from_file():
         file2stats[file_name] = read_file(file_name, num_render_file_name)
 
         # save in file
-        with open(folder + file_name.strip(".log") + ".json", 'w') as f:
+        with open(folder + file_name.removesuffix(".log") + ".json", 'w') as f:
             json.dump(file2stats[file_name], f, indent=4)
 
 def draw_graph(file_name, iteration):
@@ -138,7 +143,7 @@ def extract_excel(iteration):
     for file_name in file_names:
         if not os.path.exists(folder + file_name):
             continue
-        file_path = folder + file_name.strip(".log") + ".json"
+        file_path = folder + file_name.removesuffix(".log") + ".json"
         stats = []
         with open(file_path, 'r') as f:
             stats = json.load(f)
@@ -184,13 +189,13 @@ if __name__ == "__main__":
     # draw_graph("time_rk=2_ws=4.json", 161)
     # draw_graph("time_rk=3_ws=4.json", 161)
 
-    extract_excel(101)
-    extract_excel(151)
+    # extract_excel(101)
+    # extract_excel(151)
     extract_excel(201)
     extract_excel(251)
     extract_excel(301)
-    extract_excel(3351)
-    extract_excel(3301)
+    # extract_excel(3351)
+    # extract_excel(3301)
     pass
 
 
