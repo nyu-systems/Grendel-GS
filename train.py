@@ -94,6 +94,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Pick a random Camera
         if not viewpoint_stack:
+            log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
         camera_id = randint(0, len(viewpoint_stack)-1)
         viewpoint_cam = viewpoint_stack.pop(camera_id)
@@ -137,7 +138,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         # print shape and value of loss
         # save in log folder
-        log_file.write("iteration {} loss value: {}\n".format(iteration, loss.item()))
+        log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
 
         loss.backward()
 
