@@ -282,11 +282,15 @@ if __name__ == "__main__":
     parser.add_argument("--zhx_debug", action='store_true', default=False)
     parser.add_argument("--zhx_time", action='store_true', default=False)
     parser.add_argument("--log_interval", type=int, default=50)
+    parser.add_argument("--bench_tile_num", type=int, default=100)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
+
+    os.environ['BENCH_TILE_NUM'] = str(args.bench_tile_num)
+    args.log_folder = args.log_folder + "/"+str(args.bench_tile_num)
 
     args.model_path = args.log_folder + "/model_data"
     # create log folder
