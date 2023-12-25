@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import os
 
-folder = "experiments/timertest/"
+folder = "experiments/testTimerRedundantTiles/"
 file_names = [
     "gpu_time_ws=1_rk=0.log",
     "gpu_time_ws=2_rk=0.log",
@@ -176,8 +176,103 @@ def extract_excel(iteration):
 
 
 
+def extract_stats_from_file_bench_num_tiles():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    base_folder = "experiments/bench_tile_num2/"
+    file_names = [
+        "gpu_time_ws=1_rk=0.log",
+    ]
+    num_render_file_names = [
+        "num_rendered_ws=1_rk=0.log",
+    ]
+    x = os.listdir(base_folder)
+    # filter out non-folders
+    x = [t for t in x if os.path.isdir(base_folder + t)]
+    x.sort( key=lambda x: int(x) )
+    iterations = [1, 301, 601, 901]
+    for t in x:
+        folder = base_folder + t + "/"
+        print(folder)
+        extract_stats_from_file()
+        for it in iterations:
+            extract_excel(it)
+
+    stats = None
+    try:
+        # load 
+        path = "experiments/n_contributors_3/n_contrib_ws=1_rk=0.json"
+        with open(path, 'r') as f:
+            stats = json.load(f)
+    except:
+        pass
+    
+
+    # merge all csv together
+    for i in iterations:
+        df = None
+        stat_iteration = None
+        if stats is not None:
+            stat_iteration = []
+            for data in stats:
+                if data["mode"] == "local" and data["iteration"] == str(i):
+                    stat_iteration.append(data)
+            assert len(stat_iteration) == 2170
+
+        # print("len stat_iteration: ", len(stat_iteration))
+        # print("stat_iteration", stat_iteration[:10])
+
+        for t in x:
+            folder = base_folder + t + "/"
+            df_t = pd.read_csv(folder + "time_stat_it="+ str(i) +".csv")
+            # add a columne for tile size
+            df_t["tile_size"] = t
+            df_t["b10 render time/tile_size*100"] = float(df_t.loc[0, "b10 render time"]) / float(df_t.loc[0, "tile_size"])*100
+            df_t["b10 render time/num_rendered*100000"] = float(df_t.loc[0, "b10 render time"]) / float(df_t.loc[0, "num_rendered"])*100000
+            df_t["70 render time/tile_size*100"] = float(df_t.loc[0, "70 render time"]) / float(df_t.loc[0, "tile_size"])*100
+            df_t["70 render time/num_rendered*100000"] = float(df_t.loc[0, "70 render time"]) / float(df_t.loc[0, "num_rendered"])*100000
+
+            if df is None:
+                df = df_t
+            else:
+                df = pd.concat([df, df_t], ignore_index=True)
+
+        # new rendered
+        df["new_tile:num_rendered"] = 0.0
+        df["new_tile:num_real_contributed"] = 0.0
+        df["new_tile:b10 render time"] = 0.0
+        df["new_tile:70 render time"] = 0.0
+
+        for k in range(1, len(df)):
+            df.loc[k, "new_tile:num_rendered"] = df.loc[k, "num_rendered"] - df.loc[k-1, "num_rendered"]
+            df.loc[k, "new_tile:b10 render time"] = df.loc[k, "b10 render time"] - df.loc[k-1, "b10 render time"]
+            df.loc[k, "new_tile:70 render time"] = df.loc[k, "70 render time"] - df.loc[k-1, "70 render time"]
+
+            tile_range = (int(df.loc[k-1, "tile_size"]), int(df.loc[k, "tile_size"]))
+            num_real_contributed = 0
+            ave_contrib_ratio = 0
+            if stats is not None:
+                for data in stat_iteration:
+                    if data["iteration"] == str(i) and data["mode"] == "local":
+                        tile_str = data["tile"]
+                        tile_xy = (int(tile_str[0]), int(tile_str[1]))
+                        tile_id = tile_xy[0]*62 + tile_xy[1]
+                        if tile_range[0] <= tile_id and tile_id < tile_range[1]:
+                            num_real_contributed += float(data["local_real_n_contrib"])
+                            ave_contrib_ratio += float(data["contrib_ratio"])
+            
+            ave_contrib_ratio = ave_contrib_ratio / float(tile_range[1] - tile_range[0])
+            df.loc[k, "new_tile:num_real_contributed"] = num_real_contributed
+            df.loc[k, "new_tile:ave_contrib_ratio"] = ave_contrib_ratio
+            # print("tile_range: ", tile_range, "num_real_contributed: ", num_real_contributed, "ave_contrib_ratio: ", ave_contrib_ratio)
+
+        df.to_csv(base_folder + "time_stat_it="+ str(i) +".csv", index=False)
 
 if __name__ == "__main__":
+    
+    extract_stats_from_file_bench_num_tiles()
 
     # extract_stats_from_file()
 
@@ -191,9 +286,9 @@ if __name__ == "__main__":
 
     # extract_excel(101)
     # extract_excel(151)
-    extract_excel(201)
-    extract_excel(251)
-    extract_excel(301)
+    # extract_excel(201)
+    # extract_excel(251)
+    # extract_excel(301)
     # extract_excel(3351)
     # extract_excel(3301)
     pass

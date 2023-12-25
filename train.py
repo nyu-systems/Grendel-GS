@@ -31,9 +31,8 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 import torch.distributed as dist
-from diff_gaussian_rasterization import get_local_pixel_rect
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fixed_training_image, disable_auto_densification, log_file):
     log_folder = os.environ['LOG_FOLDER']
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -62,6 +61,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    epoch_loss = 0
+    epoch_id = 0
+    cnt_in_epoch = 0
     for iteration in range(first_iter, opt.iterations + 1):        
         # DEBUG: early stop
         os.environ['ITERATION'] = str(iteration)
@@ -96,8 +98,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
-        camera_id = randint(0, len(viewpoint_stack)-1)
-        viewpoint_cam = viewpoint_stack.pop(camera_id)
+            # print epoch loss
+            if cnt_in_epoch > 0:
+                epoch_id += 1
+                log_file.write("epoch {} loss: {}\n".format(epoch_id, epoch_loss/cnt_in_epoch))
+                epoch_loss = 0
+                cnt_in_epoch = 0
+
+        viewpoint_cam = None
+        camera_id = -1
+        if fixed_training_image == -1:
+            camera_id = randint(0, len(viewpoint_stack)-1)
+            viewpoint_cam = viewpoint_stack.pop(camera_id)
+        else:
+            camera_id = fixed_training_image
+            viewpoint_cam = viewpoint_stack[camera_id]
 
         # Render
         if (iteration - 1) == debug_from:
@@ -108,8 +123,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+        # DEBUG: save image
+        # if iteration % args.log_interval == 1:
+        #     image_cpu = image.clone().detach().cpu().numpy().tolist()
+        #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
+        #         json.dump(image_cpu, f)
+
         if utils.WORLD_SIZE > 1:
+            torch.cuda.synchronize()
             torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
+            torch.cuda.synchronize()
+            # non-local tiles will be rendered by background. all_reduce sum will give 2*background.
+            # TODO: fix this.
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -139,7 +164,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # print shape and value of loss
         # save in log folder
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
-
+        # log_file.write("iteration {} image: {} loss: {} ave_grad_norm: {}\n".format(iteration, viewpoint_cam.image_name, loss.item(), torch.sum(gaussians.xyz_gradient_accum).item() ))
+        cnt_in_epoch = cnt_in_epoch + 1
+        epoch_loss = epoch_loss + loss.item()
         loss.backward()
 
         # DEBUG: save gradient data
@@ -151,8 +178,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
         if utils.WORLD_SIZE > 1:
+            torch.cuda.synchronize()
             gaussians.sync_gradients()
-            dist.all_reduce(radii, op=dist.ReduceOp.MAX)
+            torch.cuda.synchronize()
+            # dist.all_reduce(radii, op=dist.ReduceOp.MAX)
+            dist.all_reduce(viewspace_point_tensor.grad.data, op=dist.ReduceOp.SUM)
+            torch.cuda.synchronize()
 
         iter_end.record()
 
@@ -174,12 +205,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 scene.save(iteration)
 
             # Densification
-            if iteration < opt.densify_until_iter:
+            if not disable_auto_densification and iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                    log_file.write("iteration {} densify\n".format(iteration))
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
@@ -282,13 +314,19 @@ if __name__ == "__main__":
     parser.add_argument("--zhx_debug", action='store_true', default=False)
     parser.add_argument("--zhx_time", action='store_true', default=False)
     parser.add_argument("--log_interval", type=int, default=50)
+    parser.add_argument("--fixed_training_image", type=int, default=-1)
+    parser.add_argument("--disable_auto_densification", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 
-    args.model_path = args.log_folder + "/model_data"
+    # args.model_path = args.log_folder + "/model_data"
+
+    # TODO: temporarily set model_path to tmp. remove this later. 
+    args.model_path = "/scratch/hz3496/gs_tmp"
+
     # create log folder
     if utils.LOCAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
@@ -311,7 +349,7 @@ if __name__ == "__main__":
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
     print_all_args(log_file)
 
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, log_file)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.fixed_training_image, args.disable_auto_densification, log_file)
 
     # All done
     print("\nTraining complete.")
