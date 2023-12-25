@@ -33,7 +33,6 @@ except ImportError:
 import torch.distributed as dist
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fixed_training_image, disable_auto_densification, log_file):
-    log_folder = os.environ['LOG_FOLDER']
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -130,11 +129,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #         json.dump(image_cpu, f)
 
         if utils.WORLD_SIZE > 1:
-            torch.cuda.synchronize()
             torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
-            # non-local tiles will be rendered by background. all_reduce sum will give 2*background.
-            # TODO: fix this.
+            # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -161,7 +157,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        # print shape and value of loss
         # save in log folder
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
         # log_file.write("iteration {} image: {} loss: {} ave_grad_norm: {}\n".format(iteration, viewpoint_cam.image_name, loss.item(), torch.sum(gaussians.xyz_gradient_accum).item() ))
@@ -178,12 +173,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
         if utils.WORLD_SIZE > 1:
-            torch.cuda.synchronize()
             gaussians.sync_gradients()
-            torch.cuda.synchronize()
-            # dist.all_reduce(radii, op=dist.ReduceOp.MAX)
             dist.all_reduce(viewspace_point_tensor.grad.data, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
 
         iter_end.record()
 
