@@ -23,7 +23,7 @@ num_render_file_names = [
     "num_rendered_ws=2_rk=1.log",
 ]
 
-def read_file(file_name, num_render_file_name):
+def read_file(file_name, num_render_file_name=None):
     file_path = folder + file_name
 
     # get rk and ws
@@ -70,20 +70,22 @@ def read_file(file_name, num_render_file_name):
             stat_name, stat_value = parsed_data
             stats_json[-1][stat_name] = stat_value
 
-    with open(folder + num_render_file_name, 'r') as file:
-        num_render_file_contents = file.readlines()
+    if num_render_file_name is not None:
 
-    idx = 0
-    for line in num_render_file_contents:
-        # line format:`iteration: 251, num_local_tiles: 398, local_tiles_left_idx: 742, local_tiles_right_idx: 1139, last_local_num_rendered_end: 336199, local_num_rendered_end: 672398, num_rendered: 335791, num_rendered_from_distState: 335791`
-        # extract iteration, num_local_tiles, num_rendered
-        iteration = int(line[line.find("iteration:")+len("iteration: "):line.find(",")])
-        num_local_tiles = int(line[line.find("num_local_tiles:")+len("num_local_tiles: "):line.find(", local_tiles_left_idx:")])
-        num_rendered = int(line[line.find("num_rendered:")+len("num_rendered: "):line.find(", num_rendered_from_distState:")])
-        assert iteration == stats_json[idx]["iteration"]
-        stats_json[idx]["num_local_tiles"] = num_local_tiles
-        stats_json[idx]["num_rendered"] = num_rendered
-        idx += 1
+        with open(folder + num_render_file_name, 'r') as file:
+            num_render_file_contents = file.readlines()
+
+        idx = 0
+        for line in num_render_file_contents:
+            # line format:`iteration: 251, num_local_tiles: 398, local_tiles_left_idx: 742, local_tiles_right_idx: 1139, last_local_num_rendered_end: 336199, local_num_rendered_end: 672398, num_rendered: 335791, num_rendered_from_distState: 335791`
+            # extract iteration, num_local_tiles, num_rendered
+            iteration = int(line[line.find("iteration:")+len("iteration: "):line.find(",")])
+            num_local_tiles = int(line[line.find("num_local_tiles:")+len("num_local_tiles: "):line.find(", local_tiles_left_idx:")])
+            num_rendered = int(line[line.find("num_rendered:")+len("num_rendered: "):line.find(", num_rendered_from_distState:")])
+            assert iteration == stats_json[idx]["iteration"]
+            stats_json[idx]["num_local_tiles"] = num_local_tiles
+            stats_json[idx]["num_rendered"] = num_rendered
+            idx += 1
 
     # Converting the JSON object to a string for display
     json_data = json.dumps(stats_json, indent=4)
@@ -270,9 +272,108 @@ def extract_stats_from_file_bench_num_tiles():
 
         df.to_csv(base_folder + "time_stat_it="+ str(i) +".csv", index=False)
 
+def gpu_timer_0():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    folder = "experiments/gpu_timer_0/"
+    file_names = [
+        "gpu_time_ws=1_rk=0.log",
+        "gpu_time_ws=2_rk=0.log",
+        "gpu_time_ws=2_rk=1.log",
+        "gpu_time_ws=4_rk=0.log",
+        "gpu_time_ws=4_rk=1.log",
+        "gpu_time_ws=4_rk=2.log",
+        "gpu_time_ws=4_rk=3.log",
+    ]
+    num_render_file_names = [None for i in range(len(file_names))]
+    extract_stats_from_file()
+    extract_excel(301)
+
+# iter 1001, TimeFor 'forward': 3.405571 ms
+# iter 1001, TimeFor 'image_allreduce': 0.006914 ms
+# iter 1001, TimeFor 'loss': 2.740145 ms
+# iter 1001, TimeFor 'backward': 15.798092 ms
+# iter 1001, TimeFor 'sync_gradients': 0.006199 ms
+# iter 1001, TimeFor 'optimizer_step': 2.892017 ms
+def extract_json_from_python_time_log(file_path):
+
+    file_name = file_path.split("/")[-1]
+    ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
+    ws, rk = int(ws), int(rk)
+    # print(file_name, " wk: ", wk, "rk: ", rk)
+
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    stats = []
+    for line in lines:
+        if line.startswith("iter"):
+            parts = line.split(",")
+            iteration = int(parts[0].split(" ")[1])
+
+            if not stats or stats[-1]["iteration"] != iteration:
+                stats.append({"iteration": iteration, "ws": ws, "rk": rk})
+            # extract key and time from `TimeFor 'forward': 3.405571 ms`
+            key = parts[1].split("'")[1]
+            time = float(parts[1].split(":")[1].split(" ")[1])
+            stats[-1][key] = time
+
+    # save in file
+    with open(file_path.removesuffix(".log") + ".json", 'w') as f:
+        json.dump(stats, f, indent=4)
+    return stats
+
+def extract_json_from_python_time_log_many_files():
+    for file in file_names:
+        extract_json_from_python_time_log(folder + file)
+
+def python_timer_0():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    folder = "experiments/python_timer_0/"
+    file_names = [
+        "python_time_ws=1_rk=0.log",
+        "python_time_ws=2_rk=0.log",
+        "python_time_ws=2_rk=1.log",
+        "python_time_ws=4_rk=0.log",
+        "python_time_ws=4_rk=1.log",
+        "python_time_ws=4_rk=2.log",
+        "python_time_ws=4_rk=3.log",
+    ]
+    num_render_file_names = [None for i in range(len(file_names))]
+
+    extract_json_from_python_time_log_many_files()
+    extract_excel(301)
+
+def python_timer_1():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    folder = "experiments/python_timer_1/"
+    file_names = [
+        "python_time_ws=1_rk=0.log",
+        "python_time_ws=2_rk=0.log",
+        "python_time_ws=2_rk=1.log",
+        "python_time_ws=4_rk=0.log",
+        "python_time_ws=4_rk=1.log",
+        "python_time_ws=4_rk=2.log",
+        "python_time_ws=4_rk=3.log",
+    ]
+    num_render_file_names = [None for i in range(len(file_names))]
+
+    extract_json_from_python_time_log_many_files()
+    extract_excel(301)
+
 if __name__ == "__main__":
-    
-    extract_stats_from_file_bench_num_tiles()
+
+    # python_timer_0()
+    python_timer_1()
+
+    # extract_stats_from_file_bench_num_tiles()
 
     # extract_stats_from_file()
 

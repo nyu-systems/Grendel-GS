@@ -20,11 +20,13 @@ import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
+from timer import Timer
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import time
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -32,7 +34,12 @@ except ImportError:
     TENSORBOARD_FOUND = False
 import torch.distributed as dist
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fixed_training_image, disable_auto_densification, log_file):
+def training(dataset, opt, pipe, args, log_file):
+    testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fixed_training_image, disable_auto_densification = args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.fixed_training_image, args.disable_auto_densification
+
+    my_timer = Timer(args)
+    train_start_time = time.time()
+
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -60,31 +67,30 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+
     epoch_loss = 0
     epoch_id = 0
     cnt_in_epoch = 0
+
     for iteration in range(first_iter, opt.iterations + 1):        
+        if False:# disable network_gui for now
+            if network_gui.conn == None:
+                network_gui.try_connect()
+            while network_gui.conn != None:
+                try:
+                    net_image_bytes = None
+                    custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+                    if custom_cam != None:
+                        net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+                    network_gui.send(net_image_bytes, dataset.source_path)
+                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                        break
+                except Exception as e:
+                    network_gui.conn = None
+
         # DEBUG: early stop
         os.environ['ITERATION'] = str(iteration)
-
-        if network_gui.conn == None:
-            network_gui.try_connect()
-            # check whether connection is established
-            # if network_gui.conn == None:
-            #     print("local rank {}: no network_gui connection established".format(utils.LOCAL_RANK))
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
-
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -119,7 +125,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+        # synchronize at the beginning of each iteration to correctly measure the render time. 
+        # torch.cuda.synchronize()
+        # if utils.WORLD_SIZE > 1 and args.global_timer:
+        #     torch.distributed.barrier() # TODO: two mode; this is to only measure local time? 
+
+        my_timer.start("forward")
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        my_timer.stop("forward")
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # DEBUG: save image
@@ -128,11 +141,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
         #         json.dump(image_cpu, f)
 
+        my_timer.start("image_allreduce")
         if utils.WORLD_SIZE > 1:
             torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
             # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
+        my_timer.stop("image_allreduce")
 
         # Loss
+        my_timer.start("loss")
         gt_image = viewpoint_cam.original_image.cuda()
 
         # DEBUG: modify the label to let the loss only comes from local tiles.
@@ -157,12 +173,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        my_timer.stop("loss")
+
         # save in log folder
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
         # log_file.write("iteration {} image: {} loss: {} ave_grad_norm: {}\n".format(iteration, viewpoint_cam.image_name, loss.item(), torch.sum(gaussians.xyz_gradient_accum).item() ))
         cnt_in_epoch = cnt_in_epoch + 1
         epoch_loss = epoch_loss + loss.item()
+
+        my_timer.start("backward")
         loss.backward()
+        my_timer.stop("backward")
 
         # DEBUG: save gradient data
         # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
@@ -172,10 +193,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # np.savetxt(log_folder+"/_scaling_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(scaling_grad_data))
         # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
+        my_timer.start("sync_gradients")
         if utils.WORLD_SIZE > 1:
             gaussians.sync_gradients()
             dist.all_reduce(viewspace_point_tensor.grad.data, op=dist.ReduceOp.SUM)
-
+        my_timer.stop("sync_gradients")
         iter_end.record()
 
         with torch.no_grad():
@@ -211,12 +233,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration < opt.iterations:
+                my_timer.start("optimizer_step")
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
+                my_timer.stop("optimizer_step")
 
             if (iteration in checkpoint_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+    
+        # DEBUG: print timer
+        if args.zhx_python_time and iteration % args.log_interval == 1:
+            my_timer.elapsed(iteration)
+
+    if args.end2end_time:
+        torch.cuda.synchronize()
+        log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt.iterations, opt.iterations/(time.time() - train_start_time)))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -304,9 +336,12 @@ if __name__ == "__main__":
     parser.add_argument("--log_folder", type=str, default = "logs")
     parser.add_argument("--zhx_debug", action='store_true', default=False)
     parser.add_argument("--zhx_time", action='store_true', default=False)
+    parser.add_argument("--zhx_python_time", action='store_true', default=False)
     parser.add_argument("--log_interval", type=int, default=50)
     parser.add_argument("--fixed_training_image", type=int, default=-1)
     parser.add_argument("--disable_auto_densification", action='store_true', default=False)
+    parser.add_argument("--global_timer", action='store_true', default=False)
+    parser.add_argument("--end2end_time", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -333,14 +368,15 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training 
-    network_gui.init(args.ip, args.port+utils.LOCAL_RANK)
+    if False:# disable network_gui for now
+        network_gui.init(args.ip, args.port+utils.LOCAL_RANK)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     # initialize log file
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
     print_all_args(log_file)
 
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.fixed_training_image, args.disable_auto_densification, log_file)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)
 
     # All done
     print("\nTraining complete.")
