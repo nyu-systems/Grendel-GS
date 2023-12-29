@@ -15,7 +15,7 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, offload=False):
     """
     Render the scene. 
     
@@ -53,9 +53,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
     #TODO: only take out the needed indices of the 3dgs and put them to the gpu. make sure the tensor on gpu is differentiable.
-    means3D = pc.get_xyz.detach().cuda().requires_grad_(True)
+    means3D = pc.get_xyz
     means2D = screenspace_points
-    opacity = pc.get_opacity.detach().cuda().requires_grad_(True)
+    opacity = pc.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -65,8 +65,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
-        scales = pc.get_scaling.detach().cuda().requires_grad_(True)
-        rotations = pc.get_rotation.detach().cuda().requires_grad_(True)
+        scales = pc.get_scaling
+        rotations = pc.get_rotation
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -80,9 +80,25 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
-            shs = pc.get_features.detach().cuda().requires_grad_(True)
+            shs = pc.get_features
     else:
         colors_precomp = override_color
+    
+    if offload:
+        means3D = means3D.detach().cuda().requires_grad_(True)
+        opacity = opacity.detach().cuda().requires_grad_(True)
+
+        if scales is not None:
+            scales = scales.detach().cuda().requires_grad_(True)
+        if rotations is not None:
+            rotations = rotations.detach().cuda().requires_grad_(True)
+        if cov3D_precomp is not None:
+            cov3D_precomp = cov3D_precomp.detach().cuda().requires_grad_(True)
+
+        if shs is not None:
+            shs = shs.detach().cuda().requires_grad_(True)
+        if colors_precomp is not None:
+            colors_precomp = colors_precomp.detach().cuda().requires_grad_(True)
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii = rasterizer(

@@ -28,12 +28,16 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file, args):
     first_iter = 0
+    log_file.write("memory before everything: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree) #TODO: put all parameters on CPU. look at every method of GaussianModel.
-    scene = Scene(dataset, gaussians)
+    gaussians = GaussianModel(dataset.sh_degree, args) #TODO: put all parameters on CPU. look at every method of GaussianModel.
+    log_file.write("memory after gaussians: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+    scene = Scene(dataset, gaussians, log_file=log_file)
+    log_file.write("memory after scene: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
     gaussians.training_setup(opt)
+    log_file.write("memory after training setup: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -93,9 +97,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload)
         image, viewspace_point_tensor, visibility_filter, radii, parameters = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"]
 
+        log_file.write("memory after render forward: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
@@ -103,20 +108,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         epoch_loss += loss.item()
         cnt_in_epoch += 1
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
+        log_file.write("memory after loss: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
         loss.backward()
+        log_file.write("memory after loss backward: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
         #TODO: set cpu tensors' gradients at specified indices to what we get from gpu.
 
 
         # Update cpu data
-        means3D, shs, opacity, scales, rotations = parameters
-        gaussians._xyz.grad = means3D.grad.cpu()
-        features_grad = shs.grad.cpu()
-        gaussians._features_dc.grad = features_grad[:,0:1,:].contiguous()
-        gaussians._features_rest.grad = features_grad[:,1:,:].contiguous()
-        gaussians._opacity.grad = opacity.grad.cpu()
-        gaussians._scaling.grad = scales.grad.cpu()
-        gaussians._rotation.grad = rotations.grad.cpu()
+        if args.offload:
+            means3D, shs, opacity, scales, rotations = parameters
+            gaussians._xyz.grad = means3D.grad.cpu()
+            features_grad = shs.grad.cpu()
+            gaussians._features_dc.grad = features_grad[:,0:1,:].contiguous()
+            gaussians._features_rest.grad = features_grad[:,1:,:].contiguous()
+            gaussians._opacity.grad = opacity.grad.cpu()
+            gaussians._scaling.grad = scales.grad.cpu()
+            gaussians._rotation.grad = rotations.grad.cpu()
+
+        log_file.write("memory after cpu data update: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
         iter_end.record()
 
@@ -139,10 +149,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 # Update cpu data
-                radii = radii.cpu()
-                visibility_filter = visibility_filter.cpu()
+                if args.offload:
+                    radii = radii.cpu()
+                    visibility_filter = visibility_filter.cpu()
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, offload=args.offload)
+                log_file.write("memory after densification stats: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
@@ -154,7 +166,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
+                log_file.write("memory after optimizer step: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
                 gaussians.optimizer.zero_grad(set_to_none = True)
+                log_file.write("memory after optimizer zero grad: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -243,6 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--log_folder", type=str, default = "logs")
+    parser.add_argument("--offload", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -259,7 +274,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, log_file)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, log_file, args)
 
     # All done
     print("\nTraining complete.")

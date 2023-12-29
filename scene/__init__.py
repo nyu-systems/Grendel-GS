@@ -12,6 +12,7 @@
 import os
 import random
 import json
+import torch
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
@@ -22,7 +23,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], log_file=None):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -68,11 +69,17 @@ class Scene:
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
+        if log_file:
+            log_file.write("memory before loading cameras: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+    
+        if log_file:
+            log_file.write("memory after loading cameras, before loading gaussian: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -81,6 +88,9 @@ class Scene:
                                                            "point_cloud.ply"))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+    
+        if log_file:
+            log_file.write("memory after loading gaussian: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
