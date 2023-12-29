@@ -28,10 +28,10 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree) #TODO: put all parameters on CPU. look at every method of GaussianModel.
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -48,6 +48,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    epoch_loss = 0
+    cnt_in_epoch = 0
+    epoch_id = 0
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -74,7 +77,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Pick a random Camera
         if not viewpoint_stack:
+            log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
+            # print epoch loss
+            if cnt_in_epoch > 0:
+                epoch_id += 1
+                log_file.write("epoch {} loss: {}\n".format(epoch_id, epoch_loss/cnt_in_epoch))
+                epoch_loss = 0
+                cnt_in_epoch = 0
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
@@ -84,13 +94,29 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        image, viewspace_point_tensor, visibility_filter, radii, parameters = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        epoch_loss += loss.item()
+        cnt_in_epoch += 1
+        log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
         loss.backward()
+
+        #TODO: set cpu tensors' gradients at specified indices to what we get from gpu.
+
+
+        # Update cpu data
+        means3D, shs, opacity, scales, rotations = parameters
+        gaussians._xyz.grad = means3D.grad.cpu()
+        features_grad = shs.grad.cpu()
+        gaussians._features_dc.grad = features_grad[:,0:1,:].contiguous()
+        gaussians._features_rest.grad = features_grad[:,1:,:].contiguous()
+        gaussians._opacity.grad = opacity.grad.cpu()
+        gaussians._scaling.grad = scales.grad.cpu()
+        gaussians._rotation.grad = rotations.grad.cpu()
 
         iter_end.record()
 
@@ -112,6 +138,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Densification
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
+                # Update cpu data
+                radii = radii.cpu()
+                visibility_filter = visibility_filter.cpu()
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
@@ -190,6 +219,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
+def print_all_args(log_file):
+    # print all arguments in a readable format, each argument in a line.
+    log_file.write("arguments:\n")
+    log_file.write("-"*30+"\n")
+    for arg in vars(args):
+        log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
+    log_file.write("-"*30+"\n\n")
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -205,10 +242,16 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--log_folder", type=str, default = "logs")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
+
+    os.makedirs(args.log_folder, exist_ok = True)
+    # initialize log file
+    log_file = open(args.log_folder+"/python.log", 'w')
+    print_all_args(log_file)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
@@ -216,7 +259,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, log_file)
 
     # All done
     print("\nTraining complete.")

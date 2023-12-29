@@ -62,7 +62,7 @@ def get_expon_lr_func(
     return helper
 
 def strip_lowerdiag(L):
-    uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
+    uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cpu")
 
     uncertainty[:, 0] = L[:, 0, 0]
     uncertainty[:, 1] = L[:, 0, 1]
@@ -80,7 +80,7 @@ def build_rotation(r):
 
     q = r / norm[:, None]
 
-    R = torch.zeros((q.size(0), 3, 3), device='cuda')
+    R = torch.zeros((q.size(0), 3, 3), device='cpu')
 
     r = q[:, 0]
     x = q[:, 1]
@@ -99,7 +99,8 @@ def build_rotation(r):
     return R
 
 def build_scaling_rotation(s, r):
-    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
+    # TODO: functions in this file may be used both on cpu and gpu, so we need to make sure it runs correctly when I apply swapping techniques. 
+    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cpu")
     R = build_rotation(r)
 
     L[:,0,0] = s[:,0]
