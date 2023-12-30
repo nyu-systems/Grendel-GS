@@ -415,3 +415,24 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
             viewspace_point_tensor_grad = viewspace_point_tensor.grad
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor_grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+    
+    def duplicate_gaussians(self, K):
+        # self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
+        # self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
+        # self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
+        # self._scaling = nn.Parameter(scales.requires_grad_(True))
+        # self._rotation = nn.Parameter(rots.requires_grad_(True))
+        # self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device=self.device)
+
+        self._xyz = nn.Parameter(self._xyz.repeat(K, 1).detach().requires_grad_(True))
+        self._features_dc = nn.Parameter(self._features_dc.repeat(K, 1, 1).detach().requires_grad_(True))
+        self._features_rest = nn.Parameter(self._features_rest.repeat(K, 1, 1).detach().requires_grad_(True))
+        self._scaling = nn.Parameter(self._scaling.repeat(K, 1).detach().requires_grad_(True))
+        self._rotation = nn.Parameter(self._rotation.repeat(K, 1).detach().requires_grad_(True))
+        self._opacity = nn.Parameter(self._opacity.repeat(K, 1).detach().requires_grad_(True))
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device=self.device)
+
+        # add noise to xyz
+        self._xyz = nn.Parameter((self._xyz + torch.randn_like(self._xyz) * 0.01).detach().requires_grad_(True))
+

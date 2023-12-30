@@ -40,6 +40,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     memory_logging(log_file, "after gaussians")
     scene = Scene(dataset, gaussians, log_file=log_file)
     memory_logging(log_file, "after scene")
+    if args.duplicate_gs_cnt > 0:
+        gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
+        memory_logging(log_file, "after duplicate_gaussians")
     gaussians.training_setup(opt, log_file)
     memory_logging(log_file, "after training setup")
 
@@ -276,6 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_folder", type=str, default = "logs")
     parser.add_argument("--offload", action='store_true', default=False)
     parser.add_argument("--log_memory", action='store_true', default=False)
+    parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     

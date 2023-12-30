@@ -44,14 +44,23 @@ def json2csv(paths):
     # delete columns that its name contains max
     df = df.loc[:,~df.columns.str.contains("max")]
     df.to_csv(os.path.join(paths[0], "statistics.csv"), index=False)
-    
 
-if __name__ == "__main__":
+def offload_memory():
     log2json("experiments/offload_memory/")
     log2json("experiments/no_offload_memory/")
 
     paths = ["experiments/offload_memory/", "experiments/no_offload_memory/"]
     json2csv(paths)
+
+def more_3dgs_no_offload():
+    log2json("experiments/more_3dgs_no_offload/")
+    log2json("experiments/more_3dgs_offload/")
+
+    paths = ["experiments/more_3dgs_no_offload/", "experiments/more_3dgs_offload/"]
+    json2csv(paths)
+
+if __name__ == "__main__":
+    more_3dgs_no_offload()
 
     pass
 
