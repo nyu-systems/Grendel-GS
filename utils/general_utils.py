@@ -15,6 +15,16 @@ from datetime import datetime
 import numpy as np
 import random
 
+ARGS = None
+
+def set_args(args):
+    global ARGS
+    ARGS = args
+
+def get_args():
+    global ARGS
+    return ARGS
+
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
@@ -131,3 +141,13 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def memory_logging(log_file=None, prefix=""):
+    if log_file is None:
+        return
+
+    if not get_args().log_memory:
+        return
+        
+    log_file.write("memory,{},{},{},MB\n".format(prefix, "max", torch.cuda.max_memory_allocated()/1024/1024))
+    log_file.write("memory,{},{},{},MB\n".format(prefix, "now", torch.cuda.memory_allocated()/1024/1024))

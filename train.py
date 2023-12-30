@@ -16,10 +16,11 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, memory_logging
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
+from utils.general_utils import set_args
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 try:
@@ -28,16 +29,33 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+def numel(shape):
+    return torch.prod(torch.tensor(shape)).item()
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, log_file, args):
     first_iter = 0
-    log_file.write("memory before everything: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+    memory_logging(log_file, "before everything")
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree, args) #TODO: put all parameters on CPU. look at every method of GaussianModel.
-    log_file.write("memory after gaussians: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+    memory_logging(log_file, "after gaussians")
     scene = Scene(dataset, gaussians, log_file=log_file)
-    log_file.write("memory after scene: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
-    gaussians.training_setup(opt)
-    log_file.write("memory after training setup: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+    memory_logging(log_file, "after scene")
+    gaussians.training_setup(opt, log_file)
+    memory_logging(log_file, "after training setup")
+
+    log_file.write("xyz shape: {}\n".format(gaussians._xyz.shape))
+    log_file.write("f_dc shape: {}\n".format(gaussians._features_dc.shape))
+    log_file.write("f_rest shape: {}\n".format(gaussians._features_rest.shape))
+    log_file.write("opacity shape: {}\n".format(gaussians._opacity.shape))
+    log_file.write("scaling shape: {}\n".format(gaussians._scaling.shape))
+    log_file.write("rotation shape: {}\n".format(gaussians._rotation.shape))
+    log_file.write("max_radii2D shape: {}\n".format(gaussians.max_radii2D.shape))
+    log_file.write("xyz_gradient_accum shape: {}\n".format(gaussians.xyz_gradient_accum.shape))
+    log_file.write("denom shape: {}\n".format(gaussians.denom.shape))
+    all_shapes = [gaussians._xyz.shape, gaussians._features_dc.shape, gaussians._features_rest.shape, gaussians._opacity.shape, gaussians._scaling.shape, gaussians._rotation.shape, gaussians.max_radii2D.shape, gaussians.xyz_gradient_accum.shape, gaussians.denom.shape]
+    log_file.write("total elements: {}\n".format(sum([numel(shape) for shape in all_shapes])))
+    log_file.write("total memory usage: {} MB\n".format(sum([numel(shape) for shape in all_shapes])*4/1024/1024))
+
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -97,36 +115,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload, log_file=log_file)
         image, viewspace_point_tensor, visibility_filter, radii, parameters = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"]
 
-        log_file.write("memory after render forward: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after render forward")
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         epoch_loss += loss.item()
         cnt_in_epoch += 1
-        log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
-        log_file.write("memory after loss: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after loss")
         loss.backward()
-        log_file.write("memory after loss backward: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after loss backward")
 
         #TODO: set cpu tensors' gradients at specified indices to what we get from gpu.
 
 
         # Update cpu data
         if args.offload:
-            means3D, shs, opacity, scales, rotations = parameters
+            means3D, opacity, scales, rotations, features_dc, features_rest = parameters
             gaussians._xyz.grad = means3D.grad.cpu()
-            features_grad = shs.grad.cpu()
-            gaussians._features_dc.grad = features_grad[:,0:1,:].contiguous()
-            gaussians._features_rest.grad = features_grad[:,1:,:].contiguous()
+            gaussians._features_dc.grad = features_dc.grad.cpu()
+            gaussians._features_rest.grad = features_rest.grad.cpu()
             gaussians._opacity.grad = opacity.grad.cpu()
             gaussians._scaling.grad = scales.grad.cpu()
             gaussians._rotation.grad = rotations.grad.cpu()
 
-        log_file.write("memory after cpu data update: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after cpu data update")
 
         iter_end.record()
 
@@ -154,7 +170,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     visibility_filter = visibility_filter.cpu()
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, offload=args.offload)
-                log_file.write("memory after densification stats: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+                memory_logging(log_file, "after densification stats")
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
@@ -164,15 +180,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gaussians.reset_opacity()
 
             # Optimizer step
-            if iteration < opt.iterations:
+            if iteration <= opt.iterations:# 3dgs' original implementation use `<`, leads to one iteration less.
                 gaussians.optimizer.step()
-                log_file.write("memory after optimizer step: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+                memory_logging(log_file, "after optimizer step")
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                log_file.write("memory after optimizer zero grad: {} MB\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+                memory_logging(log_file, "after optimizer zero grad")
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+        log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -258,9 +275,12 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--log_folder", type=str, default = "logs")
     parser.add_argument("--offload", action='store_true', default=False)
+    parser.add_argument("--log_memory", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
+    set_args(args)
+
     print("Optimizing " + args.model_path)
 
     os.makedirs(args.log_folder, exist_ok = True)

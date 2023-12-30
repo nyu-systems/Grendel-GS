@@ -19,7 +19,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.general_utils import strip_symmetric, build_scaling_rotation, memory_logging
 
 class GaussianModel: #TODO: put all parameters on CPU. look at every method of GaussianModel.
 
@@ -150,7 +150,7 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device=self.device)
 
-    def training_setup(self, training_args):
+    def training_setup(self, training_args, log_file=None):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device=self.device)
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device=self.device)
@@ -164,7 +164,9 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
+        memory_logging(log_file, "before declaring adam")
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        memory_logging(log_file, "after declaring adam")
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,

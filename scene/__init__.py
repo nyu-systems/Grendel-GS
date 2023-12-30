@@ -18,6 +18,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.general_utils import memory_logging
 
 class Scene:
 
@@ -69,8 +70,7 @@ class Scene:
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
-        if log_file:
-            log_file.write("memory before loading cameras: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "before loading cameras")
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
@@ -78,8 +78,7 @@ class Scene:
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
     
-        if log_file:
-            log_file.write("memory after loading cameras, before loading gaussian: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after loading cameras/before loading gaussian")
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -89,8 +88,7 @@ class Scene:
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
     
-        if log_file:
-            log_file.write("memory after loading gaussian: {}\n".format(torch.cuda.max_memory_allocated()/1024/1024))
+        memory_logging(log_file, "after loading gaussian")
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
