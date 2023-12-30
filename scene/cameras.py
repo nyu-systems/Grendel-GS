@@ -13,6 +13,7 @@ import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+from utils.general_utils import get_args
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
@@ -20,6 +21,10 @@ class Camera(nn.Module):
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
                  ):
         super(Camera, self).__init__()
+
+        args = get_args()
+        if args.offload_image_dataset:
+            data_device = "cpu"
 
         self.uid = uid
         self.colmap_id = colmap_id

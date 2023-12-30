@@ -58,6 +58,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     all_shapes = [gaussians._xyz.shape, gaussians._features_dc.shape, gaussians._features_rest.shape, gaussians._opacity.shape, gaussians._scaling.shape, gaussians._rotation.shape, gaussians.max_radii2D.shape, gaussians.xyz_gradient_accum.shape, gaussians.denom.shape]
     log_file.write("total elements: {}\n".format(sum([numel(shape) for shape in all_shapes])))
     log_file.write("total memory usage: {} MB\n".format(sum([numel(shape) for shape in all_shapes])*4/1024/1024))
+    log_file.write("image resolution: {}\n".format(scene.getTrainCameras()[0].original_image.shape))
+    # each image is 545*980*3*4=6.4MB; for dataset with 300 images, it is 1.9GB in total.
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -123,7 +125,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         memory_logging(log_file, "after render forward")
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image = viewpoint_cam.original_image.cuda()# if args.offload_image_dataset is true, then this line will have effect.
+        memory_logging(log_file, "after move gt_image to gpu")
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         epoch_loss += loss.item()
@@ -280,6 +283,7 @@ if __name__ == "__main__":
     parser.add_argument("--offload", action='store_true', default=False)
     parser.add_argument("--log_memory", action='store_true', default=False)
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
+    parser.add_argument("--offload_image_dataset", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
