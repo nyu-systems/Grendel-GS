@@ -16,7 +16,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.general_utils import memory_logging
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, offload=False, log_file=None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, offload=False, log_file=None, my_timer=None):
     """
     Render the scene. 
     
@@ -56,6 +56,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
     memory_logging(log_file, "before preparation for rasterizer")
+    my_timer.start("prepare for rasterizer(parameters.cuda())")
 
     #TODO: only take out the needed indices of the 3dgs and put them to the gpu. make sure the tensor on gpu is differentiable.
 
@@ -124,8 +125,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         parameters.append(features_rest)
         shs = torch.cat([features_dc, features_rest], dim=1)
 
+    my_timer.stop("prepare for rasterizer(parameters.cuda())")
+
     memory_logging(log_file, "after preparation for rasterizer/before cuda_rasterizer")
 
+    my_timer.start("cuda_rasterizer")
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii = rasterizer(
         means3D = means3D,
@@ -136,6 +140,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
+    my_timer.stop("cuda_rasterizer")
     memory_logging(log_file, "after cuda_rasterizer")
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.

@@ -28,6 +28,7 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+from utils.timer import Timer
 
 def numel(shape):
     return torch.prod(torch.tensor(shape)).item()
@@ -71,6 +72,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    my_timer = Timer(args)
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -79,6 +82,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     cnt_in_epoch = 0
     epoch_id = 0
     for iteration in range(first_iter, opt.iterations + 1):        
+        memory_logging(log_file, "start new iteration {}".format(iteration))
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -120,25 +124,37 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload, log_file=log_file)
+        my_timer.start("render")
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload, log_file=log_file, my_timer=my_timer)
         image, viewspace_point_tensor, visibility_filter, radii, parameters = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"]
+        my_timer.stop("render")
 
         memory_logging(log_file, "after render forward")
         # Loss
+        my_timer.start("move gt_image to gpu")
         gt_image = viewpoint_cam.original_image.cuda()# if args.offload_image_dataset is true, then this line will have effect.
+        my_timer.stop("move gt_image to gpu")
         memory_logging(log_file, "after move gt_image to gpu")
+
+        my_timer.start("loss")
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        my_timer.stop("loss")
+
         epoch_loss += loss.item()
         cnt_in_epoch += 1
+
         memory_logging(log_file, "after loss")
+        my_timer.start("backward")
         loss.backward()
+        my_timer.stop("backward")
         memory_logging(log_file, "after loss backward")
 
         #TODO: set cpu tensors' gradients at specified indices to what we get from gpu.
 
 
         # Update cpu data
+        my_timer.start("gradient.cpu()")
         if args.offload:
             means3D, opacity, scales, rotations, features_dc, features_rest = parameters
             gaussians._xyz.grad = means3D.grad.cpu()
@@ -147,6 +163,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gaussians._opacity.grad = opacity.grad.cpu()
             gaussians._scaling.grad = scales.grad.cpu()
             gaussians._rotation.grad = rotations.grad.cpu()
+        my_timer.stop("gradient.cpu()")
 
         memory_logging(log_file, "after cpu data update")
 
@@ -187,15 +204,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration <= opt.iterations:# 3dgs' original implementation use `<`, leads to one iteration less.
+                my_timer.start("optimizer step")
                 gaussians.optimizer.step()
+                my_timer.stop("optimizer step")
                 memory_logging(log_file, "after optimizer step")
+                my_timer.start("optimizer zero grad")
                 gaussians.optimizer.zero_grad(set_to_none = True)
+                my_timer.stop("optimizer zero grad")
                 memory_logging(log_file, "after optimizer zero grad")
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
+        my_timer.elapsed(iteration, mode="this_iteration")
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -284,6 +306,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_memory", action='store_true', default=False)
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     parser.add_argument("--offload_image_dataset", action='store_true', default=False)
+    parser.add_argument("--log_time", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
