@@ -307,6 +307,7 @@ if __name__ == "__main__":
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     parser.add_argument("--offload_image_dataset", action='store_true', default=False)
     parser.add_argument("--log_time", action='store_true', default=False)
+    parser.add_argument("--deepspeed_cpu_adam", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     

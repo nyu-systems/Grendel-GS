@@ -20,6 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, memory_logging
+from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 class GaussianModel: #TODO: put all parameters on CPU. look at every method of GaussianModel.
 
@@ -57,6 +58,7 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self.setup_functions()
+        self.args = args
         if args.offload:
             self.device = "cpu"
         else:
@@ -165,7 +167,10 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
         ]
 
         memory_logging(log_file, "before declaring adam")
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        if self.args.deepspeed_cpu_adam:
+            self.optimizer = DeepSpeedCPUAdam(l, lr=0.0, eps=1e-15)
+        else:
+            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         memory_logging(log_file, "after declaring adam")
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,

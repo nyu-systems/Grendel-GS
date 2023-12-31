@@ -74,9 +74,41 @@ def offload_speed1():
         extract_json_from_python_time_log(file)
     extract_excel("experiments/offload_time1/", file_names, 50)
 
+def cpuadam_deepspeed_0():
+    file_names = [
+        "experiments/cpuadam_deepspeed_0/time.log",
+        "experiments/cpuadam_0/time.log"
+    ]
+    for file in file_names:
+        extract_json_from_python_time_log(file)
+    extract_excel("experiments/cpuadam_deepspeed_0/", file_names, 50)
+
+def cpuadam_deepspeed_1():
+    file_names = [
+        "experiments/cpuadam_deepspeed_1/time.log",
+        "experiments/cpuadam_1/time.log"
+    ]
+    for file in file_names:
+        extract_json_from_python_time_log(file)
+    extract_excel("experiments/cpuadam_deepspeed_1/", file_names, 50)
+
+def cpuadam_deepspeed_2():
+    file_names = [
+        "experiments/cpuadam_deepspeed_2/time.log",
+        "experiments/cpuadam_2/time.log"
+    ]
+    for file in file_names:
+        extract_json_from_python_time_log(file)
+    extract_excel("experiments/cpuadam_deepspeed_2/", file_names, 50)
+
+
 if __name__ == "__main__":
     # offload_speed0()
-    offload_speed1()
+    # offload_speed1()
+    # cpuadam_deepspeed_0()
+    # cpuadam_deepspeed_1()
+    cpuadam_deepspeed_2()
+
 
 
 
