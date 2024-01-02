@@ -16,24 +16,13 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.general_utils import memory_logging
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, offload=False, log_file=None, my_timer=None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, offload=False, log_file=None, my_timer=None, enable_send2gpu_sparsity=False):
     """
     Render the scene. 
     
     Background tensor (bg_color) must be on GPU!
     """
  
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-    try:
-        screenspace_points.retain_grad()
-    except:
-        pass
-
-    memory_logging(log_file, "after declare screenspace_points")
-
-    #TODO: get all indices of 3dgs that are rendered on the image. call api bind from cuda. 
-
     # Set up rasterization configuration
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
@@ -58,8 +47,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     memory_logging(log_file, "before preparation for rasterizer")
     my_timer.start("prepare for rasterizer(parameters.cuda())")
 
-    #TODO: only take out the needed indices of the 3dgs and put them to the gpu. make sure the tensor on gpu is differentiable.
-
     means3D = None
     means2D = None
     opacity = None
@@ -69,9 +56,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     cov3D_precomp = None
     colors_precomp = None
     parameters = []
+    send2gpu_filter = None
     if not offload:
+        # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+        means2D = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+
         means3D = pc.get_xyz
-        means2D = screenspace_points
         opacity = pc.get_opacity
 
         # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -101,29 +91,54 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         else:
             colors_precomp = override_color
     else:
-        # TODO: detach will create a new tensor which is bit redundant. can we avoid it?
-        means3D = pc._xyz.detach().cuda().requires_grad_(True)
+        #TODO: only take out the needed indices of the 3dgs and put them to the gpu. make sure the tensor on gpu is differentiable.
+        if enable_send2gpu_sparsity:
+            my_timer.start("move data to gpu for rasterizer.getTouchedIndices")
+            means3D_all = pc._xyz.detach().cuda()
+            my_timer.stop("move data to gpu for rasterizer.getTouchedIndices")
+
+            my_timer.start("rasterizer.getTouchedIndices")
+            send2gpu_filter = rasterizer.getTouchedIndices(means3D_all)
+            my_timer.stop("rasterizer.getTouchedIndices")
+
+            num_touched = int(send2gpu_filter.sum().item())
+
+            means2D = torch.zeros((num_touched, ) + means3D_all.shape[1:], dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+            means3D = means3D_all[send2gpu_filter].detach().requires_grad_(True)
+            my_timer.start("move send2gpu_filter to cpu for rasterizer.getTouchedIndices")
+            send2gpu_filter = send2gpu_filter.cpu()
+            my_timer.stop("move send2gpu_filter to cpu for rasterizer.getTouchedIndices")
+        else:
+            means2D = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+            means3D = pc._xyz.detach().cuda().requires_grad_(True)
+            send2gpu_filter = torch.full((means3D.shape[0],), True, dtype=torch.bool, device="cpu")
+
         parameters.append(means3D)
 
-        means2D = screenspace_points
-
-        opacity = pc._opacity.detach().cuda().requires_grad_(True)
+        # TODO: detach will create a new tensor which is bit redundant. can we avoid it?
+        # TODO: do i need to make it contiguous?
+        opacity = pc._opacity[send2gpu_filter].detach().cuda().requires_grad_(True)
         parameters.append(opacity)
         opacity = pc.opacity_activation(opacity)
 
-        scales = pc._scaling.detach().cuda().requires_grad_(True)
+        scales = pc._scaling[send2gpu_filter].detach().cuda().requires_grad_(True)
         parameters.append(scales)
         scales = pc.scaling_activation(scales)
 
-        rotations = pc._rotation.detach().cuda().requires_grad_(True)
+        rotations = pc._rotation[send2gpu_filter].detach().cuda().requires_grad_(True)
         parameters.append(rotations)
         rotations = pc.rotation_activation(rotations)
         
-        features_dc = pc._features_dc.detach().cuda().requires_grad_(True)
-        features_rest = pc._features_rest.detach().cuda().requires_grad_(True)
+        features_dc = pc._features_dc[send2gpu_filter].detach().cuda().requires_grad_(True)
+        features_rest = pc._features_rest[send2gpu_filter].detach().cuda().requires_grad_(True)
         parameters.append(features_dc)
         parameters.append(features_rest)
         shs = torch.cat([features_dc, features_rest], dim=1)
+
+    try:
+        means2D.retain_grad()
+    except:
+        pass
 
     my_timer.stop("prepare for rasterizer(parameters.cuda())")
 
@@ -147,7 +162,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # They will be excluded from value updates used in the splitting criteria.
     #TODO: return the used indices and tensors with their gradients on gpu;
     return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
+            "viewspace_points": means2D,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "parameters": parameters}
+            "parameters": parameters,
+            "send2gpu_filter": send2gpu_filter}

@@ -125,8 +125,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         my_timer.start("render")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload, log_file=log_file, my_timer=my_timer)
-        image, viewspace_point_tensor, visibility_filter, radii, parameters = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"]
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, offload=args.offload, log_file=log_file, my_timer=my_timer, enable_send2gpu_sparsity=args.enable_send2gpu_sparsity)
+        image, viewspace_point_tensor, visibility_filter, radii, parameters, send2gpu_filter = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["parameters"], render_pkg["send2gpu_filter"]
         my_timer.stop("render")
 
         memory_logging(log_file, "after render forward")
@@ -157,13 +157,41 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         my_timer.start("gradient.cpu()")
         if args.offload:
             means3D, opacity, scales, rotations, features_dc, features_rest = parameters
-            gaussians._xyz.grad = means3D.grad.cpu()
-            gaussians._features_dc.grad = features_dc.grad.cpu()
-            gaussians._features_rest.grad = features_rest.grad.cpu()
-            gaussians._opacity.grad = opacity.grad.cpu()
-            gaussians._scaling.grad = scales.grad.cpu()
-            gaussians._rotation.grad = rotations.grad.cpu()
+
+            gaussians._xyz.grad = torch.zeros_like(gaussians._xyz)
+            gaussians._xyz.grad[send2gpu_filter] = means3D.grad.cpu()
+
+            gaussians._features_dc.grad = torch.zeros_like(gaussians._features_dc)
+            gaussians._features_dc.grad[send2gpu_filter] = features_dc.grad.cpu()
+
+            gaussians._features_rest.grad = torch.zeros_like(gaussians._features_rest)
+            gaussians._features_rest.grad[send2gpu_filter] = features_rest.grad.cpu()
+
+            gaussians._opacity.grad = torch.zeros_like(gaussians._opacity)
+            gaussians._opacity.grad[send2gpu_filter] = opacity.grad.cpu()
+
+            gaussians._scaling.grad = torch.zeros_like(gaussians._scaling)
+            gaussians._scaling.grad[send2gpu_filter] = scales.grad.cpu()
+
+            gaussians._rotation.grad = torch.zeros_like(gaussians._rotation)
+            gaussians._rotation.grad[send2gpu_filter] = rotations.grad.cpu()
         my_timer.stop("gradient.cpu()")
+
+        # print the sparsity of send2gpu_filter, visibility_filter, and xyz.grad
+        if args.log_sparsity:
+            send2gpu_filter_sparsity = send2gpu_filter.sum().item()/send2gpu_filter.shape[0] if args.offload else 1
+            visibility_filter_sparsity = send2gpu_filter_sparsity * (visibility_filter.sum().item()/visibility_filter.shape[0])
+            log_file.write("send2gpu_filter sparsity: {}\n".format(send2gpu_filter_sparsity))
+            log_file.write("visibility_filter sparsity: {}\n".format(visibility_filter_sparsity))
+            with torch.no_grad():
+                # Apply torch.nonzero()
+                nonzero_indices = torch.nonzero(gaussians._xyz.grad)
+                # Extract the row indices
+                row_indices = nonzero_indices[:, 0]
+                # Count unique rows
+                unique_rows = torch.unique(row_indices)
+                num_non_zero_rows = len(unique_rows)
+                log_file.write("xyz.grad_nonzero sparsity: {}\n".format(num_non_zero_rows/gaussians._xyz.shape[0]))
 
         memory_logging(log_file, "after cpu data update")
 
@@ -191,13 +219,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if args.offload:
                     radii = radii.cpu()
                     visibility_filter = visibility_filter.cpu()
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, offload=args.offload)
+                    viewspace_point_tensor_grad = viewspace_point_tensor.grad.cpu()
+
+                    send2gpu_visibility_filter = torch.full_like(gaussians.max_radii2D, False, dtype=torch.bool)
+                    send2gpu_visibility_filter[send2gpu_filter] = visibility_filter
+                else:
+                    viewspace_point_tensor_grad = viewspace_point_tensor.grad
+                    send2gpu_visibility_filter = visibility_filter
+
+                gaussians.max_radii2D[send2gpu_visibility_filter] = torch.max(gaussians.max_radii2D[send2gpu_visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor_grad, send2gpu_visibility_filter, visibility_filter)
                 memory_logging(log_file, "after densification stats")
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    log_file.write("num_3dgs: {}\n".format(gaussians._xyz.shape[0]))
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
@@ -248,6 +285,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set
+    testing_iterations = []#TODO: It is buggy here. I did not update the code in many commits. So I do not use it for now.
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
@@ -308,6 +346,8 @@ if __name__ == "__main__":
     parser.add_argument("--offload_image_dataset", action='store_true', default=False)
     parser.add_argument("--log_time", action='store_true', default=False)
     parser.add_argument("--deepspeed_cpu_adam", action='store_true', default=False)
+    parser.add_argument("--enable_send2gpu_sparsity", action='store_true', default=False)
+    parser.add_argument("--log_sparsity", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     

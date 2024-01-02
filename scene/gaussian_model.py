@@ -413,13 +413,9 @@ class GaussianModel: #TODO: put all parameters on CPU. look at every method of G
 
         torch.cuda.empty_cache()
 
-    def add_densification_stats(self, viewspace_point_tensor, update_filter, offload=False):
-        if offload:
-            viewspace_point_tensor_grad = viewspace_point_tensor.grad.cpu()
-        else:
-            viewspace_point_tensor_grad = viewspace_point_tensor.grad
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor_grad[update_filter,:2], dim=-1, keepdim=True)
-        self.denom[update_filter] += 1
+    def add_densification_stats(self, viewspace_point_tensor_grad, send2gpu_visibility_filter, update_filter):
+        self.xyz_gradient_accum[send2gpu_visibility_filter] += torch.norm(viewspace_point_tensor_grad[update_filter,:2], dim=-1, keepdim=True)
+        self.denom[send2gpu_visibility_filter] += 1
     
     def duplicate_gaussians(self, K):
         # self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
