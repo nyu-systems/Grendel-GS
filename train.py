@@ -196,7 +196,9 @@ def training(dataset, opt, pipe, args, log_file):
         my_timer.start("sync_gradients")
         if utils.WORLD_SIZE > 1:
             sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor)
-            log_file.write("iteration {} non_zero_indices ratio: {}\n".format(iteration, sparse_ids_mask.sum().item()/sparse_ids_mask.numel()))
+            non_zero_indices_cnt = sparse_ids_mask.sum().item()
+            total_indices_cnt = sparse_ids_mask.shape[0]
+            log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
 
         my_timer.stop("sync_gradients")
         iter_end.record()
@@ -343,6 +345,7 @@ if __name__ == "__main__":
     parser.add_argument("--disable_auto_densification", action='store_true', default=False)
     parser.add_argument("--global_timer", action='store_true', default=False)
     parser.add_argument("--end2end_time", action='store_true', default=False)
+    parser.add_argument("--dist_division_mode", type=str, default="rendered_num")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -364,6 +367,7 @@ if __name__ == "__main__":
 
     os.environ['ZHX_DEBUG'] = "true" if args.zhx_debug else "false"
     os.environ['ZHX_TIME'] = "true" if args.zhx_time else "false"
+    os.environ['DIST_DIVISION_MODE'] = args.dist_division_mode
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
