@@ -419,12 +419,76 @@ def end2end_timer_0():
     extract_excel(2401)
     extract_excel(2801)
 
+def get_all_grad_sync_time(json_file_path):
+    with open(json_file_path, 'r') as f:
+        stats = json.load(f)
+    grad_sync_time = []
+    iterations = []
+    for stat in stats:
+        iterations.append(stat["iteration"])
+        grad_sync_time.append(stat["sync_gradients"])
+    return iterations, grad_sync_time
+
+def analyze_sparse_grad_speed_up():
+    paths = [
+        "experiments/end2end_timer_0/python_time_ws=1_rk=0.json",
+        "experiments/end2end_timer_0/python_time_ws=2_rk=0.json",
+        "experiments/end2end_timer_0/python_time_ws=2_rk=1.json",
+        "experiments/end2end_timer_0/python_time_ws=4_rk=0.json",
+        "experiments/end2end_timer_0/python_time_ws=4_rk=1.json",
+        "experiments/end2end_timer_0/python_time_ws=4_rk=2.json",
+        "experiments/end2end_timer_0/python_time_ws=4_rk=3.json",
+        "experiments/sparse_grad_sync/python_time_ws=2_rk=0.json",
+        "experiments/sparse_grad_sync/python_time_ws=2_rk=1.json",
+        "experiments/sparse_grad_sync/python_time_ws=4_rk=0.json",
+        "experiments/sparse_grad_sync/python_time_ws=4_rk=1.json",
+        "experiments/sparse_grad_sync/python_time_ws=4_rk=2.json",
+        "experiments/sparse_grad_sync/python_time_ws=4_rk=3.json",        
+    ]
+    all_grad_sync_time = []
+    iterations = []
+    columes = ["iteration"]
+    for path in paths:
+        iterations, grad_sync_time = get_all_grad_sync_time(path)
+        columes.append(path.removeprefix("experiments/").removesuffix(".json"))
+        all_grad_sync_time.append(grad_sync_time)
+    
+    # convert to data frame
+    # each row is a iteration
+    # each column is a json data
+    df = pd.DataFrame(columns=columes)
+    df["iteration"] = iterations
+    print("columes: ", columes)
+    print("iterations: ", iterations)
+    print("len iterations: ", len(iterations))
+    for i in range(len(all_grad_sync_time)):
+        # print length of each grad_sync_time
+        print("len grad_sync_time: ", len(all_grad_sync_time[i]))
+        df[columes[i+1]] = all_grad_sync_time[i]
+        
+    df["end2end_timer_0/python_time_ws=2"] = df[["end2end_timer_0/python_time_ws=2_rk=0", "end2end_timer_0/python_time_ws=2_rk=1"]].max(axis=1)
+    df["end2end_timer_0/python_time_ws=4"] = df[["end2end_timer_0/python_time_ws=4_rk=0", "end2end_timer_0/python_time_ws=4_rk=1", "end2end_timer_0/python_time_ws=4_rk=2", "end2end_timer_0/python_time_ws=4_rk=3"]].max(axis=1)
+    df["sparse_grad_sync/python_time_ws=2"] = df[["sparse_grad_sync/python_time_ws=2_rk=0", "sparse_grad_sync/python_time_ws=2_rk=1"]].max(axis=1)
+    df["sparse_grad_sync/python_time_ws=4"] = df[["sparse_grad_sync/python_time_ws=4_rk=0", "sparse_grad_sync/python_time_ws=4_rk=1", "sparse_grad_sync/python_time_ws=4_rk=2", "sparse_grad_sync/python_time_ws=4_rk=3"]].max(axis=1)
+    df["speed_up_ws=2"] = df["sparse_grad_sync/python_time_ws=2"] / df["end2end_timer_0/python_time_ws=2"]
+    df["speed_up_ws=4"] = df["sparse_grad_sync/python_time_ws=4"] / df["end2end_timer_0/python_time_ws=4"]
+
+    df.to_csv("experiments/sparse_grad_sync/compare_sparse_grad_sync_time.csv", index=False)
+
+    # output the average of colume: speed_up_ws=2 and speed_up_ws=4, discard the first 2 rows
+    print("average time spent ratio=2: ", np.mean(df["speed_up_ws=2"][2:]))
+    print("average time spent ratio=4: ", np.mean(df["speed_up_ws=4"][2:]))
+    
+
+
 if __name__ == "__main__":
 
     # python_timer_0()
     # python_timer_1()
-    python_timer_sync_sparse_grad()
-    end2end_timer_0()
+    # python_timer_sync_sparse_grad()
+    # end2end_timer_0()
+
+    analyze_sparse_grad_speed_up()
 
     # extract_stats_from_file_bench_num_tiles()
 
