@@ -195,8 +195,9 @@ def training(dataset, opt, pipe, args, log_file):
 
         my_timer.start("sync_gradients")
         if utils.WORLD_SIZE > 1:
-            gaussians.sync_gradients()
-            dist.all_reduce(viewspace_point_tensor.grad.data, op=dist.ReduceOp.SUM)
+            sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor)
+            log_file.write("iteration {} non_zero_indices ratio: {}\n".format(iteration, sparse_ids_mask.sum().item()/sparse_ids_mask.numel()))
+
         my_timer.stop("sync_gradients")
         iter_end.record()
 

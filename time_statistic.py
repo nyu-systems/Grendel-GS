@@ -368,10 +368,63 @@ def python_timer_1():
     extract_json_from_python_time_log_many_files()
     extract_excel(301)
 
+def python_timer_sync_sparse_grad():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    folder = "experiments/sparse_grad_sync/"
+    file_names = [
+        "python_time_ws=2_rk=0.log",
+        "python_time_ws=2_rk=1.log",
+        "python_time_ws=4_rk=0.log",
+        "python_time_ws=4_rk=1.log",
+        "python_time_ws=4_rk=2.log",
+        "python_time_ws=4_rk=3.log",
+    ]
+    num_render_file_names = [None for i in range(len(file_names))]
+
+    extract_json_from_python_time_log_many_files()
+    extract_excel(401)
+    extract_excel(801)
+    extract_excel(1201)
+    extract_excel(1601)
+    extract_excel(2001)
+    extract_excel(2401)
+    extract_excel(2801)
+
+def end2end_timer_0():
+    global folder
+    global file_names
+    global num_render_file_names
+
+    folder = "experiments/end2end_timer_0/"
+    file_names = [
+        "python_time_ws=1_rk=0.log",
+        "python_time_ws=2_rk=0.log",
+        "python_time_ws=2_rk=1.log",
+        "python_time_ws=4_rk=0.log",
+        "python_time_ws=4_rk=1.log",
+        "python_time_ws=4_rk=2.log",
+        "python_time_ws=4_rk=3.log",
+    ]
+    num_render_file_names = [None for i in range(len(file_names))]
+
+    extract_json_from_python_time_log_many_files()
+    extract_excel(401)
+    extract_excel(801)
+    extract_excel(1201)
+    extract_excel(1601)
+    extract_excel(2001)
+    extract_excel(2401)
+    extract_excel(2801)
+
 if __name__ == "__main__":
 
     # python_timer_0()
-    python_timer_1()
+    # python_timer_1()
+    python_timer_sync_sparse_grad()
+    end2end_timer_0()
 
     # extract_stats_from_file_bench_num_tiles()
 

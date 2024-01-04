@@ -175,13 +175,44 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
-    def sync_gradients(self):# TODO: optimize it
-        dist.all_reduce(self._xyz.grad.data, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self._features_dc.grad.data, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self._features_rest.grad.data, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self._opacity.grad.data, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self._scaling.grad.data, op=dist.ReduceOp.SUM)
-        dist.all_reduce(self._rotation.grad.data, op=dist.ReduceOp.SUM)
+    def get_sparse_ids(self, tensors):
+        sparse_ids = None
+        with torch.no_grad():
+            for tensor in tensors:
+                # Apply torch.nonzero()
+                nonzero_indices = torch.nonzero(tensor)
+                # Extract the row indices
+                row_indices = nonzero_indices[:, 0]
+                # Count unique rows
+                if sparse_ids is None:
+                    sparse_ids = row_indices
+                else:
+                    sparse_ids = torch.cat((sparse_ids, row_indices))
+
+            sparse_ids = torch.unique(sparse_ids, sorted=True)
+            return sparse_ids
+
+    def sync_gradients(self, viewspace_point_tensor):# TODO: optimize it
+        with torch.no_grad():
+            sparse_ids = self.get_sparse_ids([self._xyz.grad.data]) # sparse ids are non-zero ids
+            # get boolean mask of sparse ids
+            sparse_ids_mask = torch.zeros((self._xyz.shape[0]), dtype=torch.bool, device="cuda")
+            sparse_ids_mask[sparse_ids] = True
+            dist.all_reduce(sparse_ids_mask, op=dist.ReduceOp.SUM)
+            
+            def sync_grads(data):
+                sparse_grads = data.grad.data[sparse_ids_mask].contiguous() # contiguous() memory is needed for collective communication.
+                dist.all_reduce(sparse_grads, op=dist.ReduceOp.SUM)
+                data.grad.data[sparse_ids_mask] = sparse_grads
+            
+            sync_grads(self._xyz)
+            sync_grads(self._features_dc)
+            sync_grads(self._features_rest)
+            sync_grads(self._opacity)
+            sync_grads(self._scaling)
+            sync_grads(self._rotation)
+            sync_grads(viewspace_point_tensor)
+            return sparse_ids_mask
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
