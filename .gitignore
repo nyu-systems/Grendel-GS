@@ -8,3 +8,8 @@ tensorboard_3d
 screenshots
 expe*
 old_files
+*.sh
+*.ipynb
+*.txt
+*.log
+*.out
