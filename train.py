@@ -228,6 +228,7 @@ def training(dataset, opt, pipe, args, log_file):
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     log_file.write("iteration {} densify\n".format(iteration))
+                    assert args.stop_update_param > 0, "stop_update_param must be false for densification; because it is a flag for debugging."
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
@@ -237,7 +238,8 @@ def training(dataset, opt, pipe, args, log_file):
             # Optimizer step
             if iteration < opt.iterations:
                 my_timer.start("optimizer_step")
-                gaussians.optimizer.step()
+                if not args.stop_update_param:
+                    gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
                 my_timer.stop("optimizer_step")
 
@@ -346,6 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("--global_timer", action='store_true', default=False)
     parser.add_argument("--end2end_time", action='store_true', default=False)
     parser.add_argument("--dist_division_mode", type=str, default="rendered_num")
+    parser.add_argument("--stop_update_param", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
