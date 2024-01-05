@@ -44,6 +44,8 @@ def training(dataset, opt, pipe, args, log_file):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
+    if args.duplicate_gs_cnt > 0:
+        gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -349,6 +351,7 @@ if __name__ == "__main__":
     parser.add_argument("--end2end_time", action='store_true', default=False)
     parser.add_argument("--dist_division_mode", type=str, default="rendered_num")
     parser.add_argument("--stop_update_param", action='store_true', default=False)
+    parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
