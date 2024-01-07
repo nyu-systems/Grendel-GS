@@ -513,7 +513,7 @@ def extract_json_from_n_contrib_log(file_path):
                     "num_rendered_this_tile": num_rendered_this_tile,
                     "n_considered_per_pixel": n_considered_per_pixel,
                     "n_contrib2loss_per_pixel": n_contrib2loss_per_pixel,
-                    "contrib2loss_ratio": contrib2loss_ratio,
+                    # "contrib2loss_ratio": contrib2loss_ratio,
                 }
             )
 
@@ -750,7 +750,7 @@ def prepare_json(folder):
     return n_contrib_json, gpu_time_json, num_rendered_json, python_time_json
 
 def bench_train_rows(folder):
-    sub_folders = os.listdir(folder)
+    sub_folders = [x for x in os.listdir(folder) if os.path.isdir(folder + x)]
     sub_folders.sort(key=lambda x: int(x.split("_")[1]))
 
     all_gpu_time_json = []
@@ -793,10 +793,14 @@ def bench_train_rows(folder):
         
         df.to_csv(folder + f"statistics_{iteration}.csv", index=False)
 
-    get_statistics(1, 11)
-    get_statistics(2, 21)
-    get_statistics(3, 31)
-    get_statistics(4, 41)
+    all_iterations = []
+    for gpu_time_data in all_gpu_time_json[-1]:
+        all_iterations.append(gpu_time_data["iteration"])
+    print("all_iterations: ", all_iterations)
+    for i, iteration in enumerate(all_iterations):
+        if i >=1:
+            get_statistics(i, iteration)
+
 
 if __name__ == "__main__":
 
@@ -806,7 +810,12 @@ if __name__ == "__main__":
     # end2end_timer_0()
     # analyze_sparse_grad_speed_up()
 
-    bench_train_rows("experiments/bench_train_rows0/")
+    # bench_train_rows("experiments/bench_train_rows0/")
+    # bench_train_rows("experiments/bench_train_rows1/")
+    bench_train_rows("experiments/bench_train_rows2/")
+    bench_train_rows("experiments/bench_train_rows3/")
+    bench_train_rows("experiments/bench_train_rows4/")
+    bench_train_rows("experiments/bench_train_rows5/")
 
     # extract_stats_from_file_bench_num_tiles()
 

@@ -220,7 +220,8 @@ def training(dataset, opt, pipe, args, log_file):
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                # scene.save(iteration)
+                # TODO: disable saving for now to save space and debug.                
 
             # Densification
             if not disable_auto_densification and iteration < opt.densify_until_iter:
@@ -247,7 +248,8 @@ def training(dataset, opt, pipe, args, log_file):
 
             if (iteration in checkpoint_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                # torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                # TODO: disable saving for now to save space and debug.
     
         # DEBUG: print timer
         if args.zhx_python_time and iteration % args.log_interval == 1:
