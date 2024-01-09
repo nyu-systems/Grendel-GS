@@ -139,8 +139,11 @@ def draw_graph(file_name, iteration):
     fig_name = file_name.split(".json")[0] + "_it=" + str(iteration) + ".png"
     plt.savefig(folder + fig_name)
 
-def extract_excel(iteration):
+def extract_excel(iteration, provided_file_names=None):
     # extract frame from all data
+    if provided_file_names is not None:
+        file_names = provided_file_names
+
     df = None
     for file_name in file_names:
         if not os.path.exists(folder + file_name):
@@ -299,6 +302,55 @@ def gpu_timer_0():
 # New tools for analyzing: extract stats from python time log
 ############################################################################################################
 
+def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):# mode = "python" or "gpu"
+    # extract frame from all data
+    df = None
+    for file_path in file_paths:
+        if not os.path.exists(file_path):
+            continue
+        stats = []
+        with open(file_path, 'r') as f:
+            stats = json.load(f)
+        
+        # gpu_time_ws=2_rk=0.json, python_time_ws=2_rk=0.log
+        ws = int(file_path.split("/")[-1].split("_")[2].split("=")[1])
+        rk = int(file_path.split("/")[-1].split("_")[3].split("=")[1].split(".")[0])
+
+        data = None
+        for stat in stats:
+            if stat["iteration"] == iteration:
+                data = stat
+                break
+
+        data_for_save = {}
+        data_for_save["rk"] = rk
+        data_for_save["ws"] = ws
+        for key in data.keys():
+            if key == "iteration" or key == "rk" or key == "ws":
+                continue
+            data_for_save[key] = data[key]
+
+        if df is None:
+            df = pd.DataFrame(data_for_save, index=[0])
+        else:
+            df = pd.concat([df, pd.DataFrame([data_for_save])], ignore_index=True)
+
+    df.to_csv(folder + f"{mode}_time_it="+ str(iteration) +".csv", index=False)
+
+def merge_csv_which_have_same_columns(file_paths, output_file_path):
+    # add another column for file_path
+    df = None
+    for file_path in file_paths:
+        if not os.path.exists(file_path):
+            continue
+        df_t = pd.read_csv(file_path)
+        df_t["file_path"] = file_path
+        if df is None:
+            df = df_t
+        else:
+            df = pd.concat([df, df_t], ignore_index=True)
+    df.to_csv(output_file_path, index=False)
+
 # iter 1001, TimeFor 'forward': 3.405571 ms
 # iter 1001, TimeFor 'image_allreduce': 0.006914 ms
 # iter 1001, TimeFor 'loss': 2.740145 ms
@@ -311,6 +363,10 @@ def extract_json_from_python_time_log(file_path):
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
     # print(file_name, " wk: ", wk, "rk: ", rk)
+
+    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
+    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    #         return json.load(f)
 
     with open(file_path, 'r') as f:
         lines = f.readlines()
@@ -338,6 +394,10 @@ def extract_json_from_gpu_time_log(file_path):
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
 
+    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
+    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    #         return json.load(f)
+
     with open(file_path, 'r') as file:
         file_contents = file.readlines()
     
@@ -347,7 +407,7 @@ def extract_json_from_gpu_time_log(file_path):
         parts = line.split(":")
 
         if len(parts) != 2:
-            print("Error parsing line: ", line)
+            # print("Error parsing line: ", line)
             return None
 
         # Extracting the statistic name and its value
@@ -369,7 +429,7 @@ def extract_json_from_gpu_time_log(file_path):
             stats_json.append({"iteration": iteration})
             continue
 
-        print(line)
+        # print(line)
         parsed_data = parse_line(line)
         if parsed_data:
             stat_name, stat_value = parsed_data
@@ -417,6 +477,10 @@ def extract_json_from_n_contrib_log(file_path):
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
     print(file_name, " ws: ", ws, "rk: ", rk)
+
+    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
+    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    #         return json.load(f)
 
     with open(file_path, 'r') as f:
         lines = f.readlines()
@@ -527,6 +591,10 @@ def extract_json_from_num_rendered_log(file_path):
     file_name = file_path.split("/")[-1]
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
+
+    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
+    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    #         return json.load(f)
 
     with open(file_path, 'r') as file:
         file_contents = file.readlines()    
@@ -802,6 +870,132 @@ def bench_train_rows(folder):
             get_statistics(i, iteration)
 
 
+def fvalue(x):
+    # example: row_21_22_duplicategscnt_4
+    # return 21*10000 + 22*100 + 4
+    parts = x.split("_")
+    return int(parts[1])*10000 + int(parts[2])*100 + int(parts[4])
+
+def bench_sklearn_dataset(folder):
+    sub_folders = [x for x in os.listdir(folder) if os.path.isdir(folder + x)]
+    sub_folders.sort(key=lambda x: fvalue(x))
+
+    # print("sub_folders: ", sub_folders)
+    print("len sub_folders: ", len(sub_folders)) # 2112 = 528*4
+
+    all_gpu_time_json = []
+    all_n_contrib_json = []
+    for sub_folder in sub_folders:
+        print("sub_folder: ", sub_folder)
+        n_contrib_json, gpu_time_json, num_rendered_json, python_time_json = prepare_json(folder + sub_folder)
+
+        # merge all json
+        assert len(n_contrib_json) == len(gpu_time_json) == len(num_rendered_json) == len(python_time_json), "length of json should be the same"
+
+        all_gpu_time_json.append(gpu_time_json)
+        all_n_contrib_json.append(n_contrib_json)
+    
+    def get_statistics(stat_id, iteration):
+        gpu_time_keys = []
+        for key in all_gpu_time_json[0][stat_id].keys():
+            if key == "iteration" or key == "rk" or key == "ws":
+                continue
+            gpu_time_keys.append(key)
+
+        n_contrib_keys = ["num_tiles", "num_pixels", "num_rendered", "global_ave_n_rendered_per_pix", "global_ave_n_considered_per_pix", "global_ave_n_contrib2loss_per_pix"]
+        
+        columns = ["sub_folder"] + gpu_time_keys + n_contrib_keys
+        df = pd.DataFrame(columns=columns)
+        for i in range(len(sub_folders)):
+            sub_folder = sub_folders[i]
+            gpu_time_json = all_gpu_time_json[i]
+            n_contrib_json = all_n_contrib_json[i]
+
+            assert gpu_time_json[stat_id]["iteration"] == iteration, "iteration should be the same"
+            assert n_contrib_json[stat_id]["stats"]["iteration"] == iteration, "iteration should be the same"
+
+            row = {"sub_folder": sub_folder}
+            for key in gpu_time_keys:
+                row[key] = gpu_time_json[stat_id][key]
+            for key in n_contrib_keys:
+                row[key] = n_contrib_json[stat_id]["stats"][key]
+            df = df._append(row, ignore_index=True)
+        
+        df.to_csv(folder + f"statistics_{iteration}.csv", index=False)
+
+    all_iterations = []
+    for gpu_time_data in all_gpu_time_json[-1]:
+        all_iterations.append(gpu_time_data["iteration"])
+    # print("all_iterations: ", all_iterations)
+    for i, iteration in enumerate(all_iterations):
+        print("iteration: ", iteration)
+        if i >=1:
+            get_statistics(i, iteration)
+
+
+def div_stra_5_adjust(folder):
+    suffix_list = [
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [
+        folder + "gpu_time_ws=2_rk=0.json",
+        folder + "gpu_time_ws=2_rk=1.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 4, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 7, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 10, mode="gpu")
+
+    file_paths = [
+        folder + "python_time_ws=2_rk=0.json",
+        folder + "python_time_ws=2_rk=1.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 4, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 7, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 10, mode="python")
+
+def merge_csv_for_div_stra_5_adjust():
+    folder1 = "experiments/div_stra_5_adjust_none/"
+    folder2 = "experiments/div_stra_5_adjust_n_contrib/"
+
+    file_paths = []
+    for iteration in [4,7,10]:
+        file_paths += [
+            folder1 + f"gpu_time_it={iteration}.csv",
+            folder2 + f"gpu_time_it={iteration}.csv",
+        ]
+
+    merge_csv_which_have_same_columns(file_paths, folder1 + f"merged_gpu_time.csv")
+
+    file_paths = []
+    for iteration in [4,7,10]:
+        file_paths += [
+            folder1 + f"python_time_it={iteration}.csv",
+            folder2 + f"python_time_it={iteration}.csv",
+        ]
+
+    merge_csv_which_have_same_columns(file_paths, folder1 + f"merged_python_time.csv")
+
 if __name__ == "__main__":
 
     # python_timer_0()
@@ -812,10 +1006,16 @@ if __name__ == "__main__":
 
     # bench_train_rows("experiments/bench_train_rows0/")
     # bench_train_rows("experiments/bench_train_rows1/")
-    bench_train_rows("experiments/bench_train_rows2/")
-    bench_train_rows("experiments/bench_train_rows3/")
-    bench_train_rows("experiments/bench_train_rows4/")
-    bench_train_rows("experiments/bench_train_rows5/")
+    # bench_train_rows("experiments/bench_train_rows2/")
+    # bench_train_rows("experiments/bench_train_rows3/")
+    # bench_train_rows("experiments/bench_train_rows4/")
+    # bench_train_rows("experiments/bench_train_rows5/")
+
+    # bench_sklearn_dataset("/scratch/hz3496/sklearn/sklearn_dataset/")
+
+    # div_stra_5_adjust("experiments/div_stra_5_adjust_none/")
+    # div_stra_5_adjust("experiments/div_stra_5_adjust_n_contrib/")
+    merge_csv_for_div_stra_5_adjust()
 
     # extract_stats_from_file_bench_num_tiles()
 
