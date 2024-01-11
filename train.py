@@ -95,8 +95,18 @@ def training(dataset, opt, pipe, args, log_file):
                 except Exception as e:
                     network_gui.conn = None
 
-        # DEBUG: early stop
-        os.environ['ITERATION'] = str(iteration)
+        # prepare arguments for cuda code.
+        cuda_args = {
+            "world_size": str(utils.WORLD_SIZE),
+            "local_rank": str(utils.LOCAL_RANK),
+            "log_folder": args.log_folder,
+            "log_interval": str(args.log_interval),
+            "iteration": str(iteration),
+            "zhx_debug": str(args.zhx_debug),
+            "zhx_time": str(args.zhx_time),
+            "dist_division_mode": args.dist_division_mode,
+        }
+
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -131,8 +141,8 @@ def training(dataset, opt, pipe, args, log_file):
                 cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
             strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
             division_strategy = strategy_history.get_next_strategy()
-            os.environ['DIST_DIVISION_MODE'] = division_strategy.local_strategy_str
-            # TODO: improve it; now it is just `T:$l,$r`, an example: `T:0,62`
+            cuda_args["dist_division_mode"] = division_strategy.local_strategy_str
+            # TODO: improve it; now the format is just `T:$l,$r`, an example: `T:0,62`
 
         # Render
         if (iteration - 1) == debug_from:
@@ -146,7 +156,7 @@ def training(dataset, opt, pipe, args, log_file):
         #     torch.distributed.barrier() # TODO: two mode; this is to only measure local time? 
 
         timers.start("forward")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args)
         timers.stop("forward")
         image, viewspace_point_tensor, visibility_filter, radii, n_render, n_consider, n_contrib = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["n_render"], render_pkg["n_consider"], render_pkg["n_contrib"]
 
@@ -324,6 +334,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
     # Report test and samples of training set
     if iteration in testing_iterations:
+        return # TODO: disable testing for now to easy debug.
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
@@ -405,13 +416,6 @@ if __name__ == "__main__":
     if utils.LOCAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
-    # set log folder to env variable
-    os.environ['LOG_FOLDER'] = args.log_folder
-    os.environ['LOG_INTERVAL'] = str(args.log_interval)
-
-    os.environ['ZHX_DEBUG'] = "true" if args.zhx_debug else "false"
-    os.environ['ZHX_TIME'] = "true" if args.zhx_time else "false"
-    os.environ['DIST_DIVISION_MODE'] = args.dist_division_mode
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
