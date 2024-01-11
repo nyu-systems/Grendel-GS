@@ -45,7 +45,17 @@ class Timer:
             print(f"Time for '{key}': {duration:.6f} seconds")
         return duration
 
-    def elapsed(self, iteration, mode="this_iteration"):# this_iteration, average
+    def elapsed_for_workload_division(self, key):
+        """Get the elapsed time for the given key without stopping the timer"""
+        # no `if not self.args.zhx_python_time:` here, 
+        # because we want to get the elapsed time for iteratively adjusting parallelism strategy.
+
+        if key not in self.timers or self.timers[key]['all_time'] == []:
+            raise ValueError(f"Timer with key '{key}' is not running.")
+
+        return self.timers[key]['all_time'][-1]*1000
+
+    def printTimers(self, iteration, mode="this_iteration"):# this_iteration, average
         """Get the elapsed time for the given key without stopping the timer"""
         if not self.args.zhx_python_time:
             return

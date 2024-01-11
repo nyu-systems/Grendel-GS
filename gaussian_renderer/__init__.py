@@ -15,7 +15,7 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None):
     """
     Render the scene. 
     
@@ -82,7 +82,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    if adjust_div_stra_timer is not None:
+        adjust_div_stra_timer.start("forward")
+    rendered_image, radii, n_render, n_consider, n_contrib = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -91,10 +93,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
+    if adjust_div_stra_timer is not None:
+        adjust_div_stra_timer.stop("forward")
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii}
+            "radii": radii,
+            "n_render": n_render,
+            "n_consider": n_consider,
+            "n_contrib": n_contrib}

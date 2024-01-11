@@ -18,9 +18,10 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
+from scene.workload_division import DivisionStrategy, DivisionStrategyHistory, WorkloadDivisionTimer
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
-from timer import Timer
+from utils.timer import Timer
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -37,7 +38,7 @@ import torch.distributed as dist
 def training(dataset, opt, pipe, args, log_file):
     testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fixed_training_image, disable_auto_densification = args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.fixed_training_image, args.disable_auto_densification
 
-    my_timer = Timer(args)
+    timers = Timer(args)
     train_start_time = time.time()
 
     first_iter = 0
@@ -73,6 +74,9 @@ def training(dataset, opt, pipe, args, log_file):
     epoch_loss = 0
     epoch_id = 0
     cnt_in_epoch = 0
+
+    cameraId2StrategyHistory = {}
+    adjust_div_stra_timer = WorkloadDivisionTimer() if args.adjust_div_stra else None
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if False:# disable network_gui for now
@@ -121,6 +125,15 @@ def training(dataset, opt, pipe, args, log_file):
             camera_id = fixed_training_image
             viewpoint_cam = viewpoint_stack[camera_id]
 
+        if args.adjust_div_stra:
+            # get workload division strategy for this camera/image
+            if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+            division_strategy = strategy_history.get_next_strategy()
+            os.environ['DIST_DIVISION_MODE'] = division_strategy.local_strategy_str
+            # TODO: improve it; now it is just `T:$l,$r`, an example: `T:0,62`
+
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -132,10 +145,10 @@ def training(dataset, opt, pipe, args, log_file):
         # if utils.WORLD_SIZE > 1 and args.global_timer:
         #     torch.distributed.barrier() # TODO: two mode; this is to only measure local time? 
 
-        my_timer.start("forward")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
-        my_timer.stop("forward")
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        timers.start("forward")
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer)
+        timers.stop("forward")
+        image, viewspace_point_tensor, visibility_filter, radii, n_render, n_consider, n_contrib = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["n_render"], render_pkg["n_consider"], render_pkg["n_contrib"]
 
         # DEBUG: save image
         # if iteration % args.log_interval == 1:
@@ -143,14 +156,14 @@ def training(dataset, opt, pipe, args, log_file):
         #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
         #         json.dump(image_cpu, f)
 
-        my_timer.start("image_allreduce")
+        timers.start("image_allreduce")
         if utils.WORLD_SIZE > 1:
             torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
             # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
-        my_timer.stop("image_allreduce")
+        timers.stop("image_allreduce")
 
         # Loss
-        my_timer.start("loss")
+        timers.start("loss")
         gt_image = viewpoint_cam.original_image.cuda()
 
         # DEBUG: modify the label to let the loss only comes from local tiles.
@@ -175,7 +188,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        my_timer.stop("loss")
+        timers.stop("loss")
 
         # save in log folder
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
@@ -183,9 +196,13 @@ def training(dataset, opt, pipe, args, log_file):
         cnt_in_epoch = cnt_in_epoch + 1
         epoch_loss = epoch_loss + loss.item()
 
-        my_timer.start("backward")
+        timers.start("backward")
+        if args.adjust_div_stra:
+            adjust_div_stra_timer.start("backward")
         loss.backward()
-        my_timer.stop("backward")
+        if args.adjust_div_stra:
+            adjust_div_stra_timer.stop("backward")
+        timers.stop("backward")
 
         # DEBUG: save gradient data
         # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
@@ -195,14 +212,23 @@ def training(dataset, opt, pipe, args, log_file):
         # np.savetxt(log_folder+"/_scaling_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(scaling_grad_data))
         # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
-        my_timer.start("sync_gradients")
+        # adjust workload division strategy. 
+        if args.adjust_div_stra:
+            forward_time = adjust_div_stra_timer.elapsed("forward")
+            backward_time = adjust_div_stra_timer.elapsed("backward")
+            forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
+            n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib)
+            division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
+            strategy_history.add(iteration, division_strategy)
+
+        timers.start("sync_gradients")
         if utils.WORLD_SIZE > 1:
             sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor)
             non_zero_indices_cnt = sparse_ids_mask.sum().item()
             total_indices_cnt = sparse_ids_mask.shape[0]
             log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
 
-        my_timer.stop("sync_gradients")
+        timers.stop("sync_gradients")
         iter_end.record()
 
         with torch.no_grad():
@@ -231,7 +257,7 @@ def training(dataset, opt, pipe, args, log_file):
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     log_file.write("iteration {} densify\n".format(iteration))
-                    assert args.stop_update_param > 0, "stop_update_param must be false for densification; because it is a flag for debugging."
+                    assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
@@ -240,11 +266,11 @@ def training(dataset, opt, pipe, args, log_file):
 
             # Optimizer step
             if iteration < opt.iterations:
-                my_timer.start("optimizer_step")
+                timers.start("optimizer_step")
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                my_timer.stop("optimizer_step")
+                timers.stop("optimizer_step")
 
             if (iteration in checkpoint_iterations) and utils.LOCAL_RANK == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -253,7 +279,15 @@ def training(dataset, opt, pipe, args, log_file):
     
         # DEBUG: print timer
         if args.zhx_python_time and iteration % args.log_interval == 1:
-            my_timer.elapsed(iteration)
+            timers.printTimers(iteration)
+
+    if args.adjust_div_stra:
+        data_json = {}
+        for camera_id, strategy_history in cameraId2StrategyHistory.items():
+            data_json[camera_id] = strategy_history.to_json()
+        
+        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+            json.dump(data_json, f)
 
     if args.end2end_time:
         torch.cuda.synchronize()
@@ -354,6 +388,8 @@ if __name__ == "__main__":
     parser.add_argument("--dist_division_mode", type=str, default="rendered_num")
     parser.add_argument("--stop_update_param", action='store_true', default=False)
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
+    parser.add_argument("--adjust_div_stra", action='store_true', default=False)
+    parser.add_argument("--adjust_mode", type=str, default="heuristic")# none
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
