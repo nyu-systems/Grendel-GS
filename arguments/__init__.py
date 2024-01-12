@@ -48,7 +48,7 @@ class ModelParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
         self.sh_degree = 3
         self._source_path = ""
-        self._model_path = ""
+        self._model_path = "/scratch/hz3496/gs_tmp"
         self._images = "images"
         self._resolution = -1
         self._white_background = False
@@ -110,3 +110,11 @@ def get_combined_args(parser : ArgumentParser):
         if v != None:
             merged_dict[k] = v
     return Namespace(**merged_dict)
+
+def print_all_args(args, log_file):
+    # print all arguments in a readable format, each argument in a line.
+    log_file.write("arguments:\n")
+    log_file.write("-"*30+"\n")
+    for arg in vars(args):
+        log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
+    log_file.write("-"*30+"\n\n")

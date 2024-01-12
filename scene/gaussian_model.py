@@ -124,6 +124,7 @@ class GaussianModel:
             self.active_sh_degree += 1
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+        # loading could replicated on all ranks.
         self.spatial_lr_scale = spatial_lr_scale
 
         # DEBUG: save pcd.points
@@ -254,6 +255,7 @@ class GaussianModel:
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
+        # remark: max_radii2D, xyz_gradient_accum and denom are not saved here; they are save elsewhere.
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
@@ -302,6 +304,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+        # remark: max_radii2D, xyz_gradient_accum and denom are not loaded here; they are loaded from the self.restore()
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
