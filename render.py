@@ -28,8 +28,20 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
 
+    cuda_args = {
+        "mode": "test",
+        "world_size": str(1),
+        "local_rank": str(0),
+        "log_folder": "tmp_logs",
+        "log_interval": str(-1),
+        "iteration": str(-1),
+        "zhx_debug": str(False),
+        "zhx_time": str(False),
+        "dist_division_mode": "tile_num",
+    }# TODO: This is a ugly hack. 
+
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        rendering = render(view, gaussians, pipeline, background)["render"]
+        rendering = render(view, gaussians, pipeline, background, cuda_args=cuda_args)["render"]
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
