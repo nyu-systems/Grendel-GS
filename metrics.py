@@ -22,6 +22,7 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser
 
 def readImages(renders_dir, gt_dir):
+    print("Reading images from", renders_dir)
     renders = []
     gts = []
     image_names = []
@@ -33,7 +34,7 @@ def readImages(renders_dir, gt_dir):
         image_names.append(fname)
     return renders, gts, image_names
 
-def evaluate(model_paths):
+def evaluate(model_paths, mode):
 
     full_dict = {}
     per_view_dict = {}
@@ -49,7 +50,7 @@ def evaluate(model_paths):
             full_dict_polytopeonly[scene_dir] = {}
             per_view_dict_polytopeonly[scene_dir] = {}
 
-            test_dir = Path(scene_dir) / "test"
+            test_dir = Path(scene_dir) / mode
 
             for method in os.listdir(test_dir):
                 print("Method:", method)
@@ -64,6 +65,8 @@ def evaluate(model_paths):
                 renders_dir = method_dir / "renders"
                 renders, gts, image_names = readImages(renders_dir, gt_dir)
 
+                print("Number of renders images:", len(renders))
+                print("Number of gt images:", len(gts))
                 ssims = []
                 psnrs = []
                 lpipss = []
@@ -99,5 +102,6 @@ if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
+    parser.add_argument('--mode', type=str, choices=["train", "test"], default="train", help="train or test")
     args = parser.parse_args()
-    evaluate(args.model_paths)
+    evaluate(args.model_paths, args.mode)
