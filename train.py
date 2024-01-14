@@ -316,6 +316,8 @@ def training(dataset, opt, pipe, args, log_file):
         # DEBUG: print timer
         if args.zhx_python_time and iteration % args.log_interval == 1:
             timers.printTimers(iteration)
+        
+        log_file.flush()
 
     if args.adjust_div_stra:
         data_json = {}
