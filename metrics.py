@@ -15,6 +15,7 @@ from PIL import Image
 import torch
 import torchvision.transforms.functional as tf
 from utils.loss_utils import ssim
+from utils.general_utils import set_args
 from lpipsPyTorch import lpips
 import json
 from tqdm import tqdm
@@ -103,5 +104,8 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
     parser.add_argument('--mode', type=str, choices=["train", "test"], default="train", help="train or test")
+    parser.add_argument('--lazy_load_image', action='store_true', default=False)
     args = parser.parse_args()
+
+    set_args(args)
     evaluate(args.model_paths, args.mode)

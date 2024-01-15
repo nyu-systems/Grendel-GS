@@ -16,7 +16,7 @@ from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
 import torchvision
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, set_args
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
@@ -73,8 +73,12 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--generate_num", default=-1, type=int)
+    parser.add_argument("--lazy_load_image", default=-1, type=int)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
+
+    # set args
+    set_args(args)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
