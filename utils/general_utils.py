@@ -17,6 +17,16 @@ import random
 import os
 import torch.distributed as dist
 
+ARGS = None
+
+def set_args(args):
+    global ARGS
+    ARGS = args
+
+def get_args():
+    global ARGS
+    return ARGS
+
 LOCAL_RANK = 0
 WORLD_SIZE = 1
 

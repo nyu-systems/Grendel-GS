@@ -193,12 +193,16 @@ class GaussianModel:
             sparse_ids = torch.unique(sparse_ids, sorted=True)
             return sparse_ids
 
-    def sync_gradients(self, viewspace_point_tensor):# TODO: optimize it
+    def sync_gradients(self, viewspace_point_tensor, world_size):# TODO: optimize it
         with torch.no_grad():
             sparse_ids = self.get_sparse_ids([self._xyz.grad.data]) # sparse ids are non-zero ids
             # get boolean mask of sparse ids
             sparse_ids_mask = torch.zeros((self._xyz.shape[0]), dtype=torch.bool, device="cuda")
             sparse_ids_mask[sparse_ids] = True
+
+            if world_size == 1:
+                return sparse_ids_mask
+
             dist.all_reduce(sparse_ids_mask, op=dist.ReduceOp.SUM)
             
             def sync_grads(data):

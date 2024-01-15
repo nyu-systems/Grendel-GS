@@ -193,9 +193,10 @@ def training(dataset, opt, pipe, args, log_file):
             # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
         timers.stop("image_allreduce")
 
-        # Loss
-        timers.start("loss")
+        # move image to gpu: if args.lazy_load_image is true, then the transfer will actually happen.
+        timers.start("gt_image_load_to_gpu")
         gt_image = viewpoint_cam.original_image.cuda()
+        timers.stop("gt_image_load_to_gpu")
 
         # DEBUG: modify the label to let the loss only comes from local tiles.
         # print("gt_image shape: ", gt_image.shape) # torch.Size([3, 545, 980])
@@ -217,6 +218,8 @@ def training(dataset, opt, pipe, args, log_file):
         # with open(log_folder+"/image_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".json", 'w') as f:
         #     json.dump(image_cpu, f)
 
+        # Loss
+        timers.start("loss")
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         timers.stop("loss")
@@ -258,11 +261,10 @@ def training(dataset, opt, pipe, args, log_file):
             strategy_history.add(iteration, division_strategy)
 
         timers.start("sync_gradients")
-        if utils.WORLD_SIZE > 1:
-            sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor)
-            non_zero_indices_cnt = sparse_ids_mask.sum().item()
-            total_indices_cnt = sparse_ids_mask.shape[0]
-            log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
+        sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor, utils.WORLD_SIZE)
+        non_zero_indices_cnt = sparse_ids_mask.sum().item()
+        total_indices_cnt = sparse_ids_mask.shape[0]
+        log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
         timers.stop("sync_gradients")
 
         iter_end.record()
@@ -292,10 +294,13 @@ def training(dataset, opt, pipe, args, log_file):
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    log_file.write("iteration {} densify\n".format(iteration))
                     assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+                    max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+                    log_file.write("iteration {} densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. \n".format(
+                        iteration, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage))
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
@@ -330,6 +335,8 @@ def training(dataset, opt, pipe, args, log_file):
     if args.end2end_time:
         torch.cuda.synchronize()
         log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt.iterations, opt.iterations/(time.time() - train_start_time)))
+    
+    log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -442,6 +449,7 @@ if __name__ == "__main__":
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     parser.add_argument("--adjust_div_stra", action='store_true', default=False)
     parser.add_argument("--adjust_mode", type=str, default="heuristic")# none
+    parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -449,6 +457,11 @@ if __name__ == "__main__":
         print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
         args.adjust_div_stra = False
 
+
+    # Set up global args
+    utils.set_args(args)
+
+    # Set up distributed training
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 

@@ -13,6 +13,7 @@ import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+from utils.general_utils import get_args
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
@@ -30,7 +31,10 @@ class Camera(nn.Module):
         self.image_name = image_name
 
         try:
-            self.data_device = torch.device(data_device)
+            if get_args().lazy_load_image:
+                self.data_device = torch.device("cpu")
+            else:
+                self.data_device = torch.device(data_device)
         except Exception as e:
             print(e)
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
