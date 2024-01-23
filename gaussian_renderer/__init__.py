@@ -14,6 +14,7 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+from utils.general_utils import get_args
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None, cuda_args=None):
     """
@@ -21,7 +22,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     Background tensor (bg_color) must be on GPU!
     """
- 
+    
+    args = get_args()
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
@@ -84,23 +87,52 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.start("forward")
-    rendered_image, radii, n_render, n_consider, n_contrib = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
-        cuda_args = cuda_args)
+
+    if not args.sep_rendering:
+        rendered_image, radii, n_render, n_consider, n_contrib = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = shs,
+            colors_precomp = colors_precomp,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp,
+            cuda_args = cuda_args)
+    else:
+        means2D, rgb, conic_opacity, radii, depths, tiles_touched = rasterizer.preprocess_gaussians(
+            means3D=means3D,
+            scales=scales,
+            rotations=rotations,
+            shs=shs,
+            opacities=opacity,
+            cuda_args=cuda_args
+        )
+
+        if cuda_args["mode"] == "train":
+            means2D.retain_grad() # means2D is used before.
+
+        # TODO: tiles_touched will be in-place modified in rasterizer.render_gaussians. 
+        # will this conflict pytorch graph/autograd functionality?
+        # Maybe tile_touched could be viewed as assitance tensor which is not used in gradient computation. 
+
+        rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
+            means2D=means2D,
+            conic_opacity=conic_opacity,
+            rgb=rgb,
+            depths=depths,
+            radii=radii,
+            tiles_touched=tiles_touched,
+            cuda_args=cuda_args
+        )
+
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.stop("forward")
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
+            "viewspace_points": screenspace_points if not args.sep_rendering else means2D,
             "visibility_filter" : radii > 0,
             "radii": radii,
             "n_render": n_render,

@@ -450,6 +450,7 @@ if __name__ == "__main__":
     parser.add_argument("--adjust_div_stra", action='store_true', default=False)
     parser.add_argument("--adjust_mode", type=str, default="heuristic")# none
     parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
+    parser.add_argument("--sep_rendering", action='store_true', default=False) # lazily move image to gpu.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
