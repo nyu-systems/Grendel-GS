@@ -77,6 +77,11 @@ if __name__ == "__main__":
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
+    # I need to put the flags here because the render() function need it.
+    # However, disable them during render.py because they are only needed during training.
+    args.memory_distribution = False
+    args.sep_rendering = False
+
     # set args
     set_args(args)
 

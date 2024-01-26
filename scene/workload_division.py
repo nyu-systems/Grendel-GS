@@ -2,6 +2,7 @@ from scene.cameras import Camera
 import torch.distributed as dist
 import torch
 import time
+import utils.general_utils as utils
 
 BLOCK_X = 16
 BLOCK_Y = 16
@@ -29,6 +30,28 @@ def get_tile_pixel_cnt(j, i, image_width, image_height):
     pix_minx, pix_miny, pix_maxx, pix_maxy = get_tile_pixel_range(j, i, image_width, image_height)
     return (pix_maxx - pix_minx) * (pix_maxy - pix_miny)
 
+def division_pos_to_global_strategy_str(division_pos):
+    # division_pos: [0, d1, d2, ..., tile_num]
+    # return: "0,100,200,300,400,500,600,700,800,900,1000"
+    return ",".join(map(str, division_pos))
+
+def get_evenly_division_pos(camera):
+    tile_x = (camera.image_width + BLOCK_X - 1) // BLOCK_X
+    tile_y = (camera.image_height + BLOCK_Y - 1) // BLOCK_Y
+    tile_num = tile_x * tile_y
+
+    # return division_pos # format:[0, d1, d2, ..., tile_num]
+    if tile_num % utils.WORLD_SIZE == 0:
+        cnt = tile_num // utils.WORLD_SIZE
+    else:
+        cnt = tile_num // utils.WORLD_SIZE + 1
+    division_pos = [cnt * i for i in range(utils.WORLD_SIZE)] + [tile_num]
+    return division_pos
+
+def get_evenly_global_strategy_str(camera):
+    division_pos = get_evenly_division_pos(camera)
+    return division_pos_to_global_strategy_str(division_pos)
+
 class DivisionStrategy:
 
     def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos):
@@ -51,8 +74,17 @@ class DivisionStrategy:
         return (self.division_pos[self.rank], self.division_pos[self.rank+1])
 
     @property
+    def global_strategy(self):
+        return self.division_pos
+
+    @property
     def local_strategy_str(self):
         return interval_to_strategy_str(self.local_strategy)
+    
+    @property
+    def global_strategy_str(self):
+        return division_pos_to_global_strategy_str(self.division_pos)
+        # example: "0,100,200,300,400,500,600,700,800,900,1000"
 
     def update_result(self, n_render, n_consider, n_contrib, forward_time, backward_time):
         self.tile_n_render = n_render
@@ -177,12 +209,7 @@ class DivisionStrategyHistory:
         # return division_pos # format:[0, d1, d2, ..., tile_num]
         # This is the core function of workload division.
         if len(self.history) == 0:
-            if self.tile_num % self.world_size == 0:
-                cnt = self.tile_num // self.world_size
-            else:
-                cnt = self.tile_num // self.world_size + 1
-            division_pos = [cnt * i for i in range(self.world_size)] + [self.tile_num]
-            return division_pos
+            return get_evenly_division_pos(self.camera)
         
         last_strategy = self.history[-1]["strategy"]
 

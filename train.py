@@ -18,7 +18,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from scene.workload_division import DivisionStrategy, DivisionStrategyHistory, WorkloadDivisionTimer
+from scene.workload_division import DivisionStrategy, DivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -63,6 +63,7 @@ def training(dataset, opt, pipe, args, log_file):
         gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
     gaussians.training_setup(opt)
     if checkpoint:
+        assert not args.memory_distribution, "memory_distribution does not support checkpoint yet!"
         (model_params, first_iter) = torch.load(checkpoint, map_location=torch.device("cuda", utils.LOCAL_RANK))
         gaussians.restore(model_params, opt)
         print("rank {} Restored from checkpoint: {}, at iteration {}".format(utils.LOCAL_RANK, checkpoint, first_iter))
@@ -155,6 +156,19 @@ def training(dataset, opt, pipe, args, log_file):
             division_strategy = strategy_history.get_next_strategy()
             cuda_args["dist_division_mode"] = division_strategy.local_strategy_str
             # TODO: improve it; now the format is just `T:$l,$r`, an example: `T:0,62`
+            cuda_args["dist_global_strategy"] = division_strategy.global_strategy_str
+            # format: 0,8,19,...,num_tiles
+            # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
+        else:
+            # TODO: support memory_distribution if args.adjust_div_stra is false.
+
+            # cuda_args["dist_global_strategy"] = ???
+            # if dist_division_mode is tile_num, then it is easy to implement here.
+            # if dist_division_mode is rendered_num, then it will be harder to get.
+            # I think I need big refactor to naturally combine memory_distribution and args.adjust_div_stra.
+            pass
+
+
 
         # Render
         if (iteration - 1) == debug_from:
@@ -163,7 +177,7 @@ def training(dataset, opt, pipe, args, log_file):
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         timers.start("forward")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args, timers=timers)
         timers.stop("forward")
         (image, 
          viewspace_point_tensor, 
@@ -260,12 +274,14 @@ def training(dataset, opt, pipe, args, log_file):
             division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
             strategy_history.add(iteration, division_strategy)
 
-        timers.start("sync_gradients")
-        sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor, utils.WORLD_SIZE)
-        non_zero_indices_cnt = sparse_ids_mask.sum().item()
-        total_indices_cnt = sparse_ids_mask.shape[0]
-        log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
-        timers.stop("sync_gradients")
+        # NOTE: do not sync grad in args.memory_distribution mode
+        if not args.memory_distribution:
+            timers.start("sync_gradients")
+            sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor, utils.WORLD_SIZE)
+            non_zero_indices_cnt = sparse_ids_mask.sum().item()
+            total_indices_cnt = sparse_ids_mask.shape[0]
+            log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
+            timers.stop("sync_gradients")
 
         iter_end.record()
 
@@ -282,7 +298,7 @@ def training(dataset, opt, pipe, args, log_file):
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), log_file)
-            if utils.LOCAL_RANK == 0 and (iteration in saving_iterations):# Only save on rank 0; saving should not be replicated on all ranks.
+            if iteration in saving_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
@@ -313,7 +329,7 @@ def training(dataset, opt, pipe, args, log_file):
                 gaussians.optimizer.zero_grad(set_to_none = True)
                 timers.stop("optimizer_step")
 
-            if utils.LOCAL_RANK == 0 and (iteration in checkpoint_iterations):
+            if utils.LOCAL_RANK == 0 and (iteration in checkpoint_iterations): #TODO: have not handled args.memory_distribution yet.
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 log_file.write("[ITER {}] Saving Checkpoint\n".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
@@ -393,6 +409,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint)# TODO: this is a hack. not beautiful.
                     image = renderFunc(viewpoint, scene.gaussians, *renderArgs, **renderKwargs)["render"]
                     if utils.WORLD_SIZE > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
@@ -451,20 +468,27 @@ if __name__ == "__main__":
     parser.add_argument("--adjust_mode", type=str, default="heuristic")# none
     parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--sep_rendering", action='store_true', default=False) # lazily move image to gpu.
+    parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
-    if args.adjust_div_stra and utils.WORLD_SIZE == 1:
-        print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
-        args.adjust_div_stra = False
-
-
+    ## Prepare arguments.
     # Set up global args
     utils.set_args(args)
 
     # Set up distributed training
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
+
+    # Check arguments
+    if args.adjust_div_stra and utils.WORLD_SIZE == 1:
+        print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
+        args.adjust_div_stra = False
+    assert not (args.memory_distribution and not args.sep_rendering), "memory_distribution depends on sep_rendering!"
+    assert not (args.memory_distribution and utils.WORLD_SIZE == 1), "memory_distribution needs WORLD_SIZE > 1!"
+    assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
+    assert not (args.memory_distribution and not args.adjust_div_stra), "has not implement memory_distribution \
+        without args.adjust_div_stra flag. Could use adjust_mode=none to enable naive tile_num based adjustment."
 
     # create log folder
     if utils.LOCAL_RANK == 0:

@@ -148,6 +148,21 @@ class GaussianModel:
 
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
+        args = utils.get_args()
+        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
+        # Split the point cloud across the ranks. 
+        if args.memory_distribution and utils.WORLD_SIZE > 1:
+            chunk = fused_point_cloud.shape[0] // utils.WORLD_SIZE + 1
+            point_ind_l = chunk*utils.LOCAL_RANK
+            point_ind_r = min(chunk*(utils.LOCAL_RANK+1), fused_point_cloud.shape[0])
+            fused_point_cloud = fused_point_cloud[point_ind_l:point_ind_r].contiguous()
+            features = features[point_ind_l:point_ind_r].contiguous()
+            scales = scales[point_ind_l:point_ind_r].contiguous()
+            rots = rots[point_ind_l:point_ind_r].contiguous()
+            opacities = opacities[point_ind_l:point_ind_r].contiguous()
+            print("local rank", utils.LOCAL_RANK, "Number of initialized points after memory_distribution : ", fused_point_cloud.shape[0])
+            # TODO: will memory of non-local points be released after finishing this function. 
+
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -241,16 +256,68 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         return l
 
-    def save_ply(self, path):
+    def save_ply(self, path):# here, we should be in torch.no_grad() context. train.py ensures that. 
+        args = utils.get_args()
+        _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
+
+        if args.memory_distribution and utils.WORLD_SIZE > 1:
+
+            # gather at rank 0
+            def gather_uneven_tensors(tensor):
+                # gather size of tensors on different ranks
+                tensor_sizes = torch.zeros((utils.WORLD_SIZE), dtype=torch.int, device="cuda")
+                tensor_sizes[utils.LOCAL_RANK] = tensor.shape[0]
+                dist.all_reduce(tensor_sizes, op=dist.ReduceOp.SUM)
+                # move tensor_sizes to CPU and convert to int list
+                tensor_sizes = tensor_sizes.cpu().numpy().tolist()
+
+                # NOTE: Internal implementation of gather could not gather tensors of different sizes. 
+                # So, I do not use dist.gather(tensor, dst=0) but use dist.send(tensor, dst=0) and dist.recv(tensor, src=i) instead. 
+
+                # gather tensors on different ranks using grouped send/recv
+                gathered_tensors = []
+                if utils.LOCAL_RANK == 0:
+                    for i in range(utils.WORLD_SIZE):
+                        if i == utils.LOCAL_RANK:
+                            gathered_tensors.append(tensor)
+                        else:
+                            tensor_from_rk_i = torch.zeros((tensor_sizes[i], )+tensor.shape[1:], dtype=tensor.dtype, device="cuda")
+                            dist.recv(tensor_from_rk_i, src=i)
+                            gathered_tensors.append(tensor_from_rk_i)
+                    gathered_tensors = torch.cat(gathered_tensors, dim=0)
+                else:
+                    dist.send(tensor, dst=0)
+                # concatenate gathered tensors
+
+                return gathered_tensors if utils.LOCAL_RANK == 0 else None # only return gather tensors at rank 0
+
+            _xyz = gather_uneven_tensors(self._xyz)
+            _features_dc = gather_uneven_tensors(self._features_dc)
+            _features_rest = gather_uneven_tensors(self._features_rest)
+            _opacity = gather_uneven_tensors(self._opacity)
+            _scaling = gather_uneven_tensors(self._scaling)
+            _rotation = gather_uneven_tensors(self._rotation)
+        else:
+            _xyz = self._xyz
+            _features_dc = self._features_dc
+            _features_rest = self._features_rest
+            _opacity = self._opacity
+            _scaling = self._scaling
+            _rotation = self._rotation
+
+        # only save at rank 0
+        if utils.LOCAL_RANK != 0:
+            return
+
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
+        xyz = _xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
+        f_dc = _features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = _features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = _opacity.detach().cpu().numpy()
+        scale = _scaling.detach().cpu().numpy()
+        rotation = _rotation.detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
@@ -299,6 +366,21 @@ class GaussianModel:
         rots = np.zeros((xyz.shape[0], len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        args = utils.get_args()
+        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
+        # Split the point cloud across the ranks.
+        if args.memory_distribution and utils.WORLD_SIZE > 1:
+            chunk = xyz.shape[0] // utils.WORLD_SIZE + 1
+            point_ind_l = chunk*utils.LOCAL_RANK
+            point_ind_r = min(chunk*(utils.LOCAL_RANK+1), xyz.shape[0])
+            xyz = xyz[point_ind_l:point_ind_r].contiguous()
+            features_dc = features_dc[point_ind_l:point_ind_r].contiguous()
+            features_extra = features_extra[point_ind_l:point_ind_r].contiguous()
+            scales = scales[point_ind_l:point_ind_r].contiguous()
+            rots = rots[point_ind_l:point_ind_r].contiguous()
+            opacities = opacities[point_ind_l:point_ind_r].contiguous()
+            # TODO: will memory of non-local points be released after finishing this function.
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -457,7 +539,7 @@ class GaussianModel:
 
         torch.cuda.empty_cache()
 
-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
+    def add_densification_stats(self, viewspace_point_tensor, update_filter):# the :2] is a weird implementation. It is because viewspace_point_tensor is (N, 3) tensor.
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
