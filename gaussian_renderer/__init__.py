@@ -17,7 +17,7 @@ from utils.sh_utils import eval_sh
 import utils.general_utils as utils
 import torch.distributed.nn.functional as dist_func
 
-def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, tiles_touched, cuda_args, timers=None):
+def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
     local2j_ids = rasterizer.get_local2j_ids(means2D, radii, cuda_args)# (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
 
     # NOTE: i2j_send_size is an  world_size*world_size integer tensor, containing the number of 3dgs that should be sent from gpu i to gpu j.
@@ -46,8 +46,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     conic_opacity_redistributed = one_all_to_all(conic_opacity)
     radii_redistributed = one_all_to_all(radii)
     depths_redistributed = one_all_to_all(depths)
-    tiles_touched_redistributed = one_all_to_all(tiles_touched)
-    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, tiles_touched_redistributed
+    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None, cuda_args=None, timers=None):
     """
@@ -157,7 +156,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         if timers is not None:
             timers.start("forward_preprocess_gaussians")
-        means2D, rgb, conic_opacity, radii, depths, tiles_touched = rasterizer.preprocess_gaussians(
+        means2D, rgb, conic_opacity, radii, depths = rasterizer.preprocess_gaussians(
             means3D=means3D,
             scales=scales,
             rotations=rotations,
@@ -174,12 +173,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         if args.memory_distribution:
 
-            # TODO: tiles_touched does not need to be communicate.
-            # all to all communication for means2D, rgb, conic_opacity, radii, depths, tiles_touched
+            # all to all communication for means2D, rgb, conic_opacity, radii, depths
             if timers is not None:
-                timers.start("forward_all_to_all_communication")            
-            means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, tiles_touched_redistributed = \
-                all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, tiles_touched, cuda_args)
+                timers.start("forward_all_to_all_communication")
+            means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed = \
+                all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
             if timers is not None:
                 timers.stop("forward_all_to_all_communication")
 
@@ -191,16 +189,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 rgb=rgb_redistributed,
                 depths=depths_redistributed,
                 radii=radii_redistributed,
-                tiles_touched=tiles_touched_redistributed,
                 cuda_args=cuda_args
             )
             if timers is not None:
                 timers.stop("forward_render_gaussians")
         else:
-            # TODO: tiles_touched will be in-place modified in rasterizer.render_gaussians.
-            # Actually, tiles_touched is re-generated from scratch in rasterizer.render_gaussians.
-            # will this conflict pytorch graph/autograd functionality?
-            # Maybe tile_touched could be viewed as assitance tensor which is not used in gradient computation. 
             if timers is not None:
                 timers.start("forward_render_gaussians")
             rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
@@ -209,7 +202,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 rgb=rgb,
                 depths=depths,
                 radii=radii,
-                tiles_touched=tiles_touched,
                 cuda_args=cuda_args
             )
             if timers is not None:
