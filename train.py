@@ -115,6 +115,13 @@ def training(dataset, opt, pipe, args, log_file):
                 except Exception as e:
                     network_gui.conn = None
 
+        # DEBUG: understand time for one cuda synchronize call.
+        # timers.start("test_cuda_synchronize_time")
+        # timers.stop("test_cuda_synchronize_time")
+
+        timers.clear()
+        timers.start("pre_forward")
+
         # prepare arguments for rendering cuda code. The values should all be string.
         cuda_args = {
             "mode": "train",
@@ -150,6 +157,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Workload division strategy preparation
         if args.adjust_div_stra:
+            timers.start("pre_forward_adjust_div_stra")
             if viewpoint_cam.uid not in cameraId2StrategyHistory:
                 cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
             strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
@@ -159,6 +167,7 @@ def training(dataset, opt, pipe, args, log_file):
             cuda_args["dist_global_strategy"] = division_strategy.global_strategy_str
             # format: 0,8,19,...,num_tiles
             # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
+            timers.stop("pre_forward_adjust_div_stra")
         else:
             # TODO: support memory_distribution if args.adjust_div_stra is false.
 
@@ -175,7 +184,9 @@ def training(dataset, opt, pipe, args, log_file):
             pipe.debug = True
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+        timers.stop("pre_forward")
 
+        # Forward
         timers.start("forward")
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args, timers=timers)
         timers.stop("forward")
@@ -201,6 +212,7 @@ def training(dataset, opt, pipe, args, log_file):
         #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
         #         json.dump(image_cpu, f)
 
+        # Image allreduce
         timers.start("image_allreduce")
         if utils.WORLD_SIZE > 1:
             torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
@@ -238,7 +250,7 @@ def training(dataset, opt, pipe, args, log_file):
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         timers.stop("loss")
 
-        # save in log folder
+        # Logging
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
         epoch_progress_cnt = epoch_progress_cnt + 1
         epoch_loss = epoch_loss + loss.item()
@@ -249,6 +261,7 @@ def training(dataset, opt, pipe, args, log_file):
             epoch_progress_cnt = 0
             epoch_loss = 0
 
+        # Backward
         timers.start("backward")
         if args.adjust_div_stra:
             adjust_div_stra_timer.start("backward")
@@ -267,12 +280,14 @@ def training(dataset, opt, pipe, args, log_file):
 
         # adjust workload division strategy. 
         if args.adjust_div_stra:
+            timers.start("post_forward_adjust_div_stra_update_result")
             forward_time = adjust_div_stra_timer.elapsed("forward")
             backward_time = adjust_div_stra_timer.elapsed("backward")
             forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
             n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib)
             division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
             strategy_history.add(iteration, division_strategy)
+            timers.stop("post_forward_adjust_div_stra_update_result")
 
         # NOTE: do not sync grad in args.memory_distribution mode
         if not args.memory_distribution:
@@ -306,20 +321,32 @@ def training(dataset, opt, pipe, args, log_file):
             # Densification
             if not disable_auto_densification and iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
+                timers.start("densification")
+
+                timers.start("densification_update_stats")
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                timers.stop("densification_update_stats")
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
+
+                    timers.start("densify_and_prune")
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    timers.stop("densify_and_prune")
+
                     memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
                     max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
                     log_file.write("iteration {} densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. \n".format(
                         iteration, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage))
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    timers.start("reset_opacity")
                     gaussians.reset_opacity()
+                    timers.stop("reset_opacity")
+
+                timers.stop("densification")
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -335,7 +362,7 @@ def training(dataset, opt, pipe, args, log_file):
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
     
         # DEBUG: print timer
-        if args.zhx_python_time and iteration % args.log_interval == 1:
+        if args.zhx_python_time and ( iteration % args.log_interval == 1 or iteration in args.force_python_timer_iterations):
             timers.printTimers(iteration)
         
         log_file.flush()
@@ -469,6 +496,7 @@ if __name__ == "__main__":
     parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--sep_rendering", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
+    parser.add_argument("--force_python_timer_iterations", nargs="+", type=int, default=[600, 700, 800]) # print timers at these iterations. 600 is the default first densification iteration.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 

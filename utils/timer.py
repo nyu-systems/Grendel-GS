@@ -69,3 +69,6 @@ class Timer:
                 print(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms\n")
         self.file.write("\n")
+    
+    def clear(self):
+        self.timers = {}
