@@ -174,9 +174,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             means2D.retain_grad()
             # NOTE: means2D is (P, 2) tensor. This is different from means2D in not sep_rendering mode i.e. (P, 3). TODO: double check. 
 
+        # all to all communication for means2D, rgb, conic_opacity, radii, depths
         if args.memory_distribution:
-
-            # all to all communication for means2D, rgb, conic_opacity, radii, depths
             if timers is not None:
                 timers.start("forward_all_to_all_communication")
             means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size = \
@@ -185,33 +184,33 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 timers.stop("forward_all_to_all_communication")
             utils.check_memory_usage_logging("after forward_all_to_all_communication")
 
-            if timers is not None:
-                timers.start("forward_render_gaussians")
-            rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
-                means2D=means2D_redistributed,
-                conic_opacity=conic_opacity_redistributed,
-                rgb=rgb_redistributed,
-                depths=depths_redistributed,
-                radii=radii_redistributed,
-                cuda_args=cuda_args
-            )
-            if timers is not None:
-                timers.stop("forward_render_gaussians")
-            utils.check_memory_usage_logging("after forward_render_gaussians")
-        else:
-            if timers is not None:
-                timers.start("forward_render_gaussians")
-            rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
-                means2D=means2D,
-                conic_opacity=conic_opacity,
-                rgb=rgb,
-                depths=depths,
-                radii=radii,
-                cuda_args=cuda_args
-            )
-            if timers is not None:
-                timers.stop("forward_render_gaussians")
-            utils.check_memory_usage_logging("After forward_render_gaussians")
+        # get compute_locally to know local workload in the end2end distributed training.
+        if timers is not None:
+            timers.start("forward_compute_locally")
+        compute_locally = rasterizer.get_distribution_strategy(
+            means2D = means2D if not args.memory_distribution else means2D_redistributed,
+            radii = radii if not args.memory_distribution else radii_redistributed,
+            cuda_args = cuda_args
+        )
+        if timers is not None:
+            timers.stop("forward_compute_locally")
+        utils.check_memory_usage_logging("after forward_compute_locally")
+
+        # render
+        if timers is not None:
+            timers.start("forward_render_gaussians")
+        rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
+            means2D=means2D if not args.memory_distribution else means2D_redistributed,
+            conic_opacity=conic_opacity if not args.memory_distribution else conic_opacity_redistributed,
+            rgb=rgb if not args.memory_distribution else rgb_redistributed,
+            depths=depths if not args.memory_distribution else depths_redistributed,
+            radii=radii if not args.memory_distribution else radii_redistributed,
+            compute_locally=compute_locally,
+            cuda_args=cuda_args
+        )
+        if timers is not None:
+            timers.stop("forward_render_gaussians")
+        utils.check_memory_usage_logging("after forward_render_gaussians")
 
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.stop("forward")
