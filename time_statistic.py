@@ -3,25 +3,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
+import json
 
-folder = "experiments/testTimerRedundantTiles/"
-file_names = [
-    "gpu_time_ws=1_rk=0.log",
-    "gpu_time_ws=2_rk=0.log",
-    "gpu_time_ws=2_rk=1.log",
-    "time_ws=1_rk=0.log",
-    "time_ws=2_rk=0.log",
-    "time_ws=2_rk=1.log",
-]
-
-num_render_file_names = [
-    "num_rendered_ws=1_rk=0.log",
-    "num_rendered_ws=2_rk=0.log",
-    "num_rendered_ws=2_rk=1.log",
-    "num_rendered_ws=1_rk=0.log",
-    "num_rendered_ws=2_rk=0.log",
-    "num_rendered_ws=2_rk=1.log",
-]
+# TODO: delete them later
+folder = None
+file_names = None
+num_render_file_names = None
 
 def read_file(file_name, num_render_file_name=None):
     file_path = folder + file_name
@@ -302,6 +289,12 @@ def gpu_timer_0():
 # New tools for analyzing: extract stats from python time log
 ############################################################################################################
 
+def extract_data_from_list_by_iteration(data_list, iteration):
+    for stat in data_list:
+        if stat["iteration"] == iteration:
+            return stat
+    return None
+
 def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):# mode = "python" or "gpu"
     # extract frame from all data
     df = None
@@ -316,11 +309,9 @@ def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):#
         ws = int(file_path.split("/")[-1].split("_")[2].split("=")[1])
         rk = int(file_path.split("/")[-1].split("_")[3].split("=")[1].split(".")[0])
 
-        data = None
-        for stat in stats:
-            if stat["iteration"] == iteration:
-                data = stat
-                break
+        data = extract_data_from_list_by_iteration(stats, iteration)
+
+        assert data is not None, "Queried iteration statistics should be in the log file."
 
         data_for_save = {}
         data_for_save["rk"] = rk
@@ -380,12 +371,136 @@ def extract_json_from_python_time_log(file_path):
                 stats.append({"iteration": iteration, "ws": ws, "rk": rk})
             # extract key and time from `TimeFor 'forward': 3.405571 ms`
             key = parts[1].split("'")[1]
-            time = float(parts[1].split(":")[1].split(" ")[1])
+            time = float(parts[1].split("': ")[1].split(" ")[0])
             stats[-1][key] = time
 
     # save in file
     with open(file_path.removesuffix(".log") + ".json", 'w') as f:
         json.dump(stats, f, indent=4)
+    return stats
+
+def extract_json_from_i2jsend_log(file_path):
+
+    file_name = file_path.split("/")[-1]
+    ws, rk = file_name.split("_")[1].split("=")[1], file_name.split("_")[2].split("=")[1].split(".")[0]
+    ws, rk = int(ws), int(rk)
+
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    stats = []
+    for line in lines:
+        #example
+        #iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
+        if line.startswith("iteration"):
+            parts = line.split(":")
+            iteration = int(parts[0].split(" ")[1])
+
+            if not stats or stats[-1]["iteration"] != iteration:
+                stats.append({"iteration": iteration, "ws": ws})
+            i2jsend_json_data = json.loads(parts[1])
+            stats[-1]["i2jsend"] = i2jsend_json_data
+
+    # save in file
+    with open(file_path.removesuffix(".txt") + ".json", 'w') as f:
+        json.dump(stats, f, indent=4)
+    return stats
+
+def extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list, all2all_stats, process_iterations):
+    # save results in csv: i2jsend.csv
+    columns = ["iteration", "ws", "rk", "send_volume", "recv_volume", "forward_all_to_all_communication"]
+    df = pd.DataFrame(columns=columns)
+
+    ws = int(suffix_list[0].split("_")[0].split("=")[1])
+
+    for iteration in process_iterations:
+        python_time_rks = []
+        for rk, suffix in enumerate(suffix_list):
+            data = time_data[suffix]["python_time"]
+            data = extract_data_from_list_by_iteration(data, iteration)
+            python_time_rks.append(data["forward_all_to_all_communication"])
+
+        stat = extract_data_from_list_by_iteration(all2all_stats, iteration)
+
+        i2jsend = stat["i2jsend"]
+        i2jsend = np.array(i2jsend)
+        send_volume = np.sum(i2jsend, axis=1)
+        recv_volume = np.sum(i2jsend, axis=0)
+
+        # print experiment name and iteration
+        with open(folder + f"i2jsend_ws={ws}.txt", 'a') as f:
+            f.write(f"experiment: {folder}\n")
+            f.write(f"iteration: {iteration}\n")
+            f.write(f"send_volume: {send_volume}\n")
+            f.write(f"recv_volume: {recv_volume}\n")
+            f.write(f"python_time_rks: {python_time_rks}\n")
+            f.write("\n")
+
+        for i, suffix in enumerate(suffix_list):
+            this_ws = int(suffix.split("_")[0].split("=")[1])
+            rk = int(suffix.split("_")[1].split("=")[1])
+            assert rk == i, "rk should be the same as index!"
+            assert ws == this_ws, "ws should be the same!"
+            df = df._append({
+                "iteration": int(iteration),
+                "ws": int(ws),
+                "rk": int(rk),
+                "send_volume": int(send_volume[rk]),
+                "recv_volume": int(recv_volume[rk]),
+                "forward_all_to_all_communication": python_time_rks[i],
+            }, ignore_index=True)
+        # append an empty row for better visualization
+        df = df._append({
+            "iteration": "",
+            "ws": "",
+            "rk": "",
+            "send_volume": "",
+            "recv_volume": "",
+            "forward_all_to_all_communication": "",
+        }, ignore_index=True)
+    # save in file
+    df.to_csv(folder + f"i2jsend_ws={ws}.csv", index=False)
+
+def extract_memory_json_from_log(folder, file):
+    file_path = folder + file
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    
+    stats = []
+    for line in lines:
+        if "densify_and_prune. Now num of 3dgs:" in line:
+            # example
+            # iteration 1000 densify_and_prune. Now num of 3dgs: 54539. Now Memory usage: 0.45931053161621094 GB. Max Memory usage: 4.580923080444336 GB.
+            iteration = int(line.split("iteration ")[1].split(" ")[0])
+            n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
+            now_memory_usage = float(line.split("Now Memory usage: ")[1].split(" GB")[0])
+            max_memory_usage = float(line.split("Max Memory usage: ")[1].split(" GB")[0])
+            stats.append({
+                "iteration": iteration,
+                "n_3dgs": n_3dgs,
+                "now_memory_usage": now_memory_usage,
+                "max_memory_usage": max_memory_usage,
+            })
+
+    # save in file
+    memory_log_path = folder+file.removesuffix(".log") + "_mem.json"
+    with open(memory_log_path, 'w') as f:
+        json.dump(stats, f, indent=4)
+    return stats
+
+def extract_all_memory_json_from_log(folder):
+    files = [
+        "python_ws=1_rk=0.log",
+        "python_ws=2_rk=0.log",
+        "python_ws=2_rk=1.log",
+        "python_ws=4_rk=0.log",
+        "python_ws=4_rk=1.log",
+        "python_ws=4_rk=2.log",
+        "python_ws=4_rk=3.log",
+    ]
+    stats = []
+    for file in files:
+        if os.path.exists(folder + file):
+            stats.append(extract_memory_json_from_log(folder, file))
     return stats
 
 def extract_json_from_gpu_time_log(file_path):
@@ -996,7 +1111,382 @@ def merge_csv_for_div_stra_5_adjust():
 
     merge_csv_which_have_same_columns(file_paths, folder1 + f"merged_python_time.csv")
 
+
+def memory_distribution_4(folder):
+    suffix_list = [
+        "ws=1_rk=0",
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [
+        folder + "gpu_time_ws=1_rk=0.json",
+        folder + "gpu_time_ws=2_rk=0.json",
+        folder + "gpu_time_ws=2_rk=1.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="gpu")
+
+    file_paths = [
+        folder + "python_time_ws=1_rk=0.json",
+        folder + "python_time_ws=2_rk=0.json",
+        folder + "python_time_ws=2_rk=1.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="python")
+
+def memory_distribution_4_no(folder):
+    suffix_list = [
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [
+        folder + "gpu_time_ws=2_rk=0.json",
+        folder + "gpu_time_ws=2_rk=1.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="gpu")
+
+    file_paths = [
+        folder + "python_time_ws=2_rk=0.json",
+        folder + "python_time_ws=2_rk=1.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="python")
+
+def memory_distribution_4_no_sep_render_ws1(folder):
+    suffix_list = [
+        "ws=1_rk=0",
+    ]
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [
+        folder + "gpu_time_ws=1_rk=0.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="gpu")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="gpu")
+
+    file_paths = [
+        folder + "python_time_ws=1_rk=0.json",
+    ]
+    extract_time_excel_from_json(folder, file_paths, 51, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 101, mode="python")
+    extract_time_excel_from_json(folder, file_paths, 151, mode="python")
+
+def mem_dist_stats_3(folder):
+    suffix_list = [
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+
+    file_path = folder + "i2jsend_ws=4_rk=0.txt"
+    stats = extract_json_from_i2jsend_log(file_path)
+
+    # save results in csv: i2jsend.csv
+    columns = ["iteration", "rk", "send_volume", "recv_volume", "python_time"]
+    df = pd.DataFrame(columns=columns)
+
+    process_iterations = [551, 651, 751, 851, 951]
+    for iteration in process_iterations:
+
+        python_time_rks = []
+        for rk, suffix in enumerate(suffix_list):
+            data = time_data[suffix]["python_time"]
+            data = extract_data_from_list_by_iteration(data, iteration)
+            python_time_rks.append(data["forward_all_to_all_communication"])
+
+        stat = extract_data_from_list_by_iteration(stats, iteration)
+
+        i2jsend = stat["i2jsend"]
+        i2jsend = np.array(i2jsend)
+        send_volume = np.sum(i2jsend, axis=1)
+        recv_volume = np.sum(i2jsend, axis=0)
+
+        # output experiment name and iteration into this file
+        # print("experiment: ", folder)
+        # print("iteration: ", iteration)
+        # print("send_volume: ", send_volume)
+        # print("recv_volume: ", recv_volume)
+        # print("python_time_rks: ", python_time_rks)
+        # print("")
+
+        for rk in range(4):
+            df = df._append({
+                "iteration": iteration,
+                "rk": rk,
+                "send_volume": send_volume[rk],
+                "recv_volume": recv_volume[rk],
+                "python_time": python_time_rks[rk],
+            }, ignore_index=True)
+        # append an empty row for better visualization
+        df = df._append({
+            "iteration": "",
+            "rk": "",
+            "send_volume": "",
+            "recv_volume": "",
+            "python_time": "",
+        }, ignore_index=True)
+    # save in file
+    df.to_csv(folder + "i2jsend.csv", index=False)
+
+
+def mem_dist_stats_4(folder):
+    suffix_list = [
+        "ws=1_rk=0",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_path = folder + "i2jsend_ws=4_rk=0.txt"
+    stats = extract_json_from_i2jsend_log(file_path)
+
+    # save results in csv: i2jsend.csv
+    columns = ["iteration", "rk", "send_volume", "recv_volume", "forward_all_to_all_communication"]
+    df = pd.DataFrame(columns=columns)
+
+    # the following code is only for ws=4
+    process_iterations = [551, 1051, 2051, 3051, 4051, 5051, 6051, 6951]
+    for iteration in process_iterations:
+
+        python_time_rks = []
+        for rk, suffix in enumerate(suffix_list[1:]):
+            assert "4" == suffix.split("_")[0].split("=")[1], "ws should be 4!"
+            data = time_data[suffix]["python_time"]
+            data = extract_data_from_list_by_iteration(data, iteration)
+            python_time_rks.append(data["forward_all_to_all_communication"])
+
+        stat = extract_data_from_list_by_iteration(stats, iteration)
+
+        i2jsend = stat["i2jsend"]
+        i2jsend = np.array(i2jsend)
+        send_volume = np.sum(i2jsend, axis=1)
+        recv_volume = np.sum(i2jsend, axis=0)
+
+        # print experiment name and iteration
+        print("experiment: ", folder)
+        print("iteration: ", iteration)
+        print("send_volume: ", send_volume)
+        print("recv_volume: ", recv_volume)
+        print("python_time_rks: ", python_time_rks)
+        print("")
+
+        for rk in range(4):
+            df = df._append({
+                "iteration": int(iteration),
+                "rk": int(rk),
+                "send_volume": int(send_volume[rk]),
+                "recv_volume": int(recv_volume[rk]),
+                "forward_all_to_all_communication": python_time_rks[rk],
+            }, ignore_index=True)
+        # append an empty row for better visualization
+        df = df._append({
+            "iteration": "",
+            "rk": "",
+            "send_volume": "",
+            "recv_volume": "",
+            "forward_all_to_all_communication": "",
+        }, ignore_index=True)
+    # save in file
+    df.to_csv(folder + "i2jsend.csv", index=False)
+
+    file_paths = [
+        folder + "gpu_time_ws=1_rk=0.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [
+        folder + "python_time_ws=1_rk=0.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+
+
+def mem_dist_stats_4k_garden_2(folder):
+    suffix_list = [
+        "ws=1_rk=0",
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    process_iterations = [551, 751, 951]
+
+    # get i2jsend data csv
+    if os.path.exists(folder + f"i2jsend_ws=4.txt"):
+        os.remove(folder + f"i2jsend_ws=4.txt")
+    if os.path.exists(folder + f"i2jsend_ws=2.txt"):
+        os.remove(folder + f"i2jsend_ws=2.txt")
+    stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=4_rk=0.txt")
+    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[3:], stats, process_iterations)
+    stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=2_rk=0.txt")
+    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[1:3], stats, process_iterations)    
+
+    # get time csv
+    file_paths = [
+        folder + "gpu_time_ws=1_rk=0.json",
+        folder + "gpu_time_ws=2_rk=0.json",
+        folder + "gpu_time_ws=2_rk=1.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [
+        folder + "python_time_ws=1_rk=0.json",
+        folder + "python_time_ws=2_rk=0.json",
+        folder + "python_time_ws=2_rk=1.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+
+    extract_all_memory_json_from_log(folder)
+
+def mem_dist_stats_4k_garden_3(folder):
+    suffix_list = [
+        "ws=1_rk=0",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    process_iterations = [551, 1551, 2551]
+
+    # get i2jsend data csv
+    if os.path.exists(folder + f"i2jsend_ws=4.txt"):
+        os.remove(folder + f"i2jsend_ws=4.txt")
+    stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=4_rk=0.txt")
+    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[1:], stats, process_iterations)
+
+    # get time csv
+    file_paths = [
+        folder + "gpu_time_ws=1_rk=0.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [
+        folder + "python_time_ws=1_rk=0.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+
+    extract_all_memory_json_from_log(folder)
+
 if __name__ == "__main__":
+    # NOTE: folder_path must end with "/" !!!
+
 
     # python_timer_0()
     # python_timer_1()
@@ -1011,31 +1501,23 @@ if __name__ == "__main__":
     # bench_train_rows("experiments/bench_train_rows4/")
     # bench_train_rows("experiments/bench_train_rows5/")
 
+    # memory_distribution_4("experiments/memory_distribution_4/")
+    # memory_distribution_4_no("experiments/memory_distribution_4_no/")
+    # memory_distribution_4_no_sep_render_ws1("experiments/memory_distribution_4_no_sep_render_ws1/")
     # bench_sklearn_dataset("/scratch/hz3496/sklearn/sklearn_dataset/")
 
     # div_stra_5_adjust("experiments/div_stra_5_adjust_none/")
     # div_stra_5_adjust("experiments/div_stra_5_adjust_n_contrib/")
-    merge_csv_for_div_stra_5_adjust()
+    # merge_csv_for_div_stra_5_adjust()
 
-    # extract_stats_from_file_bench_num_tiles()
+    # mem_dist_stats_3("experiments/mem_dist_stats_3/")
+    # mem_dist_stats_4("experiments/mem_dist_stats_4/")
 
-    # extract_stats_from_file()
+    # mem_dist_stats_4k_garden_2("experiments/mem_dist_stats_4k_garden_2/")
+    # mem_dist_stats_4k_garden_3("experiments/mem_dist_stats_4k_garden_3/")
+    mem_dist_stats_4k_garden_3("experiments/mem_dist_stats_4k_garden_3/")
 
-    # draw_graph("time_rk=0_ws=1.json", 161)
-    # draw_graph("time_rk=0_ws=2.json", 161)
-    # draw_graph("time_rk=1_ws=2.json", 161)
-    # draw_graph("time_rk=0_ws=4.json", 161)
-    # draw_graph("time_rk=1_ws=4.json", 161)
-    # draw_graph("time_rk=2_ws=4.json", 161)
-    # draw_graph("time_rk=3_ws=4.json", 161)
 
-    # extract_excel(101)
-    # extract_excel(151)
-    # extract_excel(201)
-    # extract_excel(251)
-    # extract_excel(301)
-    # extract_excel(3351)
-    # extract_excel(3301)
     pass
 
 

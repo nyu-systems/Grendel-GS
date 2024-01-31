@@ -54,13 +54,14 @@ def get_evenly_global_strategy_str(camera):
 
 class DivisionStrategy:
 
-    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos):
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
         self.camera = camera
         self.world_size = world_size
         self.rank = rank
         self.tile_x = tile_x
         self.tile_y = tile_y
         self.division_pos = division_pos
+        self.adjust_mode = adjust_mode
 
         # results
         self.tile_n_render = None # number of 3dgs that are rendered on each tile.
@@ -144,14 +145,18 @@ class DivisionStrategy:
         return True
     
     @staticmethod
-    def synchronize_stats(n_render, n_consider, n_contrib):
+    def synchronize_stats(n_render, n_consider, n_contrib, timers=None):
         dist.all_reduce(n_render, op=dist.ReduceOp.SUM)
         dist.all_reduce(n_consider, op=dist.ReduceOp.SUM)
         dist.all_reduce(n_contrib, op=dist.ReduceOp.SUM)
+        if timers is not None:
+            timers.start("synchronize_stats: *.cpu().tolist()")
         # move to cpu and to list
         n_render = n_render.cpu().tolist()
         n_consider = n_consider.cpu().tolist()
         n_contrib = n_contrib.cpu().tolist()
+        if timers is not None:
+            timers.stop("synchronize_stats: *.cpu().tolist()")
         return n_render, n_consider, n_contrib
 
     @staticmethod
@@ -238,22 +243,24 @@ class DivisionStrategyHistory:
     
     def get_next_strategy(self):
         division_pos = self.get_next_division_pos()
-        return DivisionStrategy(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos)
+        return DivisionStrategy(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
 
     def to_json(self):
         # change to json format
         json = []
         for item in self.history:
-            json.append({
+            data = {
                 "iteration": item["iteration"],
                 "forward_time": item["strategy"].forward_time,
                 "backward_time": item["strategy"].backward_time,
-                "worker_tile_num": item["strategy"].worker_tile_num,
-                "worker_n_render": item["strategy"].worker_n_render,
-                "worker_n_consider": item["strategy"].worker_n_consider,
-                "worker_n_contrib": item["strategy"].worker_n_contrib,
                 "strategy": item["strategy"].to_json(),
-            })
+            }
+            if self.adjust_mode in ["heuristic", "none"]:
+                data["worker_n_render"] = item["strategy"].worker_n_render
+                data["worker_n_consider"] = item["strategy"].worker_n_consider
+                data["worker_n_contrib"] = item["strategy"].worker_n_contrib
+                data["worker_tile_num"] = item["strategy"].worker_tile_num
+            json.append(data)
         return json
 
 

@@ -74,6 +74,10 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--generate_num", default=-1, type=int)
     parser.add_argument("--lazy_load_image", default=-1, type=int)
+    parser.add_argument("--save_i2jsend", action='store_true', default=False)
+    parser.add_argument("--time_image_loading", action='store_true', default=False)
+    parser.add_argument("--check_memory_usage", action='store_true', default=False)
+    # these arguments are not used in render.py, I just put them here to avoid error because render.py and train.py share some code that use these arguments.
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 

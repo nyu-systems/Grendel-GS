@@ -7,33 +7,29 @@ class Timer:
         self.timers = {}
         self.args = args
         if args.zhx_python_time:
-            self.file = open(args.log_folder+"/python_time_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'a')
+            self.file = open(args.log_folder+"/python_time_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
         else:
             self.file = None
 
     def start(self, key):
-        if not self.args.zhx_python_time:
+        if not utils.check_enable_python_timer():
             return
         """Start timer for the given key"""
         if key not in self.timers:
             self.timers[key] = {'start_time': None, "cnt": 0, 'all_time': []}
 
-        if utils.WORLD_SIZE > 1 and self.args.global_timer:
-            torch.distributed.barrier()
         torch.cuda.synchronize()
 
         self.timers[key]['start_time'] = time.time()
 
     def stop(self, key, print_elapsed=False):
-        if not self.args.zhx_python_time:
+        if not utils.check_enable_python_timer():
             return
 
         """Stop the timer for the given key, and report the elapsed time"""
         if key not in self.timers or self.timers[key]['start_time'] is None:
             raise ValueError(f"Timer with key '{key}' is not running.")
 
-        if utils.WORLD_SIZE > 1 and self.args.global_timer:
-            torch.distributed.barrier()
         torch.cuda.synchronize()
 
         cur_time = time.time()
@@ -45,19 +41,9 @@ class Timer:
             print(f"Time for '{key}': {duration:.6f} seconds")
         return duration
 
-    def elapsed_for_workload_division(self, key):
-        """Get the elapsed time for the given key without stopping the timer"""
-        # no `if not self.args.zhx_python_time:` here, 
-        # because we want to get the elapsed time for iteratively adjusting parallelism strategy.
-
-        if key not in self.timers or self.timers[key]['all_time'] == []:
-            raise ValueError(f"Timer with key '{key}' is not running.")
-
-        return self.timers[key]['all_time'][-1]*1000
-
     def printTimers(self, iteration, mode="this_iteration"):# this_iteration, average
         """Get the elapsed time for the given key without stopping the timer"""
-        if not self.args.zhx_python_time:
+        if not utils.check_enable_python_timer():
             return
 
         for key in self.timers:
@@ -69,6 +55,7 @@ class Timer:
                 print(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms\n")
         self.file.write("\n")
+        self.file.flush()
     
     def clear(self):
         self.timers = {}

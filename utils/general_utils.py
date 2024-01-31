@@ -16,8 +16,14 @@ import numpy as np
 import random
 import os
 import torch.distributed as dist
+import time
 
 ARGS = None
+LOG_FILE = None
+CUR_ITER = None
+LOCAL_RANK = 0
+WORLD_SIZE = 1
+TIMERS = None
 
 def set_args(args):
     global ARGS
@@ -27,8 +33,34 @@ def get_args():
     global ARGS
     return ARGS
 
-LOCAL_RANK = 0
-WORLD_SIZE = 1
+def set_log_file(log_file):
+    global LOG_FILE
+    LOG_FILE = log_file
+
+def get_log_file():
+    global LOG_FILE
+    return LOG_FILE
+
+def set_cur_iter(cur_iter):
+    global CUR_ITER
+    CUR_ITER = cur_iter
+
+def get_cur_iter():
+    global CUR_ITER
+    return CUR_ITER
+
+def set_timers(timers):
+    global TIMERS
+    TIMERS = timers
+
+def get_timers():
+    global TIMERS
+    return TIMERS
+
+def check_enable_python_timer():
+    args = get_args()
+    iteration = get_cur_iter()
+    return args.zhx_python_time and ( iteration % args.log_interval == 1 or iteration in args.force_python_timer_iterations)
 
 def init_distributed():
     global LOCAL_RANK, WORLD_SIZE
@@ -42,9 +74,26 @@ def init_distributed():
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
-def PILtoTorch(pil_image, resolution):
-    resized_image_PIL = pil_image.resize(resolution)
+def check_memory_usage_logging(prefix):
+    if get_cur_iter() not in [0, 1]:
+        return
+    args = get_args()
+    log_file = get_log_file()
+    if hasattr(args, "check_memory_usage") and args.check_memory_usage and log_file is not None:
+        log_file.write("check_memory_usage["+prefix+"]: Memory usage: {} GB. Max Memory usage: {} GB.\n".format(
+            torch.cuda.memory_allocated() / 1024 / 1024 / 1024,
+            torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024)
+        )
+
+def PILtoTorch(pil_image, resolution, args, log_file):
+    assert pil_image.size == resolution, f"Should not resize. image size {pil_image.size} and {resolution} mismatch should not happen in this current project!"
+    # resized_image_PIL = pil_image.resize(resolution)
+    resized_image_PIL = pil_image
+    if args.time_image_loading:
+        start_time = time.time()
     resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
+    if args.time_image_loading:
+        log_file.write(f"pil->numpy->torch in {time.time() - start_time} seconds\n")
     if len(resized_image.shape) == 3:
         return resized_image.permute(2, 0, 1)
     else:

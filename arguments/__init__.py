@@ -50,7 +50,7 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = "/scratch/hz3496/gs_tmp"
         self._images = "images"
-        self._resolution = -1
+        self._resolution = 1 # set it to 1 to disable resizing. In current project, we do not resize images because we want to support larger resolution image. 
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False

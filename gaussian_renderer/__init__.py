@@ -46,7 +46,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     conic_opacity_redistributed = one_all_to_all(conic_opacity)
     radii_redistributed = one_all_to_all(radii)
     depths_redistributed = one_all_to_all(depths)
-    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed
+    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None, cuda_args=None, timers=None):
     """
@@ -129,6 +129,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     if timers is not None:
         timers.stop("forward_prepare_gaussians")
+
+    utils.check_memory_usage_logging("after forward_prepare_gaussians")
     ########## [END] Prepare Gaussians for rendering ##########
 
 
@@ -166,6 +168,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         )
         if timers is not None:
             timers.stop("forward_preprocess_gaussians")
+        utils.check_memory_usage_logging("after forward_preprocess_gaussians")
 
         if cuda_args["mode"] == "train":
             means2D.retain_grad()
@@ -176,10 +179,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             # all to all communication for means2D, rgb, conic_opacity, radii, depths
             if timers is not None:
                 timers.start("forward_all_to_all_communication")
-            means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed = \
+            means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size = \
                 all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
             if timers is not None:
                 timers.stop("forward_all_to_all_communication")
+            utils.check_memory_usage_logging("after forward_all_to_all_communication")
 
             if timers is not None:
                 timers.start("forward_render_gaussians")
@@ -193,6 +197,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             )
             if timers is not None:
                 timers.stop("forward_render_gaussians")
+            utils.check_memory_usage_logging("after forward_render_gaussians")
         else:
             if timers is not None:
                 timers.start("forward_render_gaussians")
@@ -206,6 +211,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             )
             if timers is not None:
                 timers.stop("forward_render_gaussians")
+            utils.check_memory_usage_logging("After forward_render_gaussians")
 
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.stop("forward")
@@ -213,10 +219,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
-            "viewspace_points": means2D,
-            "visibility_filter" : radii > 0,
-            "radii": radii,
-            "n_render": n_render,
-            "n_consider": n_consider,
-            "n_contrib": n_contrib}
+    return_data = {"render": rendered_image,
+                    "viewspace_points": means2D,
+                    "visibility_filter" : radii > 0,
+                    "radii": radii,
+                    "n_render": n_render,
+                    "n_consider": n_consider,
+                    "n_contrib": n_contrib}
+    if args.memory_distribution:
+        return_data["i2j_send_size"] = i2j_send_size
+    return return_data

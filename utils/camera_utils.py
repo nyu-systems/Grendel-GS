@@ -11,14 +11,16 @@
 
 from scene.cameras import Camera
 import numpy as np
-from utils.general_utils import PILtoTorch
+from utils.general_utils import PILtoTorch, get_args, get_log_file
 from utils.graphics_utils import fov2focal
+import time
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
-
+    args = get_args()
+    log_file = get_log_file()
     if args.resolution in [1, 2, 4, 8]:
         resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
     else:  # should be a type that converts to float
@@ -38,7 +40,11 @@ def loadCam(args, id, cam_info, resolution_scale):
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+    if args.time_image_loading:
+        start_time = time.time()
+    resized_image_rgb = PILtoTorch(cam_info.image, resolution, args, log_file)
+    if args.time_image_loading:
+        log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
 
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None
@@ -54,7 +60,11 @@ def loadCam(args, id, cam_info, resolution_scale):
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
 
-    for id, c in enumerate(cam_infos):
+    # for id, c in enumerate(cam_infos):
+    #     camera_list.append(loadCam(args, id, c, resolution_scale))
+    # add progress bar for the code above
+    from tqdm import tqdm
+    for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos)):
         camera_list.append(loadCam(args, id, c, resolution_scale))
 
     return camera_list

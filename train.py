@@ -54,14 +54,20 @@ def training(dataset, opt, pipe, args, log_file):
 
     timers = Timer(args)
     train_start_time = time.time()
+    utils.set_timers(timers)
+    utils.set_log_file(log_file)
+    utils.set_cur_iter(0)
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
-    if args.duplicate_gs_cnt > 0:
-        gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
-    gaussians.training_setup(opt)
+
+    with torch.no_grad():
+        scene = Scene(dataset, gaussians)
+        if args.duplicate_gs_cnt > 0:
+            gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
+        gaussians.training_setup(opt)
+
     if checkpoint:
         assert not args.memory_distribution, "memory_distribution does not support checkpoint yet!"
         (model_params, first_iter) = torch.load(checkpoint, map_location=torch.device("cuda", utils.LOCAL_RANK))
@@ -94,9 +100,15 @@ def training(dataset, opt, pipe, args, log_file):
     epoch_progress_cnt = 0
     epoch_camera_size = len(scene.getTrainCameras())
 
+    # init i2jsend_size file
+    if args.save_i2jsend:
+        i2jsend_file = open(args.log_folder+"/i2jsend_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".txt", 'w')
+
     # init workload division strategy stuff
     cameraId2StrategyHistory = {}
     adjust_div_stra_timer = WorkloadDivisionTimer() if args.adjust_div_stra else None
+
+    utils.check_memory_usage_logging("after init and before training loop")    
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if False:# disable network_gui for now
@@ -119,6 +131,7 @@ def training(dataset, opt, pipe, args, log_file):
         # timers.start("test_cuda_synchronize_time")
         # timers.stop("test_cuda_synchronize_time")
 
+        utils.set_cur_iter(iteration)
         timers.clear()
         timers.start("pre_forward")
 
@@ -186,6 +199,12 @@ def training(dataset, opt, pipe, args, log_file):
         bg = torch.rand((3), device="cuda") if opt.random_background else background
         timers.stop("pre_forward")
 
+        # NOTE: this is to make sure: we are measuring time for local work.
+        # where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
+        # 
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
+
         # Forward
         timers.start("forward")
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args, timers=timers)
@@ -205,12 +224,17 @@ def training(dataset, opt, pipe, args, log_file):
             render_pkg["n_consider"], 
             render_pkg["n_contrib"]
         )
+        if args.memory_distribution:
+            i2j_send_size = render_pkg["i2j_send_size"]
 
         # DEBUG: save image
         # if iteration % args.log_interval == 1:
         #     image_cpu = image.clone().detach().cpu().numpy().tolist()
         #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
         #         json.dump(image_cpu, f)
+
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
 
         # Image allreduce
         timers.start("image_allreduce")
@@ -247,7 +271,9 @@ def training(dataset, opt, pipe, args, log_file):
         # Loss
         timers.start("loss")
         Ll1 = l1_loss(image, gt_image)
+        utils.check_memory_usage_logging("after l1_loss")
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        utils.check_memory_usage_logging("after ssim and get total loss")
         timers.stop("loss")
 
         # Logging
@@ -261,6 +287,9 @@ def training(dataset, opt, pipe, args, log_file):
             epoch_progress_cnt = 0
             epoch_loss = 0
 
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
+
         # Backward
         timers.start("backward")
         if args.adjust_div_stra:
@@ -269,6 +298,10 @@ def training(dataset, opt, pipe, args, log_file):
         if args.adjust_div_stra:
             adjust_div_stra_timer.stop("backward")
         timers.stop("backward")
+        utils.check_memory_usage_logging("after backward")
+
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
 
         # DEBUG: save gradient data
         # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
@@ -280,14 +313,24 @@ def training(dataset, opt, pipe, args, log_file):
 
         # adjust workload division strategy. 
         if args.adjust_div_stra:
-            timers.start("post_forward_adjust_div_stra_update_result")
             forward_time = adjust_div_stra_timer.elapsed("forward")
             backward_time = adjust_div_stra_timer.elapsed("backward")
+
+            timers.start("post_forward_adjust_div_stra_synchronize_time")
             forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
-            n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib)
+            timers.stop("post_forward_adjust_div_stra_synchronize_time")
+
+            timers.start("post_forward_adjust_div_stra_synchronize_stats")
+            n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
+            timers.stop("post_forward_adjust_div_stra_synchronize_stats")
+
+            timers.start("post_forward_adjust_div_stra_update_result")
             division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
             strategy_history.add(iteration, division_strategy)
             timers.stop("post_forward_adjust_div_stra_update_result")
+
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
 
         # NOTE: do not sync grad in args.memory_distribution mode
         if not args.memory_distribution:
@@ -297,6 +340,9 @@ def training(dataset, opt, pipe, args, log_file):
             total_indices_cnt = sparse_ids_mask.shape[0]
             log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
             timers.stop("sync_gradients")
+
+        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
+            torch.distributed.barrier()
 
         iter_end.record()
 
@@ -355,6 +401,7 @@ def training(dataset, opt, pipe, args, log_file):
                     gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
                 timers.stop("optimizer_step")
+                utils.check_memory_usage_logging("after optimizer step")
 
             if utils.LOCAL_RANK == 0 and (iteration in checkpoint_iterations): #TODO: have not handled args.memory_distribution yet.
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -362,10 +409,14 @@ def training(dataset, opt, pipe, args, log_file):
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
     
         # DEBUG: print timer
-        if args.zhx_python_time and ( iteration % args.log_interval == 1 or iteration in args.force_python_timer_iterations):
+        if utils.check_enable_python_timer():
             timers.printTimers(iteration)
         
         log_file.flush()
+
+        if args.save_i2jsend and iteration % args.log_interval == 1:
+            i2jsend_file.write("iteration {}:{}\n".format(iteration, json.dumps(i2j_send_size)))
+            i2jsend_file.flush()
 
     if args.adjust_div_stra:
         data_json = {}
@@ -497,6 +548,9 @@ if __name__ == "__main__":
     parser.add_argument("--sep_rendering", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
     parser.add_argument("--force_python_timer_iterations", nargs="+", type=int, default=[600, 700, 800]) # print timers at these iterations. 600 is the default first densification iteration.
+    parser.add_argument("--save_i2jsend", action='store_true', default=False) # save i2jsend_size to file.
+    parser.add_argument("--time_image_loading", action='store_true', default=False) # time image loading.
+    parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -517,11 +571,15 @@ if __name__ == "__main__":
     assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
     assert not (args.memory_distribution and not args.adjust_div_stra), "has not implement memory_distribution \
         without args.adjust_div_stra flag. Could use adjust_mode=none to enable naive tile_num based adjustment."
+    assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
 
     # create log folder
     if utils.LOCAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
+
+    if utils.WORLD_SIZE > 1:
+        torch.distributed.barrier()# make sure log_folder is created before other ranks start writing log.
 
     # Initialize system state (RNG)
     safe_state(args.quiet)

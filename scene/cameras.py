@@ -13,7 +13,8 @@ import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
-from utils.general_utils import get_args
+from utils.general_utils import get_args, get_log_file
+import time
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
@@ -30,8 +31,10 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
 
+        args = get_args()
+        log_file = get_log_file()
         try:
-            if get_args().lazy_load_image:
+            if args.lazy_load_image:
                 self.data_device = torch.device("cpu")
             else:
                 self.data_device = torch.device(data_device)
@@ -40,7 +43,11 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
 
-        self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        if args.time_image_loading:
+            if not args.lazy_load_image:
+                torch.cuda.synchronize()
+            start_time = time.time()
+        self.original_image = image.to(self.data_device).clamp(0.0, 1.0)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 
@@ -48,6 +55,11 @@ class Camera(nn.Module):
             self.original_image *= gt_alpha_mask.to(self.data_device)
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+
+        if args.time_image_loading:
+            if not args.lazy_load_image:
+                torch.cuda.synchronize()
+            log_file.write(f"Image processing in {time.time() - start_time} seconds\n")
 
         self.zfar = 100.0
         self.znear = 0.01

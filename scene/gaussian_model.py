@@ -191,6 +191,8 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
+        utils.check_memory_usage_logging("after training_setup")
+
     def get_sparse_ids(self, tensors):
         sparse_ids = None
         with torch.no_grad():
