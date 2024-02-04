@@ -24,7 +24,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     i2j_send_size = torch.zeros((utils.WORLD_SIZE, utils.WORLD_SIZE), dtype=torch.int, device="cuda")
     i2j_send_size[utils.LOCAL_RANK, :] = torch.tensor([len(local2j_ids[i]) for i in range(utils.WORLD_SIZE)], dtype=torch.int, device="cuda")
 
-    # sync i2j_send_size
+    # sync i2j_send_size # TODO: optimize it. maybe by using all-gather. 
     torch.distributed.all_reduce(i2j_send_size, op=torch.distributed.ReduceOp.SUM)
     i2j_send_size = i2j_send_size.cpu().numpy().tolist()
 
@@ -41,7 +41,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
         )# The function version could naturally enable communication during backward. 
         return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
 
-    means2D_redistributed = one_all_to_all(means2D)
+    means2D_redistributed = one_all_to_all(means2D)#TODO: merge them into one all2all call.
     rgb_redistributed = one_all_to_all(rgb)
     conic_opacity_redistributed = one_all_to_all(conic_opacity)
     radii_redistributed = one_all_to_all(radii)
@@ -227,4 +227,5 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                     "n_contrib": n_contrib}
     if args.memory_distribution:
         return_data["i2j_send_size"] = i2j_send_size
+        return_data["compute_locally"] = compute_locally
     return return_data

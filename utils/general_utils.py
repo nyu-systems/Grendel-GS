@@ -57,6 +57,21 @@ def get_timers():
     global TIMERS
     return TIMERS
 
+BLOCK_X, BLOCK_Y = 16, 16
+IMG_H, IMG_W = None, None
+
+def set_img_size(h, w):
+    global IMG_H, IMG_W
+    IMG_H, IMG_W = h, w
+
+def get_img_size():
+    global IMG_H, IMG_W
+    return IMG_H, IMG_W
+
+def get_num_pixels():
+    global IMG_H, IMG_W
+    return IMG_H * IMG_W
+
 def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()

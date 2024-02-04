@@ -4,8 +4,6 @@ import torch
 import time
 import utils.general_utils as utils
 
-BLOCK_X = 16
-BLOCK_Y = 16
 
 def strategy_str_to_interval(strategy_str):
     # strategy_str: `T:$l,$r`
@@ -20,10 +18,10 @@ def interval_to_strategy_str(interval):
     return f"T:{interval[0]},{interval[1]}"
 
 def get_tile_pixel_range(j, i, image_width, image_height):
-    pix_minx = i * BLOCK_X
-    pix_miny = j * BLOCK_Y
-    pix_maxx = min((i+1) * BLOCK_X, image_width)
-    pix_maxy = min((j+1) * BLOCK_Y, image_height)
+    pix_minx = i * utils.BLOCK_X
+    pix_miny = j * utils.BLOCK_Y
+    pix_maxx = min((i+1) * utils.BLOCK_X, image_width)
+    pix_maxy = min((j+1) * utils.BLOCK_Y, image_height)
     return pix_minx, pix_miny, pix_maxx, pix_maxy
 
 def get_tile_pixel_cnt(j, i, image_width, image_height):
@@ -36,8 +34,8 @@ def division_pos_to_global_strategy_str(division_pos):
     return ",".join(map(str, division_pos))
 
 def get_evenly_division_pos(camera):
-    tile_x = (camera.image_width + BLOCK_X - 1) // BLOCK_X
-    tile_y = (camera.image_height + BLOCK_Y - 1) // BLOCK_Y
+    tile_x = (camera.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+    tile_y = (camera.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
     tile_num = tile_x * tile_y
 
     # return division_pos # format:[0, d1, d2, ..., tile_num]
@@ -201,8 +199,8 @@ class DivisionStrategyHistory:
         self.rank = rank
         self.adjust_mode = adjust_mode
 
-        self.tile_x = (camera.image_width + BLOCK_X - 1) // BLOCK_X
-        self.tile_y = (camera.image_height + BLOCK_Y - 1) // BLOCK_Y
+        self.tile_x = (camera.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+        self.tile_y = (camera.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
         self.tile_num = self.tile_x * self.tile_y
 
         self.history = []

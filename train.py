@@ -14,8 +14,9 @@ import torch
 import numpy as np
 import json
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss
 from gaussian_renderer import render, network_gui
+from gaussian_renderer.image_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
 from scene.workload_division import DivisionStrategy, DivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
@@ -81,13 +82,14 @@ def training(dataset, opt, pipe, args, log_file):
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    # DEBUG: print shape of gaussians to know how much data to communicate. 
-    # print("xyz shape: ", gaussians._xyz.shape)
-    # print("f_dc shape: ", gaussians._features_dc.shape)
-    # print("f_rest shape: ", gaussians._features_rest.shape)
-    # print("opacity shape: ", gaussians._opacity.shape)
-    # print("scaling shape: ", gaussians._scaling.shape)
-    # print("rotation shape: ", gaussians._rotation.shape)
+    # Print shape of gaussians parameters. 
+    log_file.write("xyz shape: {}\n".format(gaussians._xyz.shape))
+    log_file.write("f_dc shape: {}\n".format(gaussians._features_dc.shape))
+    log_file.write("f_rest shape: {}\n".format(gaussians._features_rest.shape))
+    log_file.write("opacity shape: {}\n".format(gaussians._opacity.shape))
+    log_file.write("scaling shape: {}\n".format(gaussians._scaling.shape))
+    log_file.write("rotation shape: {}\n".format(gaussians._rotation.shape))
+
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -127,15 +129,22 @@ def training(dataset, opt, pipe, args, log_file):
                 except Exception as e:
                     network_gui.conn = None
 
+
+        # Step Initialization
+        utils.set_cur_iter(iteration)
+        timers.clear()
+        timers.start("pre_forward")
+        iter_start.record()
+        gaussians.update_learning_rate(iteration)
+        # Every 1000 its we increase the levels of SH up to a maximum degree
+        if iteration % 1000 == 0:
+            gaussians.oneupSHdegree()
         # DEBUG: understand time for one cuda synchronize call.
         # timers.start("test_cuda_synchronize_time")
         # timers.stop("test_cuda_synchronize_time")
 
-        utils.set_cur_iter(iteration)
-        timers.clear()
-        timers.start("pre_forward")
 
-        # prepare arguments for rendering cuda code. The values should all be string.
+        # Prepare arguments for rendering cuda code. The values should all be string.
         cuda_args = {
             "mode": "train",
             "world_size": str(utils.WORLD_SIZE),
@@ -148,27 +157,22 @@ def training(dataset, opt, pipe, args, log_file):
             "dist_division_mode": args.dist_division_mode,
         }
 
-        iter_start.record()
 
-        gaussians.update_learning_rate(iteration)
 
-        # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
-
-        # Pick a random Camera
+        # Prepara data: Pick a random Camera
         if not viewpoint_stack:
             log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
-
         viewpoint_cam = None
         if fixed_training_image == -1:
             camera_id = randint(0, len(viewpoint_stack)-1)
             viewpoint_cam = viewpoint_stack.pop(camera_id)
         else:
             viewpoint_cam = viewpoint_stack[fixed_training_image]
+        utils.set_img_size(viewpoint_cam.image_height, viewpoint_cam.image_width)
 
-        # Workload division strategy preparation
+
+        # Prepare Workload division strategy
         if args.adjust_div_stra:
             timers.start("pre_forward_adjust_div_stra")
             if viewpoint_cam.uid not in cameraId2StrategyHistory:
@@ -201,7 +205,6 @@ def training(dataset, opt, pipe, args, log_file):
 
         # NOTE: this is to make sure: we are measuring time for local work.
         # where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
-        # 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
@@ -226,55 +229,25 @@ def training(dataset, opt, pipe, args, log_file):
         )
         if args.memory_distribution:
             i2j_send_size = render_pkg["i2j_send_size"]
+            compute_locally = render_pkg["compute_locally"]
 
-        # DEBUG: save image
-        # if iteration % args.log_interval == 1:
-        #     image_cpu = image.clone().detach().cpu().numpy().tolist()
-        #     with open(log_folder+"/image_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+"_it="+str(iteration)+".json", 'w') as f:
-        #         json.dump(image_cpu, f)
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
-        # Image allreduce
-        timers.start("image_allreduce")
-        if utils.WORLD_SIZE > 1:
-            torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
-            # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
-        timers.stop("image_allreduce")
 
-        # move image to gpu: if args.lazy_load_image is true, then the transfer will actually happen.
-        timers.start("gt_image_load_to_gpu")
-        gt_image = viewpoint_cam.original_image.cuda()
-        timers.stop("gt_image_load_to_gpu")
+        # Loss Computation
+        if args.image_distribution:
+            # Distributed Loss Computation
+            Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
 
-        # DEBUG: modify the label to let the loss only comes from local tiles.
-        # print("gt_image shape: ", gt_image.shape) # torch.Size([3, 545, 980])
-        # if utils.WORLD_SIZE > 1:
-        #     # set bg_color (shape=(3,)) to position out of [x0, x1]*[y0, y1]
-        #     # image shape: (3, 545, 980)
-        #     x0, x1, y0, y1 = get_local_pixel_rect(viewpoint_cam.image_width, viewpoint_cam.image_height)
-        #     # print("local rank {}: width {} height {} x0 {}, y0 {}, x1 {}, y1 {}".format(utils.LOCAL_RANK, 980, 545, x0, y0, x1, y1))
-        #     gt_image[:, :y0, :] = background.reshape(3, 1, 1)
-        #     gt_image[:, y1:, :] = background.reshape(3, 1, 1)
-        #     gt_image[:, :, :x0] = background.reshape(3, 1, 1)
-        #     gt_image[:, :, x1:] = background.reshape(3, 1, 1)# redundany value setting.
-        
-        # DEBUG: save gt_image and image
-        # gt_image_cpu = gt_image.clone().detach().cpu().numpy().tolist()
-        # image_cpu = image.clone().detach().cpu().numpy().tolist()
-        # with open(log_folder+"/gt_image_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".json", 'w') as f:
-        #     json.dump(gt_image_cpu, f)
-        # with open(log_folder+"/image_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".json", 'w') as f:
-        #     json.dump(image_cpu, f)
+        else:
+            # Replicated Loss Computation
+            Ll1, ssim_loss = replicated_loss_computation(image, viewpoint_cam)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
+        utils.check_memory_usage_logging("after loss")
 
-        # Loss
-        timers.start("loss")
-        Ll1 = l1_loss(image, gt_image)
-        utils.check_memory_usage_logging("after l1_loss")
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        utils.check_memory_usage_logging("after ssim and get total loss")
-        timers.stop("loss")
 
         # Logging
         log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
@@ -287,8 +260,10 @@ def training(dataset, opt, pipe, args, log_file):
             epoch_progress_cnt = 0
             epoch_loss = 0
 
+
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
+
 
         # Backward
         timers.start("backward")
@@ -300,18 +275,12 @@ def training(dataset, opt, pipe, args, log_file):
         timers.stop("backward")
         utils.check_memory_usage_logging("after backward")
 
+
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
-        # DEBUG: save gradient data
-        # xyz_grad_data = gaussians._xyz.grad.data.clone().detach().cpu()
-        # scaling_grad_data = gaussians._scaling.grad.data.clone().detach().cpu()
-        # rotation_grad_data = gaussians._rotation.grad.data.clone().detach().cpu()
-        # np.savetxt(log_folder+"/_xyz_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+"_"+str(iteration)+".txt", np.asarray(xyz_grad_data))
-        # np.savetxt(log_folder+"/_scaling_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(scaling_grad_data))
-        # np.savetxt(log_folder+"/_rotation_grad_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(rotation_grad_data))
 
-        # adjust workload division strategy. 
+        # Adjust workload division strategy. 
         if args.adjust_div_stra:
             forward_time = adjust_div_stra_timer.elapsed("forward")
             backward_time = adjust_div_stra_timer.elapsed("backward")
@@ -329,10 +298,12 @@ def training(dataset, opt, pipe, args, log_file):
             strategy_history.add(iteration, division_strategy)
             timers.stop("post_forward_adjust_div_stra_update_result")
 
+
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
-        # NOTE: do not sync grad in args.memory_distribution mode
+
+        # Sync Gradients. NOTE: do not sync grad in args.memory_distribution mode
         if not args.memory_distribution:
             timers.start("sync_gradients")
             sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor, utils.WORLD_SIZE)
@@ -341,10 +312,13 @@ def training(dataset, opt, pipe, args, log_file):
             log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
             timers.stop("sync_gradients")
 
+
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
+
         iter_end.record()
+
 
         with torch.no_grad():
             # Progress bar
@@ -408,16 +382,18 @@ def training(dataset, opt, pipe, args, log_file):
                 log_file.write("[ITER {}] Saving Checkpoint\n".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
     
-        # DEBUG: print timer
+        # Finish a iteration and clean up
         if utils.check_enable_python_timer():
             timers.printTimers(iteration)
-        
+
         log_file.flush()
 
         if args.save_i2jsend and iteration % args.log_interval == 1:
             i2jsend_file.write("iteration {}:{}\n".format(iteration, json.dumps(i2j_send_size)))
             i2jsend_file.flush()
 
+
+    # Finish training
     if args.adjust_div_stra:
         data_json = {}
         for camera_id, strategy_history in cameraId2StrategyHistory.items():
@@ -551,6 +527,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_i2jsend", action='store_true', default=False) # save i2jsend_size to file.
     parser.add_argument("--time_image_loading", action='store_true', default=False) # time image loading.
     parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
+    parser.add_argument("--image_distribution", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -572,6 +549,8 @@ if __name__ == "__main__":
     assert not (args.memory_distribution and not args.adjust_div_stra), "has not implement memory_distribution \
         without args.adjust_div_stra flag. Could use adjust_mode=none to enable naive tile_num based adjustment."
     assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
+    assert not (args.image_distribution and not args.memory_distribution), "image_distribution needs memory_distribution!"
+    assert not (args.image_distribution and utils.WORLD_SIZE == 1), "image_distribution needs WORLD_SIZE > 1!"
 
     # create log folder
     if utils.LOCAL_RANK == 0:

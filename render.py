@@ -84,7 +84,7 @@ if __name__ == "__main__":
     # I need to put the flags here because the render() function need it.
     # However, disable them during render.py because they are only needed during training.
     args.memory_distribution = False
-    args.sep_rendering = False
+    args.sep_rendering = True
 
     # set args
     set_args(args)
