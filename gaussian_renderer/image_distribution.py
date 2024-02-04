@@ -28,7 +28,12 @@ def get_touched_pixels_rect(touched_locally=None, tile_rect=None):
 
 
 def get_all_pos_send_to_j(compute_locally, touched_locally):
+    # TODO: implement this function using DistributionStrategy Statistics. Could reduce the launching overhead of image distribution.
 
+
+    timers = utils.get_timers()
+
+    timers.start("[all_pos_send_to_j]all_gather_locally_compute")
     # allgather locally_compute. For 4K, the size of one locally_compute is 4000*4000 = 16MB. It is not a short time. 
     # because bool tensor use 1 byte for 1 element: https://discuss.pytorch.org/t/why-does-each-torch-bool-value-take-up-an-entire-byte/183822
     # TODO: This could be optimized by using bitset. Divide communication volume by 8. 
@@ -46,19 +51,24 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
         else:
             pos_recv_from_i[i] = torch.zeros((0, 2), dtype=torch.long, device="cuda")
             recv_from_i_size[i] = pos_recv_from_i[i].shape[0]
+    timers.stop("[all_pos_send_to_j]all_gather_locally_compute")
     
+    timers.start("[all_pos_send_to_j]all_gather_send_to_j_size")# NOTE: This is slow because all_gather_object involves cpu2gpu+gpu2gpu+gpu2cpu communication here. 
     all_pos_recv_from_i = torch.cat(pos_recv_from_i, dim=0)
     j_recv_from_i_size = [None for _ in range(utils.WORLD_SIZE)] # jth row and ith column(j_recv_from_i_size[j][i]) is the size of sending from i to j.
     # each element should be a list of size of pos_recv_from_i[i] for all i. i.e. [None for _ in range(utils.WORLD_SIZE)]
     torch.distributed.all_gather_object(j_recv_from_i_size, recv_from_i_size)
     send_to_j_size = [j_recv_from_i_size[j][utils.LOCAL_RANK] for j in range(utils.WORLD_SIZE)]
+    timers.stop("[all_pos_send_to_j]all_gather_send_to_j_size")
 
+    timers.start("[all_pos_send_to_j]all_to_all_pos_send_to_j")
     # Use send_to_j_size[i] as the shape of the tensor
     pos_send_to_j = [None for _ in range(utils.WORLD_SIZE)]
     for j in range(utils.WORLD_SIZE):
         pos_send_to_j[j] = torch.empty((send_to_j_size[j], 2), dtype=torch.long, device="cuda")
     torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i)
     all_pos_send_to_j = torch.cat(pos_send_to_j, dim=0).contiguous()
+    timers.stop("[all_pos_send_to_j]all_to_all_pos_send_to_j")
 
     return send_to_j_size, recv_from_i_size, all_pos_send_to_j, all_pos_recv_from_i
 
@@ -90,8 +100,11 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
     timers = utils.get_timers()
 
 
+    timers.start("[loss]prepare_for_distributed_loss_computation")
+
+
     # Get locally touched tiles and image rect.
-    timers.start("get_touched_locally_and_local_image_rect")
+    timers.start("[loss]get_touched_locally_and_local_image_rect")
     touched_locally = diff_gaussian_rasterization._C.get_touched_locally(# touched_locally[i,j] is true if pixel (i,j) is touched during local loss computation.
         compute_locally,
         utils.IMG_H,
@@ -104,17 +117,17 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
     touched_tiles_rect = [min_tile_y, max_tile_y, min_tile_x, max_tile_x]
     # Get image_rect touched locally. shape: (3, max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
     local_image_rect = image[:, min_pixel_y:max_pixel_y, min_pixel_x:max_pixel_x].contiguous()
-    timers.stop("get_touched_locally_and_local_image_rect")
+    timers.stop("[loss]get_touched_locally_and_local_image_rect")
 
 
     # Get positions of tiles to send/recv remotely. 
-    timers.start("get_all_pos_send_to_j")
+    timers.start("[loss]get_all_pos_send_to_j")
     send_to_j_size, recv_from_i_size, all_pos_send_to_j, all_pos_recv_from_i = get_all_pos_send_to_j(compute_locally, touched_locally)
-    timers.stop("get_all_pos_send_to_j")
+    timers.stop("[loss]get_all_pos_send_to_j")
 
 
     # Load local tiles to send remotely.
-    timers.start("load_image_tiles_by_pos")
+    timers.start("[loss]load_image_tiles_by_pos")
     all_tiles_send_to_j = diff_gaussian_rasterization.load_image_tiles_by_pos(
         local_image_rect, # local image rect
         all_pos_send_to_j, # in global coordinates. 
@@ -122,17 +135,17 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
         touched_pixels_rect,
         touched_tiles_rect
     )
-    timers.stop("load_image_tiles_by_pos")
+    timers.stop("[loss]load_image_tiles_by_pos")
 
 
     # Receive remote tiles to use locally.
-    timers.start("get_remote_tiles")
+    timers.start("[loss]get_remote_tiles")
     all_tiles_recv_from_i = get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j)
-    timers.stop("get_remote_tiles")
+    timers.stop("[loss]get_remote_tiles")
 
 
     # Assemble the image from all the remote tiles, excluding the local ones. shape: (3, max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
-    timers.start("merge_local_tiles_and_remote_tiles")
+    timers.start("[loss]merge_local_tiles_and_remote_tiles")
     local_image_rect_from_remote_tiles = diff_gaussian_rasterization.merge_image_tiles_by_pos(
         all_pos_recv_from_i, # in global coordinates. 
         all_tiles_recv_from_i,
@@ -141,7 +154,24 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
         touched_tiles_rect
     )# in local coordinates. 
     local_image_rect_with_remote_tiles = local_image_rect + local_image_rect_from_remote_tiles # in local coordinates. 
-    timers.stop("merge_local_tiles_and_remote_tiles")
+    timers.stop("[loss]merge_local_tiles_and_remote_tiles")
+
+
+    # Get pixels to compute locally. shape: (max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
+    # timers.start("[loss]get_pixels_compute_locally_and_in_rect")# very small time
+    local_image_rect_pixels_compute_locally = diff_gaussian_rasterization._C.get_pixels_compute_locally_and_in_rect(
+        compute_locally,
+        utils.IMG_H, utils.IMG_W,
+        min_pixel_y, max_pixel_y, min_pixel_x, max_pixel_x
+    )
+    # timers.stop("[loss]get_pixels_compute_locally_and_in_rect")
+
+
+    timers.stop("[loss]prepare_for_distributed_loss_computation")
+
+
+
+    utils.check_memory_usage_logging("after preparation for image loss distribution")
 
 
     # Move image_gt to GPU. its shape: (3, max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
@@ -150,21 +180,8 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
     timers.stop("gt_image_load_to_gpu")
 
 
-    # Get pixels to compute locally. shape: (max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
-    timers.start("get_pixels_compute_locally_and_in_rect")
-    local_image_rect_pixels_compute_locally = diff_gaussian_rasterization._C.get_pixels_compute_locally_and_in_rect(
-        compute_locally,
-        utils.IMG_H, utils.IMG_W,
-        min_pixel_y, max_pixel_y, min_pixel_x, max_pixel_x
-    )
-    timers.stop("get_pixels_compute_locally_and_in_rect")
-
-
-    utils.check_memory_usage_logging("after preparation for image loss distribution")
-
-
     # Loss computation
-    timers.start("local_loss")
+    timers.start("local_loss_computation")
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect_with_remote_tiles,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -177,7 +194,7 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
-    timers.stop("local_loss")
+    timers.stop("local_loss_computation")
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
 
