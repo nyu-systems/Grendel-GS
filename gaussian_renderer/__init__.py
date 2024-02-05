@@ -15,6 +15,7 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 import utils.general_utils as utils
+import torch.distributed.nn.functional as dist_func
 
 def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
     local2j_ids = rasterizer.get_local2j_ids(means2D, radii, cuda_args)# (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
@@ -34,8 +35,8 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
             tensor_to_rki.append(tensor[local2j_ids[i]].contiguous())# NCCL communication requires contiguous memory.
             tensor_from_rki.append(torch.zeros((i2j_send_size[i][utils.LOCAL_RANK], ) + tensor.shape[1:], dtype=tensor.dtype, device="cuda"))
 
-        if use_function_version:
-            torch.distributed.nn.functional.all_to_all(
+        if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
+            dist_func.all_to_all(
                 output_tensor_list=tensor_from_rki,
                 input_tensor_list=tensor_to_rki
             )# The function version could naturally enable communication during backward. 
