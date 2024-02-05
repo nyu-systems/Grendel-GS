@@ -15,7 +15,6 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 import utils.general_utils as utils
-import torch.distributed.nn.functional as dist_func
 
 def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
     local2j_ids = rasterizer.get_local2j_ids(means2D, radii, cuda_args)# (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
@@ -28,24 +27,49 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     torch.distributed.all_reduce(i2j_send_size, op=torch.distributed.ReduceOp.SUM)
     i2j_send_size = i2j_send_size.cpu().numpy().tolist()
 
-    def one_all_to_all(tensor):
+    def one_all_to_all(tensor, use_function_version=False):
         tensor_to_rki = []
         tensor_from_rki = []
         for i in range(utils.WORLD_SIZE):
             tensor_to_rki.append(tensor[local2j_ids[i]].contiguous())# NCCL communication requires contiguous memory.
             tensor_from_rki.append(torch.zeros((i2j_send_size[i][utils.LOCAL_RANK], ) + tensor.shape[1:], dtype=tensor.dtype, device="cuda"))
 
-        dist_func.all_to_all(
-            output_tensor_list=tensor_from_rki,
-            input_tensor_list=tensor_to_rki
-        )# The function version could naturally enable communication during backward. 
+        if use_function_version:
+            torch.distributed.nn.functional.all_to_all(
+                output_tensor_list=tensor_from_rki,
+                input_tensor_list=tensor_to_rki
+            )# The function version could naturally enable communication during backward. 
+        else:
+            torch.distributed.all_to_all(
+                output_tensor_list=tensor_from_rki,
+                input_tensor_list=tensor_to_rki
+            )
         return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
 
-    means2D_redistributed = one_all_to_all(means2D)#TODO: merge them into one all2all call.
-    rgb_redistributed = one_all_to_all(rgb)
-    conic_opacity_redistributed = one_all_to_all(conic_opacity)
-    radii_redistributed = one_all_to_all(radii)
-    depths_redistributed = one_all_to_all(depths)
+    # Merge means2D, rgb, conic_opacity into one functional all-to-all communication call.
+    params = [means2D, rgb, conic_opacity]
+    params_cancatenated = torch.cat(params, dim=1).contiguous()
+    params_redistributed = one_all_to_all(params_cancatenated, use_function_version=True)
+    means2D_redistributed, rgb_redistributed, conic_opacity_redistributed = torch.split(
+        params_redistributed,
+        [means2D.shape[1], rgb.shape[1], conic_opacity.shape[1]],
+        dim=1
+    )
+
+    # Merge radii and depths into one all-to-all communication call. 
+    radii = radii.float() # XXX: I am not sure whether it will affect accuracy. 
+    radii_depth_float = torch.cat([radii.float().unsqueeze(1), depths.unsqueeze(1)], dim=1).contiguous()
+    radii_depth_redistributed = one_all_to_all(radii_depth_float, use_function_version=False)
+    radii_redistributed, depths_redistributed = torch.split(
+        radii_depth_redistributed,
+        [1, 1],
+        dim=1
+    )
+    radii_redistributed = radii_redistributed.squeeze(1).int()
+    depths_redistributed = depths_redistributed.squeeze(1)
+
+    # radii_redistributed = one_all_to_all(radii, use_function_version=False)
+    # depths_redistributed = one_all_to_all(depths, use_function_version=False)
     return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None, cuda_args=None, timers=None):

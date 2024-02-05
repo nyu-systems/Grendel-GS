@@ -282,21 +282,26 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
-            forward_time = adjust_div_stra_timer.elapsed("forward")
-            backward_time = adjust_div_stra_timer.elapsed("backward")
+            if args.adjust_mode == "heuristic":
+                forward_time = adjust_div_stra_timer.elapsed("forward")
+                backward_time = adjust_div_stra_timer.elapsed("backward")
 
-            timers.start("post_forward_adjust_div_stra_synchronize_time")
-            forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
-            timers.stop("post_forward_adjust_div_stra_synchronize_time")
+                timers.start("post_forward_adjust_div_stra_synchronize_time")
+                forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
+                timers.stop("post_forward_adjust_div_stra_synchronize_time")
 
-            timers.start("post_forward_adjust_div_stra_synchronize_stats")
-            n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
-            timers.stop("post_forward_adjust_div_stra_synchronize_stats")
+                timers.start("post_forward_adjust_div_stra_synchronize_stats")
+                n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
+                timers.stop("post_forward_adjust_div_stra_synchronize_stats")
 
-            timers.start("post_forward_adjust_div_stra_update_result")
-            division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
-            strategy_history.add(iteration, division_strategy)
-            timers.stop("post_forward_adjust_div_stra_update_result")
+                timers.start("post_forward_adjust_div_stra_update_result")
+                division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
+                strategy_history.add(iteration, division_strategy)
+                timers.stop("post_forward_adjust_div_stra_update_result")
+
+            elif args.adjust_mode == "none":
+                strategy_history.add(iteration, division_strategy)
+                pass
 
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
@@ -395,12 +400,15 @@ def training(dataset, opt, pipe, args, log_file):
 
     # Finish training
     if args.adjust_div_stra:
-        data_json = {}
-        for camera_id, strategy_history in cameraId2StrategyHistory.items():
-            data_json[camera_id] = strategy_history.to_json()
-        
-        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-            json.dump(data_json, f)
+        if args.adjust_mode == "heuristic":
+            data_json = {}
+            for camera_id, strategy_history in cameraId2StrategyHistory.items():
+                data_json[camera_id] = strategy_history.to_json()
+            
+            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+                json.dump(data_json, f)
+        elif args.adjust_mode == "none":
+            pass
 
     if args.end2end_time:
         torch.cuda.synchronize()

@@ -212,6 +212,7 @@ class DivisionStrategyHistory:
         # return division_pos # format:[0, d1, d2, ..., tile_num]
         # This is the core function of workload division.
         if len(self.history) == 0:
+             # Initialize the division_pos if it is the first iteration for this camera. Use evenly division Strategy.
             return get_evenly_division_pos(self.camera)
         
         last_strategy = self.history[-1]["strategy"]
