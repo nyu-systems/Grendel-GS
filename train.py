@@ -19,7 +19,8 @@ from gaussian_renderer import render, network_gui
 from gaussian_renderer.image_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
-from scene.workload_division import DivisionStrategy, DivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
+# from scene.workload_division import DivisionStrategy, DivisionStrategyHistory_1, OldDivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
+from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, WorkloadDivisionTimer, get_evenly_global_strategy_str
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -174,18 +175,28 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Prepare Workload division strategy
         if args.adjust_div_stra:
-            timers.start("pre_forward_adjust_div_stra")
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            division_strategy = strategy_history.get_next_strategy()
-            cuda_args["dist_division_mode"] = division_strategy.local_strategy_str
-            # TODO: improve it; now the format is just `T:$l,$r`, an example: `T:0,62`
-            cuda_args["dist_global_strategy"] = division_strategy.global_strategy_str
-            # format: 0,8,19,...,num_tiles
-            # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
-            timers.stop("pre_forward_adjust_div_stra")
+            if args.adjust_mode == "1":
+                
+                if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+                cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint_cam)
+
+            else:
+                assert False, "not implemented yet."
+                # timers.start("pre_forward_adjust_div_stra")
+                # if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                #     cameraId2StrategyHistory[viewpoint_cam.uid] = OldDivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+                # strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+                # division_strategy = strategy_history.get_next_strategy()
+                # cuda_args["dist_division_mode"] = division_strategy.local_strategy_str
+                # # TODO: improve it; now the format is just `T:$l,$r`, an example: `T:0,62`
+                # cuda_args["dist_global_strategy"] = division_strategy.global_strategy_str
+                # # format: 0,8,19,...,num_tiles
+                # # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
+                # timers.stop("pre_forward_adjust_div_stra")
         else:
+            assert False, "not implemented yet."
             # TODO: support memory_distribution if args.adjust_div_stra is false.
 
             # cuda_args["dist_global_strategy"] = ???
@@ -210,7 +221,11 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Forward
         timers.start("forward")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, adjust_div_stra_timer=adjust_div_stra_timer, cuda_args=cuda_args, timers=timers)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
+                            adjust_div_stra_timer=adjust_div_stra_timer,
+                            cuda_args=cuda_args,
+                            timers=timers,
+                            strategy_history=strategy_history)
         timers.stop("forward")
         (image, 
          viewspace_point_tensor, 
@@ -282,25 +297,28 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
-            if args.adjust_mode == "heuristic":
-                forward_time = adjust_div_stra_timer.elapsed("forward")
-                backward_time = adjust_div_stra_timer.elapsed("backward")
+            if args.adjust_mode == "1":
+                pass
+            elif args.adjust_mode == "history_heuristic":
+                assert False, "not implemented yet."
+                # forward_time = adjust_div_stra_timer.elapsed("forward")
+                # backward_time = adjust_div_stra_timer.elapsed("backward")
 
-                timers.start("post_forward_adjust_div_stra_synchronize_time")
-                forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
-                timers.stop("post_forward_adjust_div_stra_synchronize_time")
+                # timers.start("post_forward_adjust_div_stra_synchronize_time")
+                # forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
+                # timers.stop("post_forward_adjust_div_stra_synchronize_time")
 
-                timers.start("post_forward_adjust_div_stra_synchronize_stats")
-                n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
-                timers.stop("post_forward_adjust_div_stra_synchronize_stats")
+                # timers.start("post_forward_adjust_div_stra_synchronize_stats")
+                # n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
+                # timers.stop("post_forward_adjust_div_stra_synchronize_stats")
 
-                timers.start("post_forward_adjust_div_stra_update_result")
-                division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
-                strategy_history.add(iteration, division_strategy)
-                timers.stop("post_forward_adjust_div_stra_update_result")
-
+                # timers.start("post_forward_adjust_div_stra_update_result")
+                # division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
+                # strategy_history.add(iteration, division_strategy)
+                # timers.stop("post_forward_adjust_div_stra_update_result")
             elif args.adjust_mode == "none":
-                strategy_history.add(iteration, division_strategy)
+                assert False, "not implemented yet."
+                # strategy_history.add(iteration, division_strategy)
                 pass
 
 
@@ -400,15 +418,16 @@ def training(dataset, opt, pipe, args, log_file):
 
     # Finish training
     if args.adjust_div_stra:
-        if args.adjust_mode == "heuristic":
-            data_json = {}
-            for camera_id, strategy_history in cameraId2StrategyHistory.items():
-                data_json[camera_id] = strategy_history.to_json()
+        pass
+        # if args.adjust_mode == "history_heuristic":
+        #     data_json = {}
+        #     for camera_id, strategy_history in cameraId2StrategyHistory.items():
+        #         data_json[camera_id] = strategy_history.to_json()
             
-            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-                json.dump(data_json, f)
-        elif args.adjust_mode == "none":
-            pass
+        #     with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+        #         json.dump(data_json, f)
+        # elif args.adjust_mode == "none":
+        #     pass
 
     if args.end2end_time:
         torch.cuda.synchronize()
@@ -471,7 +490,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint)# TODO: this is a hack. not beautiful.
+                    cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint)# HACK: Use naive distribution strategy during testing.
+                    renderKwargs["strategy_history"] = DivisionStrategyHistory_1(viewpoint, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode) # HACK: Use naive distribution strategy during testing.
                     image = renderFunc(viewpoint, scene.gaussians, *renderArgs, **renderKwargs)["render"]
                     if utils.WORLD_SIZE > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
@@ -527,9 +547,8 @@ if __name__ == "__main__":
     parser.add_argument("--stop_update_param", action='store_true', default=False)
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     parser.add_argument("--adjust_div_stra", action='store_true', default=False)
-    parser.add_argument("--adjust_mode", type=str, default="heuristic")# none
+    parser.add_argument("--adjust_mode", type=str, default="heuristic")# none, history_heuristic, 
     parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
-    parser.add_argument("--sep_rendering", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
     parser.add_argument("--force_python_timer_iterations", nargs="+", type=int, default=[600, 700, 800]) # print timers at these iterations. 600 is the default first densification iteration.
     parser.add_argument("--save_i2jsend", action='store_true', default=False) # save i2jsend_size to file.
@@ -551,7 +570,6 @@ if __name__ == "__main__":
     if args.adjust_div_stra and utils.WORLD_SIZE == 1:
         print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
         args.adjust_div_stra = False
-    assert not (args.memory_distribution and not args.sep_rendering), "memory_distribution depends on sep_rendering!"
     assert not (args.memory_distribution and utils.WORLD_SIZE == 1), "memory_distribution needs WORLD_SIZE > 1!"
     assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
     assert not (args.memory_distribution and not args.adjust_div_stra), "has not implement memory_distribution \

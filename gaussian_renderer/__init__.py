@@ -73,7 +73,11 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     # depths_redistributed = one_all_to_all(depths, use_function_version=False)
     return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, adjust_div_stra_timer=None, cuda_args=None, timers=None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
+           adjust_div_stra_timer=None,
+           cuda_args=None,
+           timers=None,
+           strategy_history=None):
     """
     Render the scene. 
     
@@ -117,12 +121,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         timers.start("forward_prepare_gaussians")
 
     means3D = pc.get_xyz
-    if not args.sep_rendering:
-        # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-        means2D = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-        if cuda_args["mode"] == "train":
-            means2D.retain_grad()
-
     opacity = pc.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -165,77 +163,68 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.start("forward")
 
-    if not args.sep_rendering:
-        rendered_image, radii, n_render, n_consider, n_contrib = rasterizer(
-            means3D = means3D,
-            means2D = means2D,
-            shs = shs,
-            colors_precomp = colors_precomp,
-            opacities = opacity,
-            scales = scales,
-            rotations = rotations,
-            cov3D_precomp = cov3D_precomp,
-            cuda_args = cuda_args)
+
+    assert colors_precomp is None, "sep_rendering mode does not support precomputed colors."
+    assert cov3D_precomp is None, "sep_rendering mode does not support precomputed 3d covariance."
+
+    if timers is not None:
+        timers.start("forward_preprocess_gaussians")
+    means2D, rgb, conic_opacity, radii, depths = rasterizer.preprocess_gaussians(
+        means3D=means3D,
+        scales=scales,
+        rotations=rotations,
+        shs=shs,
+        opacities=opacity,
+        cuda_args=cuda_args
+    )
+    if timers is not None:
+        timers.stop("forward_preprocess_gaussians")
+    utils.check_memory_usage_logging("after forward_preprocess_gaussians")
+
+    if cuda_args["mode"] == "train":
+        means2D.retain_grad()
+        # NOTE: means2D is (P, 2) tensor. This is different from means2D in not sep_rendering mode i.e. (P, 3). TODO: double check. 
+
+    # all to all communication for means2D, rgb, conic_opacity, radii, depths
+    if args.memory_distribution:
+        if timers is not None:
+            timers.start("forward_all_to_all_communication")
+        means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size = \
+            all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
+        if timers is not None:
+            timers.stop("forward_all_to_all_communication")
+        utils.check_memory_usage_logging("after forward_all_to_all_communication")
+
+    # get compute_locally to know local workload in the end2end distributed training.
+    if timers is not None:
+        timers.start("forward_compute_locally")
+    
+    
+    if args.adjust_mode == "1":
+        strategy = strategy_history.get_next_strategy() #TODO: support render.py. 
+        compute_locally = strategy.get_compute_locally()
     else:
+        assert False, "not implemented yet."
 
-        assert colors_precomp is None, "sep_rendering mode does not support precomputed colors."
-        assert cov3D_precomp is None, "sep_rendering mode does not support precomputed 3d covariance."
+    if timers is not None:
+        timers.stop("forward_compute_locally")
+    utils.check_memory_usage_logging("after forward_compute_locally")
 
-        if timers is not None:
-            timers.start("forward_preprocess_gaussians")
-        means2D, rgb, conic_opacity, radii, depths = rasterizer.preprocess_gaussians(
-            means3D=means3D,
-            scales=scales,
-            rotations=rotations,
-            shs=shs,
-            opacities=opacity,
-            cuda_args=cuda_args
-        )
-        if timers is not None:
-            timers.stop("forward_preprocess_gaussians")
-        utils.check_memory_usage_logging("after forward_preprocess_gaussians")
-
-        if cuda_args["mode"] == "train":
-            means2D.retain_grad()
-            # NOTE: means2D is (P, 2) tensor. This is different from means2D in not sep_rendering mode i.e. (P, 3). TODO: double check. 
-
-        # all to all communication for means2D, rgb, conic_opacity, radii, depths
-        if args.memory_distribution:
-            if timers is not None:
-                timers.start("forward_all_to_all_communication")
-            means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size = \
-                all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
-            if timers is not None:
-                timers.stop("forward_all_to_all_communication")
-            utils.check_memory_usage_logging("after forward_all_to_all_communication")
-
-        # get compute_locally to know local workload in the end2end distributed training.
-        if timers is not None:
-            timers.start("forward_compute_locally")
-        compute_locally = rasterizer.get_distribution_strategy(
-            means2D = means2D if not args.memory_distribution else means2D_redistributed,
-            radii = radii if not args.memory_distribution else radii_redistributed,
-            cuda_args = cuda_args
-        )
-        if timers is not None:
-            timers.stop("forward_compute_locally")
-        utils.check_memory_usage_logging("after forward_compute_locally")
-
-        # render
-        if timers is not None:
-            timers.start("forward_render_gaussians")
-        rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
-            means2D=means2D if not args.memory_distribution else means2D_redistributed,
-            conic_opacity=conic_opacity if not args.memory_distribution else conic_opacity_redistributed,
-            rgb=rgb if not args.memory_distribution else rgb_redistributed,
-            depths=depths if not args.memory_distribution else depths_redistributed,
-            radii=radii if not args.memory_distribution else radii_redistributed,
-            compute_locally=compute_locally,
-            cuda_args=cuda_args
-        )
-        if timers is not None:
-            timers.stop("forward_render_gaussians")
-        utils.check_memory_usage_logging("after forward_render_gaussians")
+    # render
+    if timers is not None:
+        timers.start("forward_render_gaussians")
+    rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
+        means2D=means2D if not args.memory_distribution else means2D_redistributed,
+        conic_opacity=conic_opacity if not args.memory_distribution else conic_opacity_redistributed,
+        rgb=rgb if not args.memory_distribution else rgb_redistributed,
+        depths=depths if not args.memory_distribution else depths_redistributed,
+        radii=radii if not args.memory_distribution else radii_redistributed,
+        compute_locally=compute_locally,
+        cuda_args=cuda_args
+    )
+    if timers is not None:
+        timers.stop("forward_render_gaussians")
+    utils.check_memory_usage_logging("after forward_render_gaussians")
 
     if adjust_div_stra_timer is not None:
         adjust_div_stra_timer.stop("forward")
