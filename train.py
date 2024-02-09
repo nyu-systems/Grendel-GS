@@ -20,7 +20,7 @@ from gaussian_renderer.image_distribution import distributed_loss_computation, r
 import sys
 from scene import Scene, GaussianModel
 # from scene.workload_division import DivisionStrategy, DivisionStrategyHistory_1, OldDivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
-from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, WorkloadDivisionTimer, get_evenly_global_strategy_str
+from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, DivisionStrategyHistory_2, DivisionStrategyWS1, WorkloadDivisionTimer, get_evenly_global_strategy_str
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -156,6 +156,7 @@ def training(dataset, opt, pipe, args, log_file):
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
             "dist_division_mode": args.dist_division_mode,
+            "stats_collector": {}
         }
 
 
@@ -180,7 +181,21 @@ def training(dataset, opt, pipe, args, log_file):
                 if viewpoint_cam.uid not in cameraId2StrategyHistory:
                     cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
                 strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint_cam)
+                strategy = strategy_history.start_strategy()
+                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+
+            elif args.adjust_mode == "2":
+
+                if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_2(viewpoint_cam,
+                                                                                            utils.WORLD_SIZE,
+                                                                                            utils.LOCAL_RANK,
+                                                                                            args.adjust_mode,
+                                                                                            args.heuristic_decay) # TODO: tune this. 
+                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+                strategy = strategy_history.start_strategy()
+                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+
 
             else:
                 assert False, "not implemented yet."
@@ -196,14 +211,9 @@ def training(dataset, opt, pipe, args, log_file):
                 # # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
                 # timers.stop("pre_forward_adjust_div_stra")
         else:
-            assert False, "not implemented yet."
-            # TODO: support memory_distribution if args.adjust_div_stra is false.
-
-            # cuda_args["dist_global_strategy"] = ???
-            # if dist_division_mode is tile_num, then it is easy to implement here.
-            # if dist_division_mode is rendered_num, then it will be harder to get.
-            # I think I need big refactor to naturally combine memory_distribution and args.adjust_div_stra.
-            pass
+            tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+            tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
+            strategy = DivisionStrategyWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, tile_x, tile_y)
 
 
 
@@ -225,7 +235,7 @@ def training(dataset, opt, pipe, args, log_file):
                             adjust_div_stra_timer=adjust_div_stra_timer,
                             cuda_args=cuda_args,
                             timers=timers,
-                            strategy_history=strategy_history)
+                            strategy=strategy)
         timers.stop("forward")
         (image, 
          viewspace_point_tensor, 
@@ -269,7 +279,8 @@ def training(dataset, opt, pipe, args, log_file):
         epoch_progress_cnt = epoch_progress_cnt + 1
         epoch_loss = epoch_loss + loss.item()
         if epoch_progress_cnt == epoch_camera_size:
-            assert viewpoint_stack == None or len(viewpoint_stack) == 0, "viewpoint_stack should be empty at the end of epoch."
+            assert args.fixed_training_image or viewpoint_stack == None or len(viewpoint_stack) == 0, \
+                "viewpoint_stack should be empty at the end of epoch."
             log_file.write("epoch {} loss: {}\n".format(epoch_id, epoch_loss/epoch_progress_cnt))
             epoch_id = epoch_id + 1
             epoch_progress_cnt = 0
@@ -298,7 +309,13 @@ def training(dataset, opt, pipe, args, log_file):
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
             if args.adjust_mode == "1":
-                pass
+                strategy_history.finish_strategy()
+            elif args.adjust_mode == "2":
+                # print(cuda_args["stats_collector"])
+
+                if iteration > 20:# If we pass the warmup period.
+                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"])
+                    strategy_history.finish_strategy()
             elif args.adjust_mode == "history_heuristic":
                 assert False, "not implemented yet."
                 # forward_time = adjust_div_stra_timer.elapsed("forward")
@@ -418,16 +435,16 @@ def training(dataset, opt, pipe, args, log_file):
 
     # Finish training
     if args.adjust_div_stra:
-        pass
-        # if args.adjust_mode == "history_heuristic":
-        #     data_json = {}
-        #     for camera_id, strategy_history in cameraId2StrategyHistory.items():
-        #         data_json[camera_id] = strategy_history.to_json()
+
+        if args.adjust_mode in ["history_heuristic", "1", "2"]:
+            data_json = {}
+            for camera_id, strategy_history in cameraId2StrategyHistory.items():
+                data_json[camera_id] = strategy_history.to_json()
             
-        #     with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-        #         json.dump(data_json, f)
-        # elif args.adjust_mode == "none":
-        #     pass
+            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+                json.dump(data_json, f)
+        elif args.adjust_mode == "none":
+            pass
 
     if args.end2end_time:
         torch.cuda.synchronize()
@@ -491,7 +508,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
                     cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint)# HACK: Use naive distribution strategy during testing.
-                    renderKwargs["strategy_history"] = DivisionStrategyHistory_1(viewpoint, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode) # HACK: Use naive distribution strategy during testing.
+                    hack_history = DivisionStrategyHistory_1(viewpoint, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)# HACK
+                    renderKwargs["strategy"] = hack_history.start_strategy()# HACK: Use naive distribution strategy during testing.
                     image = renderFunc(viewpoint, scene.gaussians, *renderArgs, **renderKwargs)["render"]
                     if utils.WORLD_SIZE > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
@@ -555,6 +573,7 @@ if __name__ == "__main__":
     parser.add_argument("--time_image_loading", action='store_true', default=False) # time image loading.
     parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
     parser.add_argument("--image_distribution", action='store_true', default=False)
+    parser.add_argument("--heuristic_decay", type=float, default=0)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 

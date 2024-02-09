@@ -13,3 +13,7 @@ old_files
 *.txt
 *.log
 *.out
+playground/*
+__pycache__
+*.npy
+scripts/

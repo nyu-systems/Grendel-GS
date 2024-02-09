@@ -340,6 +340,10 @@ def merge_csv_which_have_same_columns(file_paths, output_file_path):
             df = df_t
         else:
             df = pd.concat([df, df_t], ignore_index=True)
+        # add an empty row for better visualization
+        empty_row = {col: None for col in df.columns}
+        df = df._append(empty_row, ignore_index=True)
+
     df.to_csv(output_file_path, index=False)
 
 # iter 1001, TimeFor 'forward': 3.405571 ms
@@ -1484,6 +1488,64 @@ def mem_dist_stats_4k_garden_3(folder):
 
     extract_all_memory_json_from_log(folder)
 
+def adjust2(folder):
+    suffix_list = [
+        # "ws=1_rk=0",
+        # "ws=2_rk=0",
+        # "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [
+        # folder + "gpu_time_ws=1_rk=0.json",
+        # folder + "gpu_time_ws=2_rk=0.json",
+        # folder + "gpu_time_ws=2_rk=1.json",
+        folder + "gpu_time_ws=4_rk=0.json",
+        folder + "gpu_time_ws=4_rk=1.json",
+        folder + "gpu_time_ws=4_rk=2.json",
+        folder + "gpu_time_ws=4_rk=3.json",
+    ]
+    iterations_to_process = [250*i+1 for i in range(100, 120)]
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+
+
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        os.remove(file_path)
+
+    file_paths = [
+        # folder + "python_time_ws=1_rk=0.json",
+        # folder + "python_time_ws=2_rk=0.json",
+        # folder + "python_time_ws=2_rk=1.json",
+        folder + "python_time_ws=4_rk=0.json",
+        folder + "python_time_ws=4_rk=1.json",
+        folder + "python_time_ws=4_rk=2.json",
+        folder + "python_time_ws=4_rk=3.json",
+    ]
+
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    
+    file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        os.remove(file_path)
+
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -1515,8 +1577,17 @@ if __name__ == "__main__":
 
     # mem_dist_stats_4k_garden_2("experiments/mem_dist_stats_4k_garden_2/")
     # mem_dist_stats_4k_garden_3("experiments/mem_dist_stats_4k_garden_3/")
-    mem_dist_stats_4k_garden_3("experiments/mem_dist_stats_4k_garden_3/")
+    # mem_dist_stats_4k_garden_3("experiments/mem_dist_stats_4k_garden_3/")
 
+    # adjust2("experiments/adjust2_1/")
+    # adjust2("experiments/adjust2_2/")
+    # adjust2("experiments/adjust2_3/")
+    # adjust2("experiments/adjust2_4/")
+
+    # adjust2("experiments/adjust2_4k_1/")
+    # adjust2("experiments/adjust2_4k_2/")
+    # adjust2("experiments/adjust2_4k_3/")
+    adjust2("experiments/time_stats_4k_30000its/")
 
     pass
 

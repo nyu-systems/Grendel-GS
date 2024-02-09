@@ -77,7 +77,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
            adjust_div_stra_timer=None,
            cuda_args=None,
            timers=None,
-           strategy_history=None):
+           strategy=None):
     """
     Render the scene. 
     
@@ -199,12 +199,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if timers is not None:
         timers.start("forward_compute_locally")
     
-    
-    if args.adjust_mode == "1":
-        strategy = strategy_history.get_next_strategy() #TODO: support render.py. 
-        compute_locally = strategy.get_compute_locally()
-    else:
-        assert False, "not implemented yet."
+    compute_locally = strategy.get_compute_locally()
 
     if timers is not None:
         timers.stop("forward_compute_locally")

@@ -194,16 +194,7 @@ def get_evenly_global_strategy_str(camera):
 
 
 
-
-
-
-
-
-
-
-
-
-class DivisionStrategy_1:
+class DivisionStrategy:
 
     def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
         self.camera = camera
@@ -215,12 +206,80 @@ class DivisionStrategy_1:
         self.adjust_mode = adjust_mode
 
     def get_compute_locally(self):
-        division_pos = get_evenly_division_pos(self.camera)
-        tile_ids_l, tile_ids_r = division_pos[self.rank], division_pos[self.rank+1]
+        tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
         compute_locally = torch.zeros(self.tile_y*self.tile_x, dtype=torch.bool, device="cuda")
         compute_locally[tile_ids_l:tile_ids_r] = True
         compute_locally = compute_locally.view(self.tile_y, self.tile_x)
         return compute_locally
+    
+    def get_gloabl_strategy_str(self):
+        return division_pos_to_global_strategy_str(self.division_pos)
+
+    def to_json(self):
+        # convert to json format
+        data = {}
+        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
+        return data
+
+class DivisionStrategy_2(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode)
+
+        self.local_running_time = None
+        self.global_running_times = None
+        self.heuristic = None
+    
+    def update_stats(self, local_running_time):
+        if self.global_running_times is not None and self.heuristic is not None:
+            return
+
+        gloabl_running_times = [None for _ in range(self.world_size)]
+        torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        self.local_running_time = local_running_time
+        self.global_running_times = gloabl_running_times
+
+        self.update_heuristic()
+
+    def update_heuristic(self):
+        assert self.global_running_times is not None, "You should call update_stats first."
+        assert self.local_running_time is not None, "You should call update_stats first."
+
+        tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
+        gather_heuristic = [torch.full((self.division_pos[i+1]-self.division_pos[i],),
+                                       self.global_running_times[i] / (self.division_pos[i+1]-self.division_pos[i]),
+                                       dtype=torch.float32,
+                                       device="cuda",
+                                       requires_grad=False)
+                            for i in range(self.world_size)]
+        self.heuristic = torch.cat(gather_heuristic, dim=0)
+    
+    def well_balanced(self, threshold=0.06):
+        # threshold: 0.1 means 10% error is allowed. 
+
+        max_time = max(self.global_running_times)
+        min_time = min(self.global_running_times)
+        
+        if max_time - min_time > max_time * threshold:
+            return False
+
+        return True
+
+
+
+class DivisionStrategy_1(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode)
+
+class DivisionStrategyWS1(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y):
+        division_pos = [0, tile_x*tile_y]
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, None)
+
+
 
     # @property
     # def local_strategy(self):
@@ -380,23 +439,107 @@ class DivisionStrategyHistory:
 
         self.history = []
 
+        self.working_strategy = None
+        self.working_iteration = None
+
     def add(self, iteration, strategy):
         self.history.append({"iteration": iteration, "strategy": strategy})
     
-    def get_next_strategy(self):
-        pass
+    def start_strategy(self):
+        raise NotImplementedError
 
-    def update_result(self):
-        pass
+    def finish_strategy(self):
+        raise NotImplementedError
 
+    def to_json(self):
+        # change to json format
+        json = []
+        for item in self.history:
+            data = {
+                "iteration": item["iteration"],
+                "strategy": item["strategy"].to_json(),
+            }
+            json.append(data)
+        return json
 
 
 class DivisionStrategyHistory_1(DivisionStrategyHistory):
     def __init__(self, camera, world_size, rank, adjust_mode):
         super().__init__(camera, world_size, rank, adjust_mode)
-    
-    def get_next_strategy(self):
-        return DivisionStrategy_1(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, get_evenly_division_pos(self.camera), self.adjust_mode)
+
+    def start_strategy(self):
+        self.working_strategy = DivisionStrategy_1(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, get_evenly_division_pos(self.camera), self.adjust_mode)
+        self.working_iteration = utils.get_cur_iter()
+        return self.working_strategy
+
+    def finish_strategy(self):
+        self.add(self.working_iteration, self.working_strategy)
+        pass
+
+
+def check_division_indices_globally_same(division_indices):
+    recevie = [None for _ in range(utils.WORLD_SIZE)]
+    torch.distributed.all_gather_object(recevie, division_indices)
+    for i in range(utils.WORLD_SIZE):
+        for j in range(utils.WORLD_SIZE):
+            assert recevie[i][j] == division_indices[j], f"check_division_indices_globally_save failed: {i} {j}"
+        
+
+class DivisionStrategyHistory_2(DivisionStrategyHistory):
+    def __init__(self, camera, world_size, rank, adjust_mode, heuristic_decay):
+        super().__init__(camera, world_size, rank, adjust_mode)
+
+        self.cur_heuristic = None
+        self.heuristic_decay = heuristic_decay
+
+    def update_heuristic(self, strategy=None):# XXX: local_running_time is now render backward running time for benchmarking method. 
+        if strategy is None:
+            strategy = self.working_strategy
+
+        new_heuristic = strategy.heuristic
+        if self.cur_heuristic is None:
+            self.cur_heuristic = new_heuristic
+            return
+        
+        if strategy.well_balanced():
+            # if the new strategy has already been well balanced, we do not have to update the heuristic.
+            return
+
+        # update self.cur_heuristic
+        self.cur_heuristic = self.cur_heuristic * self.heuristic_decay + new_heuristic * (1-self.heuristic_decay)
+
+    def division_pos_heuristic(self):
+        heuristic_prefix_sum = torch.cumsum(self.cur_heuristic, dim=0)
+        heuristic_sum = heuristic_prefix_sum[-1]
+        heuristic_per_worker = heuristic_sum / self.world_size
+
+        thresholds = torch.arange(1, self.world_size, device="cuda") * heuristic_per_worker
+        division_pos = [0]
+
+        # Use searchsorted to find the positions
+        division_indices = torch.searchsorted(heuristic_prefix_sum, thresholds)
+
+        # check_division_indices_globally_same(division_indices)
+
+        # Convert to a Python list and prepend the initial division at 0.
+        division_pos = [0] + division_indices.cpu().tolist() + [self.tile_num]
+        # TODO: use communication collective to check division_pos is the same for all GPUs.
+
+        return division_pos
+
+    def start_strategy(self):
+        if len(self.history) == 0:
+            division_pos = get_evenly_division_pos(self.camera)
+        else:
+            division_pos = self.division_pos_heuristic()
+
+        self.working_strategy = DivisionStrategy_2(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
+        self.working_iteration = utils.get_cur_iter()
+        return self.working_strategy
+
+    def finish_strategy(self):
+        self.update_heuristic()
+        self.add(self.working_iteration, self.working_strategy)
 
 
 
