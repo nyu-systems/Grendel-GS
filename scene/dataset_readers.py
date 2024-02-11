@@ -67,6 +67,7 @@ def getNerfppNorm(cam_info):
     return {"translate": translate, "radius": radius}
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+    args = utils.get_args()
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         if utils.LOCAL_RANK == 0:
@@ -99,7 +100,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path) # this is a lazy load, the image is not loaded yet
-        image.load() # load immediately after open file. 
+
+        if args.fixed_training_image == -1:
+            image.load() # load immediately after open file. 
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)

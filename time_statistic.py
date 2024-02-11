@@ -295,6 +295,62 @@ def extract_data_from_list_by_iteration(data_list, iteration):
             return stat
     return None
 
+def get_suffix_in_folder(folder):
+
+    if not os.path.exists(folder):
+        return None
+    
+    if not folder.endswith("/"):
+        folder += "/"
+    
+    suffix_list_candidates = [
+        "ws=1_rk=0",
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    suffix_list = []
+
+    for suffix in suffix_list_candidates:
+        # python_ws=1_rk=0.log
+        if os.path.exists(folder + "python_" + suffix + ".log"):
+            suffix_list.append(suffix)
+
+    return suffix_list
+
+def get_end2end_stats(file_path):
+    if not os.path.exists(file_path):
+        return None
+
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    # end2end total_time: 5473.110746 ms, iterations: 30000, throughput 5.48 it/s
+    # Max Memory usage: 8.000114917755127 GB.
+
+    line_for_time = lines[-2]
+    line_for_memory = lines[-1]
+    
+    if not line_for_time.startswith("end2end total_time"):
+        return {"expe_name": file_path.strip("experiments")}
+    
+    print("line_for_time: ", line_for_time)
+    print("line_for_memory: ", line_for_memory)
+    stats = {}
+    stats["expe_name"] = file_path.strip("experiments")
+    stats["total_time"] = float(line_for_time.split("total_time: ")[1].split(" ms")[0])
+    stats["throughput"] = float(line_for_time.split("throughput ")[1].split(" it/s")[0])
+    stats["max_memory_usage"] = float(line_for_memory.split("Max Memory usage: ")[1].split(" GB")[0])
+    # stats["iterations"] = int(line_for_time.split("iterations: ")[1].split(",")[0])
+    return stats
+
+
+
+
+
 def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):# mode = "python" or "gpu"
     # extract frame from all data
     df = None
@@ -311,7 +367,10 @@ def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):#
 
         data = extract_data_from_list_by_iteration(stats, iteration)
 
-        assert data is not None, "Queried iteration statistics should be in the log file."
+        # assert data is not None, "Queried iteration statistics should be in the log file."
+        if data is None:
+            print("Queried iteration statistics is not in the log file.")
+            continue
 
         data_for_save = {}
         data_for_save["rk"] = rk
@@ -326,6 +385,10 @@ def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):#
         else:
             df = pd.concat([df, pd.DataFrame([data_for_save])], ignore_index=True)
 
+    if df is None:
+        print("No data to save in csv.")
+        return
+    print("extract_time_excel_from_json at iteration: ", iteration)
     df.to_csv(folder + f"{mode}_time_it="+ str(iteration) +".csv", index=False)
 
 def merge_csv_which_have_same_columns(file_paths, output_file_path):
@@ -352,16 +415,17 @@ def merge_csv_which_have_same_columns(file_paths, output_file_path):
 # iter 1001, TimeFor 'backward': 15.798092 ms
 # iter 1001, TimeFor 'sync_gradients': 0.006199 ms
 # iter 1001, TimeFor 'optimizer_step': 2.892017 ms
-def extract_json_from_python_time_log(file_path):
+def extract_json_from_python_time_log(file_path, load_genereated_json=False):
 
     file_name = file_path.split("/")[-1]
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
     # print(file_name, " wk: ", wk, "rk: ", rk)
 
-    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
-    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
-    #         return json.load(f)
+    if load_genereated_json and os.path.exists(file_path.removesuffix(".log") + ".json"):
+        print("load from file"+file_path.removesuffix(".log") + ".json")
+        with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+            return json.load(f)
 
     with open(file_path, 'r') as f:
         lines = f.readlines()
@@ -381,6 +445,8 @@ def extract_json_from_python_time_log(file_path):
     # save in file
     with open(file_path.removesuffix(".log") + ".json", 'w') as f:
         json.dump(stats, f, indent=4)
+    
+    print("return data from file"+file_path.removesuffix(".log") + ".json")
     return stats
 
 def extract_json_from_i2jsend_log(file_path):
@@ -507,15 +573,16 @@ def extract_all_memory_json_from_log(folder):
             stats.append(extract_memory_json_from_log(folder, file))
     return stats
 
-def extract_json_from_gpu_time_log(file_path):
+def extract_json_from_gpu_time_log(file_path, load_genereated_json=False):
     
     file_name = file_path.split("/")[-1]
     ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
     ws, rk = int(ws), int(rk)
 
-    # if os.path.exists(file_path.removesuffix(".log") + ".json"):
-    #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
-    #         return json.load(f)
+    if load_genereated_json and os.path.exists(file_path.removesuffix(".log") + ".json"):
+        print("load from file"+file_path.removesuffix(".log") + ".json")
+        with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+            return json.load(f)
 
     with open(file_path, 'r') as file:
         file_contents = file.readlines()
@@ -557,6 +624,7 @@ def extract_json_from_gpu_time_log(file_path):
     # save in file
     with open(file_path.removesuffix(".log") + ".json", 'w') as f:
         json.dump(stats_json, f, indent=4)
+    print("return data from file"+file_path.removesuffix(".log") + ".json")
     return stats_json
 
 def get_number_prefix(s):
@@ -1546,6 +1614,344 @@ def adjust2(folder):
         os.remove(file_path)
 
 
+def adjust(folder):
+    suffix_list = get_suffix_in_folder(folder)
+    print("processing suffix_list: ", suffix_list)
+    # return 
+
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=False)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path, load_genereated_json=False)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+
+    iterations_to_process = [250*i+1 for i in range(1, 120, 2)]
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+
+
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        os.remove(file_path)
+
+    file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
+
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    
+    file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        os.remove(file_path)
+
+
+def adjust_analyze_optimal(folder):
+    gpu_time_df = pd.read_csv(folder + "merged_gpu_time.csv")
+    python_time_df = pd.read_csv(folder + "merged_python_time.csv")
+
+    # filter by ws=4
+    gpu_time_df = gpu_time_df[gpu_time_df["ws"] == 4]
+    python_time_df = python_time_df[python_time_df["ws"] == 4]
+
+    #print len of gpu_time_df and python_time_df
+    # print("len(gpu_time_df): ", len(gpu_time_df))
+    # print("len(python_time_df): ", len(python_time_df))
+
+    # get the total time. save in a list. 
+    iterations_to_process = [250*i+1 for i in range(1, 120, 2)]
+
+    gpu_forward_columns1 = [
+        "10 preprocess time",
+    ]
+    gpu_forward_columns2 = [
+        "24 updateDistributedStatLocally.updateTileTouched time",
+        "30 InclusiveSum time",
+        "40 duplicateWithKeys time",
+        "50 SortPairs time",
+        "60 identifyTileRanges time",
+        "70 render time",
+        "81 sum_n_render time",
+        "82 sum_n_consider time",
+        "83 sum_n_contrib time",
+    ]
+    gpu_backward_columns1 = [
+        "b10 render time",
+    ]
+    gpu_backward_columns2 = [
+        "b20 preprocess time",
+    ]
+    python_gpu_columns = {
+        "forward": [gpu_forward_columns1, gpu_forward_columns2],
+        "backward": [gpu_backward_columns1, gpu_backward_columns2],
+    }
+
+    def max_subtract_mean_time(all_time):
+        max_time = max(all_time)
+        mean_time = np.mean(all_time)
+        return max_time - mean_time
+
+    current_time = []
+    estimated_optimal_time = []
+    for idx, iteration in enumerate(iterations_to_process):
+        # get the current time spent from statistics
+        cur_time_sum = 0
+        for column in [
+                "forward",
+                "[loss]prepare_for_distributed_loss_computation",
+                "gt_image_load_to_gpu",
+                "local_loss_computation",
+                "backward",
+                "optimizer_step"
+            ]:
+            cur_time_sum += python_time_df[column][idx*4:(idx+1)*4].max()
+        current_time.append(round(cur_time_sum, 6))
+
+        # get the optimal time estimated from statistics.
+        estimated_time_sum = cur_time_sum
+
+        # reduce time by averaging some components' time.
+        for python_col in python_gpu_columns:
+            for gpu_col_group in python_gpu_columns[python_col]:
+                gpu_time_all = []
+                for j in range(idx*4, (idx+1)*4):
+                    # print(j)
+                    gpu_time_sum = 0
+                    for col in gpu_col_group:
+                        gpu_time_sum += gpu_time_df[col][j:j+1].sum()
+                    gpu_time_all.append(gpu_time_sum)
+                estimated_time_sum -= max_subtract_mean_time(gpu_time_all)
+
+        # We should also subtract the unbalanced time of forward loss and backward loss. 
+        # However, current measure of local_loss_computation is wrong. 
+
+        # Let me estimate it. local loss computation is about 25ms per GPU in ws=4 case. 
+        # The unbalance range could be (20ms~30ms), potentially optimizable unbalance time is 5ms. 10ms for both forward and backward.
+        # 10ms is 5% optimization opportunity. 
+
+        # These are abandoned code.
+        # loss_forward_all_time = (
+        #     python_time_df["local_loss_computation"][idx*4:(idx+1)*4] + 
+        #     python_time_df["gt_image_load_to_gpu"][idx*4:(idx+1)*4]
+        # ).to_list()
+        # estimated_time_sum -= max_subtract_mean_time(loss_forward_all_time)
+        # forward loss: Current measure of local_loss_computation contains the unbalanced of: 
+        #     - local loss computation + load gt-image loading + merge_image_tiles_by_pos
+        #     - Basically, everything after the all2all computation.
+
+        # estimated_time_sum -= max_subtract_mean_time(loss_forward_all_time)
+        # backward loss. I need to only substruct 1 copy of the unbalanced time. 
+        # Ignore the unbalance of local_loss_computation backward time for now. because it is too complicated to estimate.
+
+        estimated_optimal_time.append(round(estimated_time_sum, 6))
+    
+    speed_up = [current_time[i]/estimated_optimal_time[i] for i in range(len(current_time))]
+
+    # create a dataframe with iteration list, current_time list, estimated_optimal_time list, speed_up list as columns
+    df = pd.DataFrame({
+        'Iteration': iterations_to_process,
+        'Current Time Spent': current_time,
+        'Estimated Optimal Time Spent': estimated_optimal_time,
+        'Speed Up': speed_up
+    })
+    df.to_csv(folder + "current_vs_optimal_time.csv", index=False)
+
+
+    fig, ax1 = plt.subplots(figsize=(36, 6))
+
+    # 绘制当前时间和估计的最佳时间
+    color_current = 'tab:red'
+    color_estimated = 'tab:green'
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('Time')
+    ax1.plot(df['Iteration'], df['Current Time Spent'], color=color_current, label='Current Time')
+    ax1.plot(df['Iteration'], df['Estimated Optimal Time Spent'], color=color_estimated, label='Estimated Optimal Time')
+    ax1.tick_params(axis='y')
+    ax1.xaxis.set_ticks(iterations_to_process)  # 确保迭代显示在X轴上
+    ax1.legend(loc='upper left')
+
+    # 实例化另一个Y轴共享相同的X轴
+    ax2 = ax1.twinx()  
+    color_speed_up = 'tab:blue'
+    ax2.set_ylabel('Speed Up', color=color_speed_up)  # 我们已经处理了y轴的标签
+    ax2.plot(df['Iteration'], df['Speed Up'], linestyle='--', color=color_speed_up)
+    ax2.tick_params(axis='y', labelcolor=color_speed_up)
+    ax2.legend(loc='upper right')
+    fig.tight_layout()  # 为了布局不重叠
+    # save the figure
+    plt.savefig(folder + "current_vs_optimal_time.png")
+
+
+def adjust3(folder):
+    suffix_list = get_suffix_in_folder(folder)
+    print("processing suffix_list: ", suffix_list)
+
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=True)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path, load_genereated_json=True)
+        data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+
+    iterations_to_process = [10*i+1 for i in range(1, 100, 1)]
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
+
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    
+    file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    # delete all file_paths
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    
+    gpu_time_df = pd.read_csv(folder + "merged_gpu_time.csv")
+    python_time_df = pd.read_csv(folder + "merged_python_time.csv")
+    gpu_time_df = gpu_time_df[gpu_time_df["ws"] == 4]
+    python_time_df = python_time_df[python_time_df["ws"] == 4]
+
+    df_stats = None
+    for rk in range(4):
+        gpu_time_df_rk_i = gpu_time_df[gpu_time_df["rk"] == rk]
+
+        # calculate the mean, std and coeff_of_var of gpu_time_df_rk_i, and save in df_stats
+        mean_row = {"rk": rk, "mode": "mean"}
+        std_row = {"rk": rk, "mode": "std"}
+        coeff_of_var_row = {"rk": rk, "mode": "coeff_of_var"}
+
+
+        for column in gpu_time_df.columns:
+            if column in ["file_path", "ws", "rk"]:
+                continue
+            # print(column)
+            data = gpu_time_df_rk_i[column].to_list()
+            # print(data)
+            mean = np.mean(data)
+            std = np.std(data)
+            coeff_of_var = std/mean
+            mean_row[column] = round(mean, 6)
+            std_row[column] = round(std, 6)
+            coeff_of_var_row[column] = round(coeff_of_var, 6)
+
+
+        if df_stats is None:
+            df_stats = pd.DataFrame([mean_row])
+        else:
+            df_stats = df_stats._append(pd.DataFrame([mean_row]))
+        df_stats = df_stats._append(pd.DataFrame([std_row]))
+        df_stats = df_stats._append(pd.DataFrame([coeff_of_var_row]))
+
+    # print(df_stats)
+    df_stats.to_csv(folder + "gpu_time_stats.csv", index=False)
+
+def compare_end2end_stats(save_folder):
+    # print(get_end2end_stats("experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log"))
+
+    file_paths = [
+        "experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=1.log",
+        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=2.log",
+        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=3.log",
+        "experiments/adjust_2_garden4k_1/python_ws=4_rk=0.log",
+        "experiments/adjust_2_garden4k_2/python_ws=4_rk=0.log",
+        "experiments/adjust_2_garden4k_3/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_garden4k_2/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=1.log",
+        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=2.log", 
+        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=3.log",               
+        "experiments/adjust_baseline_room4k_1/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_room4k_1/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_room4k_2/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_room4k_2/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_bicycle4k_1/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_bicycle4k_1/python_ws=4_rk=0.log",
+        "experiments/adjust_baseline_bicycle4k_2/python_ws=1_rk=0.log",
+        "experiments/adjust_baseline_bicycle4k_2/python_ws=4_rk=0.log",
+    ]
+
+    df = None
+    for file_path in file_paths:
+        print("Processing: ", file_path)
+        data = get_end2end_stats(file_path)
+        if data is None:
+            continue
+        if df is None:
+            df = pd.DataFrame([data])
+        else:
+            df = df._append(pd.DataFrame([data]))
+
+    df.to_csv(save_folder + "compare_end2end_stats.csv", index=False)
+    # print(df)
+
+def compare_garden_adjust_mode(save_folder):
+    folder = [
+        "experiments/adjust_baseline_garden4k_1/",
+        "experiments/adjust_2_garden4k_1/",
+        "experiments/adjust_2_garden4k_2/",
+        "experiments/adjust_2_garden4k_3/",
+    ]
+    color = [
+        "tab:red",
+        "tab:blue",
+        "tab:green",
+        "tab:orange",
+    ]
+    all_name = []
+
+    df = None
+    for f in folder:
+        expe_name = f.split("/")[-2]
+        all_name.append(expe_name)
+        new_df = pd.read_csv(f + "current_vs_optimal_time.csv")
+        if df is None:
+            df = new_df[["Iteration"]]
+            iterations_to_process = new_df["Iteration"].to_list()
+            df[expe_name+"_time"] = new_df["Current Time Spent"]
+        else:
+            df[expe_name+"_time"] = new_df["Current Time Spent"]
+
+    df.to_csv(save_folder+"compare_garden_adjust_mode.csv", index=False)
+
+
+    fig, ax1 = plt.subplots(figsize=(42, 6))
+
+    # 绘制当前时间和估计的最佳时间
+    # color_current = 'tab:red'
+    # color_estimated = 'tab:green'
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('Time')
+    for expe_name, c in zip(all_name, color):
+        ax1.plot(df['Iteration'], df[expe_name+"_time"], color=c, label=expe_name)
+    ax1.tick_params(axis='y')
+    ax1.xaxis.set_ticks(iterations_to_process)  # 确保迭代显示在X轴上
+    ax1.legend(loc='upper left')
+
+    # save the figure
+    plt.savefig(save_folder + "compare_garden_adjust_mode.png")
+
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -1587,8 +1993,38 @@ if __name__ == "__main__":
     # adjust2("experiments/adjust2_4k_1/")
     # adjust2("experiments/adjust2_4k_2/")
     # adjust2("experiments/adjust2_4k_3/")
-    adjust2("experiments/time_stats_4k_30000its/")
+    # adjust2("experiments/time_stats_4k_30000its/")
 
+    # adjust("experiments/adjust_baseline_garden4k_1/")
+    # adjust("experiments/adjust_baseline_garden4k_2/")
+    adjust_analyze_optimal("experiments/adjust_baseline_garden4k_1/")
+    adjust_analyze_optimal("experiments/adjust_baseline_garden4k_2/")
+
+    # adjust("experiments/adjust_baseline_bicycle4k_1/")
+    # adjust("experiments/adjust_baseline_bicycle4k_2/")
+    adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_1/")
+    adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_2/")
+
+    # adjust("experiments/adjust_baseline_room4k_1/")
+    # adjust("experiments/adjust_baseline_room4k_2/")
+    adjust_analyze_optimal("experiments/adjust_baseline_room4k_1/")
+    adjust_analyze_optimal("experiments/adjust_baseline_room4k_2/")
+
+    # adjust3("experiments/adjust3_1/")
+    # adjust3("experiments/adjust3_1_1/")
+    # adjust3("experiments/adjust3_1_2/")
+    # adjust3("experiments/adjust3_1_3/")
+    # adjust3("experiments/adjust3_1_4/")
+
+    # adjust("experiments/adjust_2_garden4k_1/")
+    adjust_analyze_optimal("experiments/adjust_2_garden4k_1/")
+    # adjust("experiments/adjust_2_garden4k_2/")
+    adjust_analyze_optimal("experiments/adjust_2_garden4k_2/")
+    # adjust("experiments/adjust_2_garden4k_3/")
+    adjust_analyze_optimal("experiments/adjust_2_garden4k_3/")
+
+    compare_end2end_stats("experiments/adjust_baseline_garden4k_1/")
+    compare_garden_adjust_mode("experiments/adjust_baseline_garden4k_1/")
     pass
 
 

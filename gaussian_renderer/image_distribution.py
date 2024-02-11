@@ -193,8 +193,8 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally):
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
+    timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
     torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
-    timers.stop("local_loss_computation")
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
 

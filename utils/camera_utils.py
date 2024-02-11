@@ -60,12 +60,13 @@ def loadCam(args, id, cam_info, resolution_scale):
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
 
-    # for id, c in enumerate(cam_infos):
-    #     camera_list.append(loadCam(args, id, c, resolution_scale))
-    # add progress bar for the code above
+    args = get_args()
     from tqdm import tqdm
     for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos)):
-        camera_list.append(loadCam(args, id, c, resolution_scale))
+        if args.fixed_training_image == -1 or id == args.fixed_training_image:
+            camera_list.append(loadCam(args, id, c, resolution_scale))
+        else:
+            camera_list.append(None)
 
     return camera_list
 

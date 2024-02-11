@@ -20,7 +20,7 @@ from gaussian_renderer.image_distribution import distributed_loss_computation, r
 import sys
 from scene import Scene, GaussianModel
 # from scene.workload_division import DivisionStrategy, DivisionStrategyHistory_1, OldDivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
-from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, DivisionStrategyHistory_2, DivisionStrategyWS1, WorkloadDivisionTimer, get_evenly_global_strategy_str
+from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, DivisionStrategyHistory_2, DivisionStrategyWS1, DivisionStrategyManuallySet, WorkloadDivisionTimer, get_evenly_global_strategy_str
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -55,7 +55,6 @@ def training(dataset, opt, pipe, args, log_file):
     )
 
     timers = Timer(args)
-    train_start_time = time.time()
     utils.set_timers(timers)
     utils.set_log_file(log_file)
     utils.set_cur_iter(0)
@@ -112,6 +111,8 @@ def training(dataset, opt, pipe, args, log_file):
     adjust_div_stra_timer = WorkloadDivisionTimer() if args.adjust_div_stra else None
 
     utils.check_memory_usage_logging("after init and before training loop")    
+
+    train_start_time = time.time()
 
     for iteration in range(first_iter, opt.iterations + 1):        
         if False:# disable network_gui for now
@@ -196,7 +197,18 @@ def training(dataset, opt, pipe, args, log_file):
                 strategy = strategy_history.start_strategy()
                 cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
 
-
+            elif args.adjust_mode == "3":
+                tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+                tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
+                strategy = DivisionStrategyManuallySet(
+                    viewpoint_cam,
+                    utils.WORLD_SIZE,
+                    utils.LOCAL_RANK,
+                    tile_x,
+                    tile_y,
+                    args.dist_global_strategy
+                )
+                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
             else:
                 assert False, "not implemented yet."
                 # timers.start("pre_forward_adjust_div_stra")
@@ -436,7 +448,7 @@ def training(dataset, opt, pipe, args, log_file):
     # Finish training
     if args.adjust_div_stra:
 
-        if args.adjust_mode in ["history_heuristic", "1", "2"]:
+        if args.adjust_mode in ["1", "2"]:
             data_json = {}
             for camera_id, strategy_history in cameraId2StrategyHistory.items():
                 data_json[camera_id] = strategy_history.to_json()
@@ -566,6 +578,7 @@ if __name__ == "__main__":
     parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
     parser.add_argument("--adjust_div_stra", action='store_true', default=False)
     parser.add_argument("--adjust_mode", type=str, default="heuristic")# none, history_heuristic, 
+    parser.add_argument("--dist_global_strategy", type=str, default="")
     parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
     parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
     parser.add_argument("--force_python_timer_iterations", nargs="+", type=int, default=[600, 700, 800]) # print timers at these iterations. 600 is the default first densification iteration.
@@ -596,6 +609,13 @@ if __name__ == "__main__":
     assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
     assert not (args.image_distribution and not args.memory_distribution), "image_distribution needs memory_distribution!"
     assert not (args.image_distribution and utils.WORLD_SIZE == 1), "image_distribution needs WORLD_SIZE > 1!"
+    assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.dist_global_strategy == ""), "dist_global_strategy must be set if adjust_mode is 3."
+    assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.fixed_training_image == -1), "fixed_training_image must be set if adjust_mode is 3."
+    assert not (args.adjust_div_stra and args.adjust_mode == "3" and not args.stop_update_param), "stop_update_param must be set if adjust_mode is 3."
+
+    if args.fixed_training_image != -1:
+        args.test_iterations = [] # disable testing during training.
+        args.disable_auto_densification = True
 
     # create log folder
     if utils.LOCAL_RANK == 0:

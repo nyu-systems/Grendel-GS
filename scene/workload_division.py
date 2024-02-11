@@ -280,6 +280,12 @@ class DivisionStrategyWS1(DivisionStrategy):
         super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, None)
 
 
+class DivisionStrategyManuallySet(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, global_division_pos_str):
+        division_pos = list(map(int, global_division_pos_str.split(",")))
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, None)
+
 
     # @property
     # def local_strategy(self):
