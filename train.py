@@ -587,7 +587,7 @@ if __name__ == "__main__":
     parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
     parser.add_argument("--image_distribution", action='store_true', default=False)
     parser.add_argument("--heuristic_decay", type=float, default=0)
-    parser.add_argument("--disable_checkpoint_and_save", type=int, default=1000)
+    parser.add_argument("--disable_checkpoint_and_save", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
