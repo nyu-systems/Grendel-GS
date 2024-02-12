@@ -18,14 +18,14 @@ import utils.general_utils as utils
 import torch.distributed.nn.functional as dist_func
 
 def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
-    local2j_ids = rasterizer.get_local2j_ids(means2D, radii, cuda_args)# (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
+    local2j_ids, local2j_ids_bool = rasterizer.get_local2j_ids(means2D, radii, cuda_args)
+    # (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
+    # (# of 3dgs, world_size) ubt: local2j_ids_bool[i,j] is True if 3dg i should be sent to gpu j.
 
     # NOTE: i2j_send_size is an  world_size*world_size integer tensor, containing the number of 3dgs that should be sent from gpu i to gpu j.
     i2j_send_size = torch.zeros((utils.WORLD_SIZE, utils.WORLD_SIZE), dtype=torch.int, device="cuda")
-    i2j_send_size[utils.LOCAL_RANK, :] = torch.tensor([len(local2j_ids[i]) for i in range(utils.WORLD_SIZE)], dtype=torch.int, device="cuda")
-
-    # sync i2j_send_size # TODO: optimize it. maybe by using all-gather. 
-    torch.distributed.all_reduce(i2j_send_size, op=torch.distributed.ReduceOp.SUM)
+    local2j_send_size = torch.tensor([len(local2j_ids[i]) for i in range(utils.WORLD_SIZE)], dtype=torch.int, device="cuda")
+    torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size)
     i2j_send_size = i2j_send_size.cpu().numpy().tolist()
 
     def one_all_to_all(tensor, use_function_version=False):
@@ -71,7 +71,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
 
     # radii_redistributed = one_all_to_all(radii, use_function_version=False)
     # depths_redistributed = one_all_to_all(depths, use_function_version=False)
-    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size
+    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
            adjust_div_stra_timer=None,
@@ -189,7 +189,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if args.memory_distribution:
         if timers is not None:
             timers.start("forward_all_to_all_communication")
-        means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size = \
+        means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
             all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
         if timers is not None:
             timers.stop("forward_all_to_all_communication")
@@ -237,4 +237,5 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if args.memory_distribution:
         return_data["i2j_send_size"] = i2j_send_size
         return_data["compute_locally"] = compute_locally
+        return_data["local2j_ids_bool"] = local2j_ids_bool
     return return_data

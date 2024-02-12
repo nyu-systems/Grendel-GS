@@ -53,7 +53,7 @@ class GaussianModel:
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
-        self.xyz_gradient_accum = torch.empty(0)
+        self.xyz_gradient_accum = torch.empty(0) # TODO: deal with self.send_to_gpui_cnt
         self.denom = torch.empty(0)
         self.optimizer = None
         self.percent_dense = 0
@@ -70,7 +70,7 @@ class GaussianModel:
             self._rotation,
             self._opacity,
             self.max_radii2D,
-            self.xyz_gradient_accum,
+            self.xyz_gradient_accum, # TODO: deal with self.send_to_gpui_cnt
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
@@ -90,7 +90,7 @@ class GaussianModel:
         opt_dict, 
         self.spatial_lr_scale) = model_args
         self.training_setup(training_args)
-        self.xyz_gradient_accum = xyz_gradient_accum
+        self.xyz_gradient_accum = xyz_gradient_accum # TODO: deal with self.send_to_gpui_cnt
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
@@ -175,6 +175,8 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+
+        self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], utils.WORLD_SIZE), dtype=torch.int, device="cuda")
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -440,6 +442,8 @@ class GaussianModel:
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
+        self.send_to_gpui_cnt = self.send_to_gpui_cnt[valid_points_mask]
+
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
@@ -465,7 +469,7 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_send_to_gpui_cnt):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -484,6 +488,8 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+        self.send_to_gpui_cnt = torch.cat((self.send_to_gpui_cnt, new_send_to_gpui_cnt), dim=0)
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -504,8 +510,9 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        new_send_to_gpui_cnt = self.send_to_gpui_cnt[selected_pts_mask].repeat(N,1)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_send_to_gpui_cnt)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -522,8 +529,9 @@ class GaussianModel:
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
+        new_send_to_gpui_cnt = self.send_to_gpui_cnt[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_send_to_gpui_cnt)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom
@@ -557,3 +565,133 @@ class GaussianModel:
 
         # add noise to xyz
         self._xyz = nn.Parameter((self._xyz + torch.randn_like(self._xyz) * 0.01).detach().requires_grad_(True))
+
+    def all2all_gaussian_state(self, state, destination, i2j_send_size):
+        # state: (N, ...) tensor
+        state_to_gpuj = []
+        state_from_gpuj = []
+        for j in range(utils.WORLD_SIZE):# ugly implementation. TODO: optimize it.
+            state_to_gpuj.append(state[destination==j,...].contiguous())# This maybe a very time-consuming part.
+            state_from_gpuj.append(torch.zeros((i2j_send_size[j][utils.LOCAL_RANK], *state.shape[1:]), device="cuda"))
+
+        dist.all_to_all(state_from_gpuj, state_to_gpuj)
+
+        state_from_remote = torch.cat(state_from_gpuj, dim=0).contiguous()
+        return state_from_remote
+
+    def all2all_tensors_in_optimizer_implementation_1(self, destination, i2j_send_size):
+        optimizable_tensors = {}
+        for group in self.optimizer.param_groups:
+            assert len(group["params"]) == 1
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+
+                stored_state["exp_avg"] = self.all2all_gaussian_state(stored_state["exp_avg"], destination, i2j_send_size)
+                stored_state["exp_avg_sq"] = self.all2all_gaussian_state(stored_state["exp_avg_sq"], destination, i2j_send_size)
+
+                del self.optimizer.state[group['params'][0]]
+                group["params"][0] = nn.Parameter(self.all2all_gaussian_state(group["params"][0], destination, i2j_send_size), requires_grad=True)
+                self.optimizer.state[group['params'][0]] = stored_state
+
+                optimizable_tensors[group["name"]] = group["params"][0]
+            else:
+                group["params"][0] = nn.Parameter(self.all2all_gaussian_state(group["params"][0], destination, i2j_send_size), requires_grad=True)
+                optimizable_tensors[group["name"]] = group["params"][0]
+        return optimizable_tensors
+
+    def get_all_optimizer_states(self):
+        all_tensors = []
+        all_shapes = []
+        for group in self.optimizer.param_groups:
+            assert len(group["params"]) == 1
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                all_tensors.append(stored_state["exp_avg"])
+                all_shapes.append(stored_state["exp_avg"].shape)
+
+                all_tensors.append(stored_state["exp_avg_sq"])
+                all_shapes.append(stored_state["exp_avg_sq"].shape)
+
+                all_tensors.append(group["params"][0])
+                all_shapes.append(group["params"][0].shape)
+            else:
+                all_tensors.append(group["params"][0])
+                all_shapes.append(group["params"][0].shape)
+        return all_tensors, all_shapes
+
+    def update_all_optimizer_states(self, updated_tensors):
+        optimizable_tensors = {}
+        for group in self.optimizer.param_groups:
+            assert len(group["params"]) == 1
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                stored_state["exp_avg"] = updated_tensors.pop(0).contiguous()
+                stored_state["exp_avg_sq"] = updated_tensors.pop(0).contiguous()
+
+                del self.optimizer.state[group['params'][0]]
+                group["params"][0] = nn.Parameter(updated_tensors.pop(0).contiguous(), requires_grad=True)
+                self.optimizer.state[group['params'][0]] = stored_state
+
+                optimizable_tensors[group["name"]] = group["params"][0]
+            else:
+                group["params"][0] = nn.Parameter(updated_tensors.pop(0).contiguous(), requires_grad=True)
+                optimizable_tensors[group["name"]] = group["params"][0]
+        return optimizable_tensors
+
+    def all2all_tensors_in_optimizer_implementation_2(self, destination, i2j_send_size):
+        # merge into one single all2all kernal launch.
+
+        # get all optimizer states for all2all
+        all_tensors, all_shapes = self.get_all_optimizer_states()
+        # flatten all tensors with start_dim=1, then concate them at dim=1
+        all_tensors_flatten = [tensor.flatten(start_dim=1) for tensor in all_tensors]
+        all_tensors_catted = torch.cat(all_tensors_flatten, dim=1)
+        
+        # all2all
+        all_remote_tensors_catted = self.all2all_gaussian_state(all_tensors_catted, destination, i2j_send_size)
+
+        # split all_tensors_catted to original shapes
+        all_remote_tensors_flatten = torch.split(all_remote_tensors_catted, [shape[1:].numel() for shape in all_shapes], dim=1)
+        all_remote_tensors = [tensor.view(tensor.shape[:1]+shape[1:]) for tensor, shape in zip(all_remote_tensors_flatten, all_shapes)]
+
+        # update optimizer states
+        optimizable_tensors = self.update_all_optimizer_states(all_remote_tensors)
+
+        return optimizable_tensors
+
+    def all2all_tensors_in_optimizer(self, destination, i2j_send_size):
+        # return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
+        return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
+
+    def redistribute_gaussians(self):
+        # Send each 3dgs to the GPU which uses it most frequently.
+        
+        # Get each 3dgs' destination GPU.
+        destination = self.send_to_gpui_cnt.argmax(dim=1)
+        # Count the number of 3dgs to be sent to each GPU.
+        local2j_send_size = torch.bincount(destination, minlength=utils.WORLD_SIZE).int()
+        assert len(local2j_send_size) == utils.WORLD_SIZE, "local2j_send_size: " + str(local2j_send_size)
+
+        i2j_send_size = torch.zeros((utils.WORLD_SIZE, utils.WORLD_SIZE), dtype=torch.int, device="cuda")
+        torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size)# TODO: optimize all2all gaussian using such all_gather.
+        i2j_send_size = i2j_send_size.cpu().numpy().tolist()
+        print("rank", utils.LOCAL_RANK, "local2j_send_size: ", local2j_send_size, "i2j_send_size: ", i2j_send_size)
+
+        optimizable_tensors = self.all2all_tensors_in_optimizer(destination, i2j_send_size)
+        self._xyz = optimizable_tensors["xyz"]
+        self._features_dc = optimizable_tensors["f_dc"]
+        self._features_rest = optimizable_tensors["f_rest"]
+        self._opacity = optimizable_tensors["opacity"]
+        self._scaling = optimizable_tensors["scaling"]
+        self._rotation = optimizable_tensors["rotation"]
+
+        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # This function is called right after desify_and_prune. Therefore self.xyz_gradient_accum, self.denom and self.max_radii2D are all zero. 
+        # We do not need to all2all them here. 
+
+        # should I all2all send_to_gpui_cnt? I think I should not. Because 1. for simplicity now, 2. we should refresh it and do not use too old statistics. 
+        self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], utils.WORLD_SIZE), dtype=torch.int, device="cuda")
+
+        torch.cuda.empty_cache()

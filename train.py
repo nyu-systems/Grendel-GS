@@ -267,6 +267,7 @@ def training(dataset, opt, pipe, args, log_file):
         if args.memory_distribution:
             i2j_send_size = render_pkg["i2j_send_size"]
             compute_locally = render_pkg["compute_locally"]
+            local2j_ids_bool = render_pkg["local2j_ids_bool"]
 
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
@@ -373,6 +374,10 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         with torch.no_grad():
+            # Update Statistics for redistribution
+            if args.memory_distribution:
+                gaussians.send_to_gpui_cnt += local2j_ids_bool
+
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
 
@@ -408,10 +413,23 @@ def training(dataset, opt, pipe, args, log_file):
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                     timers.stop("densify_and_prune")
 
+                    # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
+                    if args.enable_redistribute and ( utils.get_denfify_iter() % args.redistribute_frequency == 0 ):
+                        num_3dgs_before_redistribute = gaussians.get_xyz.shape[0]
+                        timers.start("redistribute_gaussians")
+                        gaussians.redistribute_gaussians()
+                        timers.stop("redistribute_gaussians")
+                        num_3dgs_after_redistribute = gaussians.get_xyz.shape[0]
+
+                        log_file.write("iteration {} redistribute. Now num of 3dgs before redistribute: {}. Now num of 3dgs after redistribute: {}. \n".format(
+                            iteration, num_3dgs_before_redistribute, num_3dgs_after_redistribute))
+
                     memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
                     max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
                     log_file.write("iteration {} densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. \n".format(
                         iteration, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage))
+
+                    utils.inc_densify_iter()
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     timers.start("reset_opacity")
@@ -463,6 +481,17 @@ def training(dataset, opt, pipe, args, log_file):
         log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt.iterations, opt.iterations/(time.time() - train_start_time)))
     
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
+
+    # DEBUG
+    if args.memory_distribution:
+        # save gaussians.send_to_gpui_cnt to file.
+        with open(args.log_folder+"/send_to_gpui_cnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+            send_to_gpui_cnt_cpu = gaussians.send_to_gpui_cnt.cpu().numpy().tolist()
+            data2save = []
+            for i in range(len(send_to_gpui_cnt_cpu)):
+                data2save.append( ",".join([str(x) for x in send_to_gpui_cnt_cpu[i]]) )
+            json.dump(data2save, f, indent=4)
+
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -588,6 +617,8 @@ if __name__ == "__main__":
     parser.add_argument("--image_distribution", action='store_true', default=False)
     parser.add_argument("--heuristic_decay", type=float, default=0)
     parser.add_argument("--disable_checkpoint_and_save", action='store_true', default=False)
+    parser.add_argument("--enable_redistribute", action='store_true', default=False)
+    parser.add_argument("--redistribute_frequency", type=int, default=10)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -617,6 +648,10 @@ if __name__ == "__main__":
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.
         args.disable_auto_densification = True
+
+    if args.enable_redistribute:
+       assert args.memory_distribution, "enable_redistribute needs memory_distribution!"
+       args.disable_checkpoint_and_save = True # checkpoint and save are not implemented in mode of enable_redistribute.
 
     if args.disable_checkpoint_and_save:
         print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")

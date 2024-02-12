@@ -24,6 +24,7 @@ CUR_ITER = None
 LOCAL_RANK = 0
 WORLD_SIZE = 1
 TIMERS = None
+DENSIFY_ITER = 0
 
 def set_args(args):
     global ARGS
@@ -71,6 +72,14 @@ def get_img_size():
 def get_num_pixels():
     global IMG_H, IMG_W
     return IMG_H * IMG_W
+
+def get_denfify_iter():
+    global DENSIFY_ITER
+    return DENSIFY_ITER
+
+def inc_densify_iter():
+    global DENSIFY_ITER
+    DENSIFY_ITER += 1
 
 def check_enable_python_timer():
     args = get_args()
