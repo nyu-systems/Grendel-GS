@@ -587,6 +587,7 @@ if __name__ == "__main__":
     parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
     parser.add_argument("--image_distribution", action='store_true', default=False)
     parser.add_argument("--heuristic_decay", type=float, default=0)
+    parser.add_argument("--disable_checkpoint_and_save", type=int, default=1000)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -616,6 +617,11 @@ if __name__ == "__main__":
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.
         args.disable_auto_densification = True
+
+    if args.disable_checkpoint_and_save:
+        print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
+        args.checkpoint_iterations = []
+        args.save_iterations = []
 
     # create log folder
     if utils.LOCAL_RANK == 0:
