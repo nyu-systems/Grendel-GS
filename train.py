@@ -228,6 +228,7 @@ def training(dataset, opt, pipe, args, log_file):
             strategy = DivisionStrategyWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, tile_x, tile_y)
 
 
+        memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
         # Render
         if (iteration - 1) == debug_from:
@@ -269,6 +270,7 @@ def training(dataset, opt, pipe, args, log_file):
             compute_locally = render_pkg["compute_locally"]
             local2j_ids_bool = render_pkg["local2j_ids_bool"]
 
+        memory_after_forward = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
@@ -285,10 +287,17 @@ def training(dataset, opt, pipe, args, log_file):
             Ll1, ssim_loss = replicated_loss_computation(image, viewpoint_cam)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
         utils.check_memory_usage_logging("after loss")
-
+        memory_after_loss = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
         # Logging
-        log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
+        log_string = "iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item())
+        # log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
+        if args.log_iteration_memory_usage:
+            log_string += "memory_iteration_begin: {:.4f} GB. memory_after_forward: {:.4f} GB. memory_after_loss: {:.4f} GB.\n".format(
+                memory_iteration_begin, memory_after_forward, memory_after_loss
+            )
+        log_file.write(log_string)
+
         epoch_progress_cnt = epoch_progress_cnt + 1
         epoch_loss = epoch_loss + loss.item()
         if epoch_progress_cnt == epoch_camera_size:
@@ -600,7 +609,6 @@ if __name__ == "__main__":
     parser.add_argument("--log_interval", type=int, default=50)
     parser.add_argument("--fixed_training_image", type=int, default=-1)
     parser.add_argument("--disable_auto_densification", action='store_true', default=False)
-    parser.add_argument("--global_timer", action='store_true', default=False)
     parser.add_argument("--end2end_time", action='store_true', default=False)
     parser.add_argument("--dist_division_mode", type=str, default="tile_num")
     parser.add_argument("--stop_update_param", action='store_true', default=False)
@@ -619,6 +627,8 @@ if __name__ == "__main__":
     parser.add_argument("--disable_checkpoint_and_save", action='store_true', default=False)
     parser.add_argument("--enable_redistribute", action='store_true', default=False)
     parser.add_argument("--redistribute_frequency", type=int, default=10)
+    parser.add_argument("--log_iteration_memory_usage", action='store_true', default=False)
+    parser.add_argument("--benchmark_stats", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -657,6 +667,23 @@ if __name__ == "__main__":
         print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
         args.checkpoint_iterations = []
         args.save_iterations = []
+    
+    if args.log_iteration_memory_usage:
+        args.check_memory_usage = True
+
+    if args.benchmark_stats:
+        args.zhx_time = True
+        args.python_timer = True
+        args.log_iteration_memory_usage = True
+        args.check_memory_usage = True
+        args.end2end_time = True
+        args.disable_checkpoint_and_save = True
+        args.checkpoint_iterations = []
+        args.save_iterations = []
+        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
+        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
+        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
+        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
 
     # create log folder
     if utils.LOCAL_RANK == 0:

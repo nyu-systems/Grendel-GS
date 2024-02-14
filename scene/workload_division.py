@@ -246,14 +246,15 @@ class DivisionStrategy_2(DivisionStrategy):
         assert self.global_running_times is not None, "You should call update_stats first."
         assert self.local_running_time is not None, "You should call update_stats first."
 
-        tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
-        gather_heuristic = [torch.full((self.division_pos[i+1]-self.division_pos[i],),
-                                       self.global_running_times[i] / (self.division_pos[i+1]-self.division_pos[i]),
-                                       dtype=torch.float32,
-                                       device="cuda",
-                                       requires_grad=False)
-                            for i in range(self.world_size)]
-        self.heuristic = torch.cat(gather_heuristic, dim=0)
+        with torch.no_grad():
+            tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
+            gather_heuristic = [torch.full((self.division_pos[i+1]-self.division_pos[i],),
+                                        self.global_running_times[i] / (self.division_pos[i+1]-self.division_pos[i]),
+                                        dtype=torch.float32,
+                                        device="cuda",
+                                        requires_grad=False)
+                                for i in range(self.world_size)]
+            self.heuristic = torch.cat(gather_heuristic, dim=0)
     
     def well_balanced(self, threshold=0.06):
         # threshold: 0.1 means 10% error is allowed. 
@@ -534,18 +535,24 @@ class DivisionStrategyHistory_2(DivisionStrategyHistory):
         return division_pos
 
     def start_strategy(self):
-        if len(self.history) == 0:
-            division_pos = get_evenly_division_pos(self.camera)
-        else:
-            division_pos = self.division_pos_heuristic()
+        with torch.no_grad():
+            if len(self.history) == 0:
+                division_pos = get_evenly_division_pos(self.camera)
+            else:
+                division_pos = self.division_pos_heuristic()
 
-        self.working_strategy = DivisionStrategy_2(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
-        self.working_iteration = utils.get_cur_iter()
+            self.working_strategy = DivisionStrategy_2(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
+            self.working_iteration = utils.get_cur_iter()
         return self.working_strategy
 
     def finish_strategy(self):
-        self.update_heuristic()
-        self.add(self.working_iteration, self.working_strategy)
+        with torch.no_grad():
+            self.update_heuristic()
+            if utils.get_args().benchmark_stats:
+                # del self.working_strategy.heuristic
+                self.working_strategy.heuristic = None
+                # Because the heuristic is of size (# of tiles, ) and takes up lots of memory. 
+            self.add(self.working_iteration, self.working_strategy)
 
 
 
