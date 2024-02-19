@@ -63,7 +63,7 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     args = get_args()
     from tqdm import tqdm
     for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos)):
-        if args.fixed_training_image == -1 or id == args.fixed_training_image:
+        if not hasattr(args, "fixed_training_image") or args.fixed_training_image == -1 or id == args.fixed_training_image:
             camera_list.append(loadCam(args, id, c, resolution_scale))
         else:
             camera_list.append(None)

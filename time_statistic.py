@@ -2302,6 +2302,73 @@ def compare_GPU_utilization(save_folder, file_paths):
         all_df[file_path] = df["b10 render time"] / all_df["baseline"]
     all_df.to_csv(save_folder + "compare_multiple_GPU_utilization.csv", index=False)
 
+def draw_epoch_loss(file_paths):
+    epoch_losses = []
+    for file_path in file_paths:
+        epoch_loss = []
+        lines = open(file_path, "r").readlines()
+        for line in lines:
+            #epoch 2 loss: 0.17376218013391145
+            if line.startswith("epoch "):
+                epoch_loss.append(float(line.split(" ")[-1]))
+        epoch_losses.append(epoch_loss)
+    
+    fig, ax = plt.subplots(figsize=(20, 10))
+    for i, epoch_loss in enumerate(epoch_losses):
+        ax.plot(range(len(epoch_loss)), epoch_loss, label=file_paths[i])
+    ax.legend(loc='upper right')
+    folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
+    plt.savefig(folder+"compare_epoch_loss.png")
+
+def draw_evaluation_results(file_paths):
+    eval_tests_PSNR = []
+    eval_trains_PSNR = []
+    iterations = []
+    # Evaluating test: 
+    for file_path in file_paths:
+        lines = open(file_path, "r").readlines()
+        eval_test_PSNR = []
+        eval_train_PSNR = []
+        for line in lines:
+            # [ITER 30000] Evaluating test: L1 0.058287687942777805 PSNR 21.94811627739354
+            # [ITER 30000] Evaluating train: L1 0.03144958354532719 PSNR 26.123293685913087
+            if "Evaluating test: " in line:
+                eval_test_PSNR.append(float(line.split(" ")[-1]))
+                if len(eval_tests_PSNR) == 0:
+                    iterations.append(int(line.split(" ")[1][:-1]))
+            if "Evaluating train: " in line:
+                eval_train_PSNR.append(float(line.split(" ")[-1]))
+        eval_tests_PSNR.append(eval_test_PSNR)
+        eval_trains_PSNR.append(eval_train_PSNR)
+
+    # draw the two figures on the same graph.
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    for i, eval_test_PSNR in enumerate(eval_tests_PSNR):
+        # x-axis is iteration
+        # y-axis is PSNR
+        ax[0].plot(iterations, eval_test_PSNR, label=file_paths[i])
+    
+    ax[0].set_ylabel('PSNR')
+    secax = ax[0].secondary_yaxis('right')
+    secax.set_ylabel('PSNR')
+    ax[0].legend(loc='lower right')
+    ax[0].set_title("Evaluating test PSNR")
+
+    for i, eval_train_PSNR in enumerate(eval_trains_PSNR):
+        # x-axis is iteration
+        # y-axis is PSNR
+        ax[1].plot(iterations, eval_train_PSNR, label=file_paths[i])
+
+    ax[1].set_ylabel('PSNR')
+    secax = ax[1].secondary_yaxis('right')
+    secax.set_ylabel('PSNR')
+    ax[1].legend(loc='lower right')
+    ax[1].set_title("Evaluating train PSNR")
+
+    folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
+    plt.savefig(folder+"compare_evaluation_results.png")
+    
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -2605,9 +2672,43 @@ if __name__ == "__main__":
 
 
 
+    # draw_epoch_loss(
+    #     [
+    #         "experiments/bsz1/python_ws=4_rk=0.log",
+    #         "experiments/bsz2/python_ws=4_rk=0.log",
+    #         "experiments/bsz4/python_ws=4_rk=0.log",
+    #     ]
+    # )
 
+    # draw_epoch_loss(
+    #     [
+    #         "experiments/bsz1_2/python_ws=4_rk=0.log",
+    #         "experiments/bsz2_2/python_ws=4_rk=0.log",
+    #         "experiments/bsz4_2/python_ws=4_rk=0.log",
+    #     ]
+    # )
 
+    # draw_epoch_loss(
+    #     [
+    #         "experiments/bsz1/python_ws=4_rk=0.log",
+    #         "experiments/bsz2/python_ws=4_rk=0.log",
+    #         "experiments/bsz4/python_ws=4_rk=0.log",
+    #         "experiments/bsz1_2/python_ws=4_rk=0.log",
+    #         "experiments/bsz2_2/python_ws=4_rk=0.log",
+    #         "experiments/bsz4_2/python_ws=4_rk=0.log",
+    #     ]
+    # )
 
+    draw_evaluation_results(
+        [
+            "experiments/bsz1_perf/python_ws=4_rk=0.log",
+            "experiments/bsz2_perf/python_ws=4_rk=0.log",
+            "experiments/bsz4_perf/python_ws=4_rk=0.log",
+            "experiments/bsz8_perf/python_ws=4_rk=0.log",
+            "experiments/bsz16_perf/python_ws=4_rk=0.log",
+            "experiments/bsz32_perf/python_ws=4_rk=0.log",   
+        ]
+    )
 
     pass
 

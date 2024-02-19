@@ -453,7 +453,7 @@ def training(dataset, opt, pipe, args, log_file):
                 timers.stop("densification")
 
             # Optimizer step
-            if iteration < opt.iterations:
+            if iteration < opt.iterations and iteration % args.bsz == 0:
                 timers.start("optimizer_step")
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -476,31 +476,35 @@ def training(dataset, opt, pipe, args, log_file):
             i2jsend_file.write("iteration {}:{}\n".format(iteration, json.dumps(i2j_send_size)))
             i2jsend_file.flush()
 
-
     # Finish training
-    if (args.adjust_div_stra and args.adjust_mode in ["1", "2", "4"]) or (not args.adjust_div_stra and utils.WORLD_SIZE == 1):
-        data_json = {}
-        for camera_id, strategy_history in cameraId2StrategyHistory.items():
-            data_json[camera_id] = strategy_history.to_json()
-        
-        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-            json.dump(data_json, f)
-
     if args.end2end_time:
         torch.cuda.synchronize()
         log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt.iterations, opt.iterations/(time.time() - train_start_time)))
     
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
-    # DEBUG
-    if args.memory_distribution:
-        # save gaussians.send_to_gpui_cnt to file.
-        with open(args.log_folder+"/send_to_gpui_cnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-            send_to_gpui_cnt_cpu = gaussians.send_to_gpui_cnt.cpu().numpy().tolist()
-            data2save = []
-            for i in range(len(send_to_gpui_cnt_cpu)):
-                data2save.append( ",".join([str(x) for x in send_to_gpui_cnt_cpu[i]]) )
-            json.dump(data2save, f, indent=4)
+    if not args.performance_stats:
+
+        # Save some statistics to file for future usage. 
+
+        if (args.adjust_div_stra and args.adjust_mode in ["1", "2", "4"]) or (not args.adjust_div_stra and utils.WORLD_SIZE == 1):
+            data_json = {}
+            for camera_id, strategy_history in cameraId2StrategyHistory.items():
+                data_json[camera_id] = strategy_history.to_json()
+            
+            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+                json.dump(data_json, f)
+
+
+        # DEBUG
+        if args.memory_distribution:
+            # save gaussians.send_to_gpui_cnt to file.
+            with open(args.log_folder+"/send_to_gpui_cnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+                send_to_gpui_cnt_cpu = gaussians.send_to_gpui_cnt.cpu().numpy().tolist()
+                data2save = []
+                for i in range(len(send_to_gpui_cnt_cpu)):
+                    data2save.append( ",".join([str(x) for x in send_to_gpui_cnt_cpu[i]]) )
+                json.dump(data2save, f, indent=4)
 
 
 def prepare_output_and_logger(args):    
@@ -632,6 +636,8 @@ if __name__ == "__main__":
     parser.add_argument("--benchmark_stats", action='store_true', default=False)
     parser.add_argument("--stop_adjust2_well_balanced", action='store_true', default=False)
     parser.add_argument("--log_tiles_stats_img_num", type=int, default=-1)
+    parser.add_argument("--bsz", type=int, default=1)
+    parser.add_argument("--performance_stats", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -644,6 +650,48 @@ if __name__ == "__main__":
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 
     # Check arguments
+    assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
+
+    if args.benchmark_stats:
+        args.zhx_time = True
+        args.zhx_python_time = True
+        args.log_iteration_memory_usage = True
+        args.check_memory_usage = True
+        args.end2end_time = True
+        args.disable_checkpoint_and_save = True
+        args.checkpoint_iterations = []
+        args.save_iterations = []
+        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
+        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
+        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
+        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
+
+    if args.performance_stats:
+        args.eval = True
+        args.zhx_time = False
+        args.zhx_python_time = False
+        args.end2end_time = True
+        args.log_iteration_memory_usage = False
+        args.check_memory_usage = False
+        args.save_iterations = [2000, 7000, 15000, 30000]
+        args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
+        args.checkpoint_iterations = []
+
+        # use the fastest mode.
+        if utils.WORLD_SIZE > 1:
+            args.adjust_div_stra = True
+            args.adjust_mode = "1"
+        else:
+            args.adjust_div_stra = False
+        args.lazy_load_image = True
+        args.memory_distribution = True
+        args.image_distribution = True
+
+        assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
+        assert not args.disable_auto_densification, "performance_stats mode needs auto densification."
+        assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
+        assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
+
     if args.adjust_div_stra and utils.WORLD_SIZE == 1:
         print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
         args.adjust_div_stra = False
@@ -674,19 +722,6 @@ if __name__ == "__main__":
     if args.log_iteration_memory_usage:
         args.check_memory_usage = True
 
-    if args.benchmark_stats:
-        args.zhx_time = True
-        args.zhx_python_time = True
-        args.log_iteration_memory_usage = True
-        args.check_memory_usage = True
-        args.end2end_time = True
-        args.disable_checkpoint_and_save = True
-        args.checkpoint_iterations = []
-        args.save_iterations = []
-        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
-        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
-        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
-        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
 
     # create log folder
     if utils.LOCAL_RANK == 0:
