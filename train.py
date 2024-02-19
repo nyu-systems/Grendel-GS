@@ -19,8 +19,16 @@ from gaussian_renderer import render, network_gui
 from gaussian_renderer.image_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
-# from scene.workload_division import DivisionStrategy, DivisionStrategyHistory_1, OldDivisionStrategyHistory, WorkloadDivisionTimer, get_evenly_global_strategy_str
-from scene.workload_division import DivisionStrategy_1, DivisionStrategyHistory_1, DivisionStrategyHistory_2, DivisionStrategyWS1, DivisionStrategyManuallySet, WorkloadDivisionTimer, get_evenly_global_strategy_str
+from scene.workload_division import (DivisionStrategy_1, 
+                                     DivisionStrategyHistory_1, 
+                                     DivisionStrategyHistory_2, 
+                                     DivisionStrategyHistory_4, 
+                                     DivisionStrategyWS1, 
+                                     DivisionStrategyManuallySet, 
+                                     WorkloadDivisionTimer, 
+                                     get_evenly_global_strategy_str, 
+                                     DivisionStrategyHistoryWS1
+)
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -209,23 +217,18 @@ def training(dataset, opt, pipe, args, log_file):
                     args.dist_global_strategy
                 )
                 cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-            else:
-                assert False, "not implemented yet."
-                # timers.start("pre_forward_adjust_div_stra")
-                # if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                #     cameraId2StrategyHistory[viewpoint_cam.uid] = OldDivisionStrategyHistory(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-                # strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                # division_strategy = strategy_history.get_next_strategy()
-                # cuda_args["dist_division_mode"] = division_strategy.local_strategy_str
-                # # TODO: improve it; now the format is just `T:$l,$r`, an example: `T:0,62`
-                # cuda_args["dist_global_strategy"] = division_strategy.global_strategy_str
-                # # format: 0,8,19,...,num_tiles
-                # # TODO: many hacks for the simultaneous use of division_strategy and memory_distribution; It is not beautiful. to be optimized.
-                # timers.stop("pre_forward_adjust_div_stra")
+            elif args.adjust_mode == "4":
+                if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_4(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+                strategy = strategy_history.start_strategy()
+                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
         else:
-            tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
-            tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
-            strategy = DivisionStrategyWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, tile_x, tile_y)
+            assert utils.WORLD_SIZE == 1, "if not adjust_div_stra, then world_size must be 1."
+            if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistoryWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK)
+            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+            strategy = strategy_history.start_strategy()
 
 
         memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
@@ -331,34 +334,36 @@ def training(dataset, opt, pipe, args, log_file):
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
             if args.adjust_mode == "1":
-                strategy_history.finish_strategy()
+                if iteration > 20:# If we pass the warmup period.
+                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+                                        n_render.sum().item(),
+                                        n_consider.sum().item(),
+                                        n_contrib.sum().item())
+                    strategy_history.finish_strategy()
             elif args.adjust_mode == "2":
                 # print(cuda_args["stats_collector"])
 
                 if iteration > 20:# If we pass the warmup period.
-                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"])
+                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+                                        n_render.sum().item(),
+                                        n_consider.sum().item(),
+                                        n_contrib.sum().item())
                     strategy_history.finish_strategy()
-            elif args.adjust_mode == "history_heuristic":
-                assert False, "not implemented yet."
-                # forward_time = adjust_div_stra_timer.elapsed("forward")
-                # backward_time = adjust_div_stra_timer.elapsed("backward")
-
-                # timers.start("post_forward_adjust_div_stra_synchronize_time")
-                # forward_time, backward_time = DivisionStrategy.synchronize_time(utils.WORLD_SIZE, utils.LOCAL_RANK, forward_time, backward_time)
-                # timers.stop("post_forward_adjust_div_stra_synchronize_time")
-
-                # timers.start("post_forward_adjust_div_stra_synchronize_stats")
-                # n_render, n_consider, n_contrib = DivisionStrategy.synchronize_stats(n_render, n_consider, n_contrib, timers)
-                # timers.stop("post_forward_adjust_div_stra_synchronize_stats")
-
-                # timers.start("post_forward_adjust_div_stra_update_result")
-                # division_strategy.update_result(n_render, n_consider, n_contrib, forward_time, backward_time)
-                # strategy_history.add(iteration, division_strategy)
-                # timers.stop("post_forward_adjust_div_stra_update_result")
-            elif args.adjust_mode == "none":
-                assert False, "not implemented yet."
-                # strategy_history.add(iteration, division_strategy)
-                pass
+            elif args.adjust_mode == "4":
+                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+                                    n_render.sum().item(),
+                                    n_consider.sum().item(),
+                                    n_contrib.sum().item(),
+                                    n_contrib)
+                strategy_history.finish_strategy()
+        else:
+            assert utils.WORLD_SIZE == 1, "if not adjust_div_stra, then world_size must be 1."
+            if iteration > 20:
+                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+                                    n_render.sum().item(),
+                                    n_consider.sum().item(),
+                                    n_contrib.sum().item())
+                strategy_history.finish_strategy()
 
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
@@ -473,17 +478,13 @@ def training(dataset, opt, pipe, args, log_file):
 
 
     # Finish training
-    if args.adjust_div_stra:
-
-        if args.adjust_mode in ["1", "2"]:
-            data_json = {}
-            for camera_id, strategy_history in cameraId2StrategyHistory.items():
-                data_json[camera_id] = strategy_history.to_json()
-            
-            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-                json.dump(data_json, f)
-        elif args.adjust_mode == "none":
-            pass
+    if (args.adjust_div_stra and args.adjust_mode in ["1", "2", "4"]) or (not args.adjust_div_stra and utils.WORLD_SIZE == 1):
+        data_json = {}
+        for camera_id, strategy_history in cameraId2StrategyHistory.items():
+            data_json[camera_id] = strategy_history.to_json()
+        
+        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+            json.dump(data_json, f)
 
     if args.end2end_time:
         torch.cuda.synchronize()
@@ -629,6 +630,8 @@ if __name__ == "__main__":
     parser.add_argument("--redistribute_frequency", type=int, default=10)
     parser.add_argument("--log_iteration_memory_usage", action='store_true', default=False)
     parser.add_argument("--benchmark_stats", action='store_true', default=False)
+    parser.add_argument("--stop_adjust2_well_balanced", action='store_true', default=False)
+    parser.add_argument("--log_tiles_stats_img_num", type=int, default=-1)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -673,7 +676,7 @@ if __name__ == "__main__":
 
     if args.benchmark_stats:
         args.zhx_time = True
-        args.python_timer = True
+        args.zhx_python_time = True
         args.log_iteration_memory_usage = True
         args.check_memory_usage = True
         args.end2end_time = True

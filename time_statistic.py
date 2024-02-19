@@ -449,6 +449,53 @@ def extract_json_from_python_time_log(file_path, load_genereated_json=False):
     print("return data from file"+file_path.removesuffix(".log") + ".json")
     return stats
 
+def extract_3dgs_count_from_python_log(folder):
+    files = [
+        "python_ws=4_rk=0.log",
+        "python_ws=4_rk=1.log",
+        "python_ws=4_rk=2.log",
+        "python_ws=4_rk=3.log",
+    ]
+    stats = {}
+    iterations = []
+    for rk, file in enumerate(files):
+        file_path = folder + file
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+        stats[f"n_3dgs_rk={rk}"] = []
+        for line in lines:
+            if "densify_and_prune. Now num of 3dgs:" in line:
+                # example
+                # iteration 1000 densify_and_prune. Now num of 3dgs: 54539. Now Memory usage: 0.45931053161621094 GB. Max Memory usage: 4.580923080444336 GB.
+                iteration = int(line.split("iteration ")[1].split(" ")[0])
+                n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
+                if rk == 0:
+                    iterations.append(iteration)
+                stats[f"n_3dgs_rk={rk}"].append(n_3dgs)
+    return stats, iterations
+
+def extract_comm_count_from_i2jsend_log(folder):
+    expe_name = folder.split("/")[-2]
+    file_path = folder+"i2jsend_ws=4_rk=0.txt"
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    stats = {"total_comm_count": [], "i2jsend": []}
+    iterations = []
+    for line in lines:
+        #example
+        #iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
+        if line.startswith("iteration"):
+            parts = line.split(":")
+            iteration = int(parts[0].split(" ")[1])
+            iterations.append(iteration)
+
+            i2jsend_json_data = json.loads(parts[1])
+            # stats["i2jsend"].append(i2jsend_json_data)
+            stats["total_comm_count"].append(
+                sum([sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i] for i in range(len(i2jsend_json_data))])
+            )
+    return stats, iterations
+
 def extract_json_from_i2jsend_log(file_path):
 
     file_name = file_path.split("/")[-1]
@@ -469,6 +516,7 @@ def extract_json_from_i2jsend_log(file_path):
                 stats.append({"iteration": iteration, "ws": ws})
             i2jsend_json_data = json.loads(parts[1])
             stats[-1]["i2jsend"] = i2jsend_json_data
+            stats[-1]["total_comm_count"] = sum([sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i] for i in range(len(i2jsend_json_data))])
 
     # save in file
     with open(file_path.removesuffix(".txt") + ".json", 'w') as f:
@@ -1864,32 +1912,37 @@ def adjust3(folder):
     # print(df_stats)
     df_stats.to_csv(folder + "gpu_time_stats.csv", index=False)
 
-def compare_end2end_stats(save_folder):
+def compare_end2end_stats(save_folder, file_paths=None):
     # print(get_end2end_stats("experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log"))
 
-    file_paths = [
-        "experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=1.log",
-        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=2.log",
-        "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=3.log",
-        "experiments/adjust_2_garden4k_1/python_ws=4_rk=0.log",
-        "experiments/adjust_2_garden4k_2/python_ws=4_rk=0.log",
-        "experiments/adjust_2_garden4k_3/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_garden4k_2/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=1.log",
-        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=2.log", 
-        "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=3.log",               
-        "experiments/adjust_baseline_room4k_1/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_room4k_1/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_room4k_2/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_room4k_2/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_bicycle4k_1/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_bicycle4k_1/python_ws=4_rk=0.log",
-        "experiments/adjust_baseline_bicycle4k_2/python_ws=1_rk=0.log",
-        "experiments/adjust_baseline_bicycle4k_2/python_ws=4_rk=0.log",
-    ]
+    if file_paths is None:
+        file_paths = [
+            "experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=0.log",
+            "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=1.log",
+            "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=2.log",
+            "experiments/adjust_baseline_garden4k_1/python_ws=4_rk=3.log",
+            "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=0.log",
+            "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=1.log",
+            "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=2.log",
+            "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=3.log",
+            # "experiments/repeat/adjust_2_garden4k_1/python_ws=4_rk=0.log",
+            "experiments/repeat/adjust_2_garden4k_2/python_ws=4_rk=0.log",
+            "experiments/repeat/adjust_2_garden4k_3/python_ws=4_rk=0.log",
+            "experiments/adjust_baseline_garden4k_2/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=0.log",
+            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=1.log",
+            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=2.log", 
+            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=3.log",               
+            "experiments/adjust_baseline_room4k_1/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_room4k_1/python_ws=4_rk=0.log",
+            "experiments/adjust_baseline_room4k_2/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_room4k_2/python_ws=4_rk=0.log",
+            "experiments/adjust_baseline_bicycle4k_1/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_bicycle4k_1/python_ws=4_rk=0.log",
+            "experiments/adjust_baseline_bicycle4k_2/python_ws=1_rk=0.log",
+            "experiments/adjust_baseline_bicycle4k_2/python_ws=4_rk=0.log",
+        ]
 
     df = None
     for file_path in file_paths:
@@ -1908,9 +1961,9 @@ def compare_end2end_stats(save_folder):
 def compare_garden_adjust_mode(save_folder):
     folder = [
         "experiments/adjust_baseline_garden4k_1/",
-        "experiments/adjust_2_garden4k_1/",
-        "experiments/adjust_2_garden4k_2/",
-        "experiments/adjust_2_garden4k_3/",
+        "experiments/repeat/adjust_2_garden4k_1/",
+        "experiments/repeat/adjust_2_garden4k_2/",
+        "experiments/repeat/adjust_2_garden4k_3/",
     ]
     color = [
         "tab:red",
@@ -1951,6 +2004,303 @@ def compare_garden_adjust_mode(save_folder):
     # save the figure
     plt.savefig(save_folder + "compare_garden_adjust_mode.png")
 
+def redistribute_analyze_comm_and_count3dgs(folders):
+    dict_i2jsend_stats = {}
+    dict_count3dgs_stats = {}
+    for folder in folders:
+        expe_name = folder.split("/")[-2]
+
+
+        i2jsend_stats, i2jsend_iterations = extract_comm_count_from_i2jsend_log(folder)
+        if dict_i2jsend_stats == {}:
+            dict_i2jsend_stats["iterations"] = i2jsend_iterations
+        # merge i2jsend_stats into dict_i2jsend_stats
+        dict_i2jsend_stats[expe_name+":total_comm_count"] = i2jsend_stats["total_comm_count"]
+        
+
+        count3dgs_stats, count3dgs_iterations = extract_3dgs_count_from_python_log(folder)
+        if dict_count3dgs_stats == {}:
+            dict_count3dgs_stats["iterations"] = count3dgs_iterations
+        for key in count3dgs_stats:
+            dict_count3dgs_stats[expe_name+":"+key] = count3dgs_stats[key]
+
+    df_i2jsend_stats = pd.DataFrame(dict_i2jsend_stats)
+    df_i2jsend_stats.to_csv(folders[0]+"compare_i2jsend_stats.csv", index=False)
+    df_count3dgs_stats = pd.DataFrame(dict_count3dgs_stats)
+    df_count3dgs_stats.to_csv(folders[0]+"compare_count3dgs_stats.csv", index=False)
+
+
+
+def analyze_heuristics(folder, image_count=6):
+    if folder[-1] != "/":
+        folder += "/"
+    suffix_list = [
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+    print("processing suffix_list: ", suffix_list)
+
+    # strategy_history_ws=4_rk=0.json
+    data = json.load(open(folder + "strategy_history_ws=4_rk=0.json", "r"))
+    sampled_image_id = list(range(0, image_count))
+
+    df = pd.DataFrame(columns=["image_id", "iteration", "n_tiles_0", "time_0", "n_tiles_1", "time_1", "n_tiles_2", "time_2", "n_tiles_3", "time_3"])
+    for image_id in sampled_image_id:
+        history_for_one_image = data[str(image_id)]
+        for tmp in history_for_one_image:
+            iteration = tmp["iteration"]
+            global_strategy_str = tmp["strategy"]["gloabl_strategy_str"]
+            global_strategy = [int(x) for x in global_strategy_str.split(",")]
+            global_n_tiles = [global_strategy[i+1]-global_strategy[i] for i in range(len(global_strategy)-1)]
+            global_time = tmp["strategy"]["global_running_times"]
+            df = df._append({
+                "image_id": int(image_id),
+                "iteration": int(iteration),
+                "n_tiles_0": global_n_tiles[0],
+                "time_0": round(global_time[0], 5),
+                "n_tiles_1": global_n_tiles[1],
+                "time_1": round(global_time[1], 5),
+                "n_tiles_2": global_n_tiles[2],
+                "time_2": round(global_time[2], 5),
+                "n_tiles_3": global_n_tiles[3],
+                "time_3": round(global_time[3], 5),
+            }, ignore_index=True)
+
+    df.to_csv(folder + "heuristics.csv", index=False)
+
+    def get_df_for_one_image_id(df, image_id):
+        return df[df["image_id"] == image_id]
+
+    for image_id in sampled_image_id:
+        one_image_id_df = get_df_for_one_image_id(df, image_id)
+        epochs = range(0, len(one_image_id_df))
+
+        fig, axs = plt.subplots(nrows=3, ncols=1, figsize=(35, 18))
+        four_colors = ['tab:red', 'tab:blue', 'tab:green', 'tab:orange']
+
+        # 在第一个子图上绘制y1
+        # axs[0].plot(x, y1, 'r')  # 'r'是红色的意思
+        axs[0].set_title('N_tiles', fontsize=20)
+        # axs[0].set_xlabel('epochs')
+        axs[0].set_ylabel('N_tiles', fontsize=16)
+        axs[0].plot(epochs, one_image_id_df['n_tiles_0'], color=four_colors[0], label='rk=0')
+        axs[0].plot(epochs, one_image_id_df['n_tiles_1'], color=four_colors[1], label='rk=1')
+        axs[0].plot(epochs, one_image_id_df['n_tiles_2'], color=four_colors[2], label='rk=2')
+        axs[0].plot(epochs, one_image_id_df['n_tiles_3'], color=four_colors[3], label='rk=3')
+        axs[0].tick_params(axis='y')
+        axs[0].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
+        # make it larger
+        axs[0].legend(loc='upper left', fontsize=16)
+
+
+        # 在第二个子图上绘制y2
+        axs[1].set_title('N_tiles_time', fontsize=20)
+        # axs[1].set_xlabel('epochs')
+        axs[1].set_ylabel('time', fontsize=16)
+        axs[1].plot(epochs, one_image_id_df['time_0'], linestyle='-', color=four_colors[0])
+        axs[1].plot(epochs, one_image_id_df['time_1'], linestyle='-', color=four_colors[1])
+        axs[1].plot(epochs, one_image_id_df['time_2'], linestyle='-', color=four_colors[2])
+        axs[1].plot(epochs, one_image_id_df['time_3'], linestyle='-', color=four_colors[3])
+        axs[1].tick_params(axis='y')
+        axs[1].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
+        # axs[1].legend(loc='upper left')
+
+        def per_tile_time(n_tiles, time):
+            # n_tiles, time are both column of a dataframe
+            return time / n_tiles
+
+        axs[2].set_title('per_tile_time', fontsize=20)
+        axs[2].set_xlabel('epochs', fontsize=16)
+        axs[2].set_ylabel('time', fontsize=16)
+        per_tile_time_0 = per_tile_time(one_image_id_df['n_tiles_0'], one_image_id_df['time_0'])
+        per_tile_time_1 = per_tile_time(one_image_id_df['n_tiles_1'], one_image_id_df['time_1'])
+        per_tile_time_2 = per_tile_time(one_image_id_df['n_tiles_2'], one_image_id_df['time_2'])
+        per_tile_time_3 = per_tile_time(one_image_id_df['n_tiles_3'], one_image_id_df['time_3'])
+        axs[2].plot(epochs, per_tile_time_0, linestyle='--', color=four_colors[0], label='rk=0')
+        axs[2].plot(epochs, per_tile_time_1, linestyle='--', color=four_colors[1], label='rk=1')
+        axs[2].plot(epochs, per_tile_time_2, linestyle='--', color=four_colors[2], label='rk=2')
+        axs[2].plot(epochs, per_tile_time_3, linestyle='--', color=four_colors[3], label='rk=3')
+        axs[2].tick_params(axis='y')
+        axs[2].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
+        # axs[2].legend(loc='upper left')
+
+        plt.savefig(folder + "analyze_heuristics_"+str(image_id)+".png")
+
+    # tiles_stats analysis.
+    df = pd.DataFrame(columns=["camera_id", "epoch", "sum_n_render_0", "sum_n_render_1", "sum_n_render_2", "sum_n_render_3", "sum_n_consider_0", "sum_n_consider_1", "sum_n_consider_2", "sum_n_consider_3", "sum_n_contrib_0", "sum_n_contrib_1", "sum_n_contrib_2", "sum_n_contrib_3"])
+    data = []
+    for rk, suffix in enumerate(suffix_list):
+        data_rki = json.load(open(folder + f"strategy_history_ws=4_rk={rk}.json", "r"))
+        # only keep image_id in sampled_image_id
+        data_rki = {k: v for k, v in data_rki.items() if int(k) in sampled_image_id}
+        data.append(data_rki)
+    for image_id in sampled_image_id:
+        sum_n_render = []
+        sum_n_consider = []
+        sum_n_contrib = []
+        for rk, suffix in enumerate(suffix_list):
+            data_rki = data[rk]
+            sum_n_render_rki = []
+            sum_n_consider_rki = []
+            sum_n_contrib_rki = []
+            history_for_one_image = data_rki[str(image_id)]
+            
+            for tmp in history_for_one_image:
+                iteration = tmp["iteration"]
+                sum_n_render_rki.append(tmp["strategy"]["sum_n_render"])
+                sum_n_consider_rki.append(tmp["strategy"]["sum_n_consider"])
+                sum_n_contrib_rki.append(tmp["strategy"]["sum_n_contrib"])
+            sum_n_render.append(sum_n_render_rki)
+            sum_n_consider.append(sum_n_consider_rki)
+            sum_n_contrib.append(sum_n_contrib_rki)
+            # print(len(sum_n_render_rki))
+
+        for epoch in range(len(sum_n_render[0])):
+            df = df._append({
+                "image_id": int(image_id),
+                "epoch": epoch,
+                "sum_n_render_0": sum_n_render[0][epoch],
+                "sum_n_render_1": sum_n_render[1][epoch],
+                "sum_n_render_2": sum_n_render[2][epoch],
+                "sum_n_render_3": sum_n_render[3][epoch],
+                "sum_n_consider_0": sum_n_consider[0][epoch],
+                "sum_n_consider_1": sum_n_consider[1][epoch],
+                "sum_n_consider_2": sum_n_consider[2][epoch],
+                "sum_n_consider_3": sum_n_consider[3][epoch],
+                "sum_n_contrib_0": sum_n_contrib[0][epoch],
+                "sum_n_contrib_1": sum_n_contrib[1][epoch],
+                "sum_n_contrib_2": sum_n_contrib[2][epoch],
+                "sum_n_contrib_3": sum_n_contrib[3][epoch],
+            }, ignore_index=True)
+
+    # save df in the file.
+    df.to_csv(folder + "tiles_stats.csv", index=False)
+
+    for image_id in sampled_image_id:
+        one_image_id_df = get_df_for_one_image_id(df, image_id)
+        epochs = range(0, len(one_image_id_df))
+        print(len(one_image_id_df))
+
+        fig, axs = plt.subplots(nrows=4, ncols=1, figsize=(50, 18))
+        four_colors = ['tab:red', 'tab:blue', 'tab:green', 'tab:orange']
+
+        # render on one graph;
+        axs[0].set_title('n_render', fontsize=20)
+        # axs[0].set_xlabel('epochs')
+        axs[0].set_ylabel('count', fontsize=16)
+        axs[0].plot(epochs, one_image_id_df['sum_n_render_0'], color=four_colors[0], label='rk=0')
+        axs[0].plot(epochs, one_image_id_df['sum_n_render_1'], color=four_colors[1], label='rk=1')
+        axs[0].plot(epochs, one_image_id_df['sum_n_render_2'], color=four_colors[2], label='rk=2')
+        axs[0].plot(epochs, one_image_id_df['sum_n_render_3'], color=four_colors[3], label='rk=3')
+        axs[0].tick_params(axis='y')
+        axs[0].xaxis.set_ticks(epochs)
+
+        # consider and contrib on another graph. 
+        axs[1].set_title('n_consider', fontsize=20)
+        # axs[1].set_xlabel('epochs')
+        axs[1].set_ylabel('count', fontsize=16)
+        axs[1].plot(epochs, one_image_id_df['sum_n_consider_0'], color=four_colors[0], label='n_consider_0')
+        axs[1].plot(epochs, one_image_id_df['sum_n_consider_1'], color=four_colors[1], label='n_consider_1')
+        axs[1].plot(epochs, one_image_id_df['sum_n_consider_2'], color=four_colors[2], label='n_consider_2')
+        axs[1].plot(epochs, one_image_id_df['sum_n_consider_3'], color=four_colors[3], label='n_consider_3')
+        axs[1].tick_params(axis='y')
+        axs[1].xaxis.set_ticks(epochs)
+
+        # consider and contrib on another graph. 
+        axs[2].set_title('n_contrib', fontsize=20)
+        # axs[2].set_xlabel('epochs')
+        axs[2].set_ylabel('count', fontsize=16)
+        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_0'], color=four_colors[0], label='n_contrib_0')
+        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_1'], color=four_colors[1], label='n_contrib_1')
+        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_2'], color=four_colors[2], label='n_contrib_2')
+        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_3'], color=four_colors[3], label='n_contrib_3')
+        axs[2].tick_params(axis='y')
+        axs[2].xaxis.set_ticks(epochs)
+
+
+        # contrib/consider on the third graph.
+        axs[3].set_title('contrib/consider', fontsize=20)
+        axs[3].set_xlabel('epochs')
+        axs[3].set_ylabel('ratio', fontsize=16)
+        ratio_0 = one_image_id_df['sum_n_contrib_0'] / one_image_id_df['sum_n_consider_0']
+        ratio_1 = one_image_id_df['sum_n_contrib_1'] / one_image_id_df['sum_n_consider_1']
+        ratio_2 = one_image_id_df['sum_n_contrib_2'] / one_image_id_df['sum_n_consider_2']
+        ratio_3 = one_image_id_df['sum_n_contrib_3'] / one_image_id_df['sum_n_consider_3']
+        axs[3].plot(epochs, ratio_0, linestyle='--', color=four_colors[0], label='rk=0')
+        axs[3].plot(epochs, ratio_1, linestyle='--', color=four_colors[1], label='rk=1')
+        axs[3].plot(epochs, ratio_2, linestyle='--', color=four_colors[2], label='rk=2')
+        axs[3].plot(epochs, ratio_3, linestyle='--', color=four_colors[3], label='rk=3')
+        axs[3].tick_params(axis='y')
+        axs[3].xaxis.set_ticks(epochs)
+
+        plt.savefig(folder + "analyze_tiles_stats_"+str(image_id)+".png")
+
+
+def check_GPU_utilization(folder):
+    if folder[-1] != "/":
+        folder += "/"
+    suffix_list = get_suffix_in_folder(folder)
+
+    # assert "ws=1_rk=0" in suffix_list and "ws=4_rk=0" in suffix_list, "ws=1_rk=0 and ws=4_rk=0 must be in the folder."
+    print("processing suffix_list: ", suffix_list)
+
+    data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=True)
+        data[suffix] = gpu_time_json
+
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+
+    iterations_to_process = [250*i+1 for i in range(1, 80, 2)]
+    compare_sum_time_df_ws1 = pd.DataFrame(columns=["iteration", "ws", "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"])
+    compare_sum_time_df_ws4 = pd.DataFrame(columns=["iteration", "ws", "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"])
+    for iteration in iterations_to_process:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+        save_path = folder + f"gpu_time_it={iteration}.csv"
+        # df.to_csv(folder + f"{mode}_time_it="+ str(iteration) +".csv", index=False)
+        df = pd.read_csv(save_path)
+        # 4 columns: "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"
+        ws1_df = df[df["ws"] == 1]
+        if not ws1_df.empty:
+            compare_sum_time_df_ws1 = compare_sum_time_df_ws1._append({
+                "iteration": iteration,
+                "ws": 1,
+                "b10 render time": round(ws1_df["b10 render time"].sum(), 6),
+                "b20 preprocess time": round(ws1_df["b20 preprocess time"].sum(), 6),
+                "70 render time": round(ws1_df["70 render time"].sum(), 6),
+                "10 preprocess time": round(ws1_df["10 preprocess time"].sum(), 6),
+            }, ignore_index=True)
+        ws4_df = df[df["ws"] == 4]
+        compare_sum_time_df_ws4 = compare_sum_time_df_ws4._append({
+            "iteration": iteration,
+            "ws": 4,
+            "b10 render time": round(ws4_df["b10 render time"].sum(), 6),
+            "b20 preprocess time": round(ws4_df["b20 preprocess time"].sum(), 6),
+            "70 render time": round(ws4_df["70 render time"].sum(), 6),
+            "10 preprocess time": round(ws4_df["10 preprocess time"].sum(), 6),
+        }, ignore_index=True)
+        # remove save_path
+        if os.path.exists(save_path):
+            os.remove(save_path)
+    compare_sum_time_df_ws1.to_csv(folder + "compare_sum_time_ws=1.csv", index=False)
+    compare_sum_time_df_ws4.to_csv(folder + "compare_sum_time_ws=4.csv", index=False)
+
+def compare_GPU_utilization(save_folder, file_paths):
+    # compare `b10 render time` for different df file_paths. 
+    # draw a df with iteration as x-axis, file_paths as y-axis. 
+
+    all_df = None
+    for file_path in file_paths:
+        df = pd.read_csv(file_path)
+        if all_df is None:
+            all_df = df[["iteration", "b10 render time"]]
+            # rename "b10 render time" to "baseline"
+            all_df = all_df.rename(columns={"b10 render time": "baseline"})
+        all_df[file_path] = df["b10 render time"] / all_df["baseline"]
+    all_df.to_csv(save_folder + "compare_multiple_GPU_utilization.csv", index=False)
 
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
@@ -1997,18 +2347,18 @@ if __name__ == "__main__":
 
     # adjust("experiments/adjust_baseline_garden4k_1/")
     # adjust("experiments/adjust_baseline_garden4k_2/")
-    adjust_analyze_optimal("experiments/adjust_baseline_garden4k_1/")
-    adjust_analyze_optimal("experiments/adjust_baseline_garden4k_2/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_garden4k_1/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_garden4k_2/")
 
     # adjust("experiments/adjust_baseline_bicycle4k_1/")
     # adjust("experiments/adjust_baseline_bicycle4k_2/")
-    adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_1/")
-    adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_2/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_1/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_bicycle4k_2/")
 
     # adjust("experiments/adjust_baseline_room4k_1/")
     # adjust("experiments/adjust_baseline_room4k_2/")
-    adjust_analyze_optimal("experiments/adjust_baseline_room4k_1/")
-    adjust_analyze_optimal("experiments/adjust_baseline_room4k_2/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_room4k_1/")
+    # adjust_analyze_optimal("experiments/adjust_baseline_room4k_2/")
 
     # adjust3("experiments/adjust3_1/")
     # adjust3("experiments/adjust3_1_1/")
@@ -2017,14 +2367,248 @@ if __name__ == "__main__":
     # adjust3("experiments/adjust3_1_4/")
 
     # adjust("experiments/adjust_2_garden4k_1/")
-    adjust_analyze_optimal("experiments/adjust_2_garden4k_1/")
+    # adjust_analyze_optimal("experiments/adjust_2_garden4k_1/")
     # adjust("experiments/adjust_2_garden4k_2/")
-    adjust_analyze_optimal("experiments/adjust_2_garden4k_2/")
+    # adjust_analyze_optimal("experiments/adjust_2_garden4k_2/")
     # adjust("experiments/adjust_2_garden4k_3/")
-    adjust_analyze_optimal("experiments/adjust_2_garden4k_3/")
+    # adjust_analyze_optimal("experiments/adjust_2_garden4k_3/")
 
-    compare_end2end_stats("experiments/adjust_baseline_garden4k_1/")
-    compare_garden_adjust_mode("experiments/adjust_baseline_garden4k_1/")
+    # adjust("experiments/repeat/adjust_2_garden4k_1/")
+    # adjust_analyze_optimal("experiments/repeat/adjust_2_garden4k_1/")
+    # adjust("experiments/repeat/adjust_2_garden4k_2/")
+    # adjust_analyze_optimal("experiments/repeat/adjust_2_garden4k_2/")
+    # adjust("experiments/repeat/adjust_2_garden4k_3/")
+    # adjust_analyze_optimal("experiments/repeat/adjust_2_garden4k_3/")
+
+
+    # compare_end2end_stats("experiments/adjust_baseline_garden4k_1/")
+    # compare_garden_adjust_mode("experiments/adjust_baseline_garden4k_1/")
+
+    # redistribute_analyze_comm_and_count3dgs([
+    #     # "experiments/redistribute_1/",
+    #     # "experiments/redistribute_1_baseline/",
+    #     "experiments/redistribute_4k/",
+    #     "experiments/redistribute_4k_baseline/",
+    # ])
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/iteration_memory_4k_adjust1/",
+    #     file_paths=[
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=4_rk=1.log",
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=4_rk=2.log",
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=4_rk=3.log",
+    #         "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=1.log",
+    #         "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=2.log",
+    #         "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_4k_adjust2_1_no/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_4k_adjust2_1_no/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_4k_adjust2_1_no/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_4k_adjust2_1_no/python_ws=4_rk=3.log",
+    #         "experiments/iteration_memory_4k_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust2_4/python_ws=4_rk=1.log",
+    #         "experiments/iteration_memory_4k_adjust2_4/python_ws=4_rk=2.log",
+    #         "experiments/iteration_memory_4k_adjust2_4/python_ws=4_rk=3.log",
+    #     ])
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/iter_mem_4k_adjust2_5/",
+    #     file_paths=[
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_4k_adjust2_1_no/python_ws=4_rk=0.log",
+    #         "experiments/iteration_memory_4k_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_4k_adjust2_5/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_4k_adjust2_5/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_4k_adjust2_5/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_4k_adjust2_5/python_ws=4_rk=3.log",
+    #     ])
+
+    # adjust("experiments/iteration_memory_4k_adjust1/")
+    # adjust_analyze_optimal("experiments/iteration_memory_4k_adjust1/")
+    # adjust("experiments/iteration_memory_4k_adjust2_1/")
+    # adjust_analyze_optimal("experiments/iteration_memory_4k_adjust2_1/")
+    # adjust("experiments/iter_mem_4k_adjust2_1_no/")
+    # adjust_analyze_optimal("experiments/iter_mem_4k_adjust2_1_no/")
+    # adjust("experiments/iteration_memory_4k_adjust2_4/")
+    # adjust_analyze_optimal("experiments/iteration_memory_4k_adjust2_4/")
+
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/iter_mem_bi_adjust1/",
+    #     file_paths=[
+    #         "experiments/iter_mem_bi_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust1/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi_adjust1/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi_adjust1/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_1/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi_adjust2_1/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi_adjust2_1/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi_adjust2_1n/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_1n/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi_adjust2_1n/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi_adjust2_1n/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_4/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi_adjust2_4/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi_adjust2_4/python_ws=4_rk=3.log",
+    #     ])
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/iter_mem_bi_adjust2_5/",
+    #     file_paths=[
+    #         "experiments/iter_mem_bi_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_1n/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=3.log",            
+    #     ])
+
+
+    # adjust("experiments/iter_mem_bi_adjust1/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi_adjust1/")
+    # adjust("experiments/iter_mem_bi_adjust2_1/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi_adjust2_1/")
+    # adjust("experiments/iter_mem_bi_adjust2_1n/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi_adjust2_1n/")
+    # adjust("experiments/iter_mem_bi_adjust2_4/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi_adjust2_4/")
+
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/iter_mem_bi15_adjust1/",
+    #     file_paths=[
+    #         "experiments/iter_mem_bi15_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/iter_mem_bi15_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi15_adjust1/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi15_adjust1/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi15_adjust1/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi15_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi15_adjust2_1/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi15_adjust2_1/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi15_adjust2_1/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi15_adjust2_1n/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi15_adjust2_1n/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi15_adjust2_1n/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi15_adjust2_1n/python_ws=4_rk=3.log",
+    #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=1.log",
+    #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=2.log",
+    #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=3.log",
+    #     ])
+    
+    # adjust("experiments/iter_mem_bi15_adjust1/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi15_adjust1/")
+    # adjust("experiments/iter_mem_bi15_adjust2_1/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi15_adjust2_1/")
+    # adjust("experiments/iter_mem_bi15_adjust2_1n/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi15_adjust2_1n/")
+    # adjust("experiments/iter_mem_bi15_adjust2_4/")
+    # adjust_analyze_optimal("experiments/iter_mem_bi15_adjust2_4/")
+
+    # heuristics check.
+
+    # image_count=6 by default
+    # analyze_heuristics("experiments/heu_che_gar_adjust1/", image_count=20)
+    # analyze_heuristics("experiments/heu_che_gar_adjust2_1/")
+    # analyze_heuristics("experiments/heu_che_bi_adjust1/")
+    # analyze_heuristics("experiments/heu_che_bi_adjust2_1/")
+
+    ########################################################################
+    #### analyze heu_tiles_stats_
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust1/")#image_count=6
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust2_1/")
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust2_1n/")
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust2_4/")
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust2_5/")
+    # analyze_heuristics("experiments/heu_tiles_stats_bi_adjust4/")
+
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust1/")
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_1/")
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_1n/")
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_4/")
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_5/")
+    # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust4/")
+
+
+    # compare_end2end_stats(
+    #     save_folder="experiments/heu_tiles_stats_bi_adjust1/",
+    #     file_paths=[
+    #         "experiments/heu_tiles_stats_bi_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust2_1n/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust2_5/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_bi_adjust4/python_ws=4_rk=0.log",
+    #     ])
+    # compare_end2end_stats(
+    #     save_folder="experiments/heu_tiles_stats_gar_adjust1/",
+    #     file_paths=[
+    #         "experiments/heu_tiles_stats_gar_adjust1/python_ws=1_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust1/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust2_1/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust2_1n/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust2_4/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust2_5/python_ws=4_rk=0.log",
+    #         "experiments/heu_tiles_stats_gar_adjust4/python_ws=4_rk=0.log",
+    #     ])
+
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust1/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust2_1/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust2_1n/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust2_4/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust2_5/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_gar_adjust4/")
+    # compare_GPU_utilization(save_folder="experiments/heu_tiles_stats_gar_adjust1/",
+    #                         file_paths=
+    #     [
+    #         "experiments/heu_tiles_stats_gar_adjust1/compare_sum_time_ws=1.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust1/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust2_1/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust2_1n/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust2_4/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust2_5/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_gar_adjust4/compare_sum_time_ws=4.csv",
+    #     ]
+    # )
+
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust1/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust2_1/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust2_1n/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust2_4/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust2_5/")
+    # check_GPU_utilization("experiments/heu_tiles_stats_bi_adjust4/")
+    # compare_GPU_utilization(save_folder="experiments/heu_tiles_stats_bi_adjust1/",
+    #                         file_paths=
+    #     [
+    #         "experiments/heu_tiles_stats_bi_adjust1/compare_sum_time_ws=1.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust1/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust2_1/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust2_1n/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust2_4/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust2_5/compare_sum_time_ws=4.csv",
+    #         "experiments/heu_tiles_stats_bi_adjust4/compare_sum_time_ws=4.csv",
+    #     ]
+    # )
+
+    ########################################################################
+
+
+
+
+
+
+
     pass
 
 
