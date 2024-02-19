@@ -1,4 +1,4 @@
-name: base
+name: gaussian_splatting
 channels:
   - defaults
 dependencies:
@@ -112,4 +112,3 @@ dependencies:
       - triton==2.2.0
       - typing-extensions==4.9.0
       - tzdata==2023.4
-prefix: /scratch/hz3496/miniconda3
