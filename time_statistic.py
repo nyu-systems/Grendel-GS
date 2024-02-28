@@ -3,12 +3,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
-import json
+from matplotlib.ticker import MultipleLocator
 
 # TODO: delete them later
 folder = None
 file_names = None
 num_render_file_names = None
+
+def delete_all_file_paths(file_paths):
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 def read_file(file_name, num_render_file_name=None):
     file_path = folder + file_name
@@ -344,6 +349,10 @@ def get_end2end_stats(file_path):
     stats["total_time"] = float(line_for_time.split("total_time: ")[1].split(" ms")[0])
     stats["throughput"] = float(line_for_time.split("throughput ")[1].split(" it/s")[0])
     stats["max_memory_usage"] = float(line_for_memory.split("Max Memory usage: ")[1].split(" GB")[0])
+    # round to 3 digits
+    stats["total_time"] = round(stats["total_time"], 3)
+    stats["throughput"] = round(stats["throughput"], 3)
+    stats["max_memory_usage"] = round(stats["max_memory_usage"], 3)
     # stats["iterations"] = int(line_for_time.split("iterations: ")[1].split(",")[0])
     return stats
 
@@ -2031,7 +2040,7 @@ def redistribute_analyze_comm_and_count3dgs(folders):
 
 
 
-def analyze_heuristics(folder, image_count=6):
+def analyze_heuristics(folder, image_count=6, working_image_ids=None):
     if folder[-1] != "/":
         folder += "/"
     suffix_list = [
@@ -2045,6 +2054,8 @@ def analyze_heuristics(folder, image_count=6):
     # strategy_history_ws=4_rk=0.json
     data = json.load(open(folder + "strategy_history_ws=4_rk=0.json", "r"))
     sampled_image_id = list(range(0, image_count))
+    if working_image_ids is not None:
+        sampled_image_id = working_image_ids
 
     df = pd.DataFrame(columns=["image_id", "iteration", "n_tiles_0", "time_0", "n_tiles_1", "time_1", "n_tiles_2", "time_2", "n_tiles_3", "time_3"])
     for image_id in sampled_image_id:
@@ -2367,7 +2378,382 @@ def draw_evaluation_results(file_paths):
 
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
     plt.savefig(folder+"compare_evaluation_results.png")
+
+
+def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=True):
+    if folder[-1] != "/":
+        folder += "/"
+
+    suffix_list = [
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    strategy_history_rk0 = json.load(open(folder + "strategy_history_ws=4_rk=0.json", "r"))
+
+    # get map_iteration_to_epoch
+    map_iter_to_epoch = {}
+    epoch = 0
+    iteration = 0
+    log_file = open(folder + "python_ws=4_rk=0.log", "r").readlines()
+    for line in log_file:
+        if line.startswith("iteration "):
+            iteration += 1 # iteration starts from 1. 
+            map_iter_to_epoch[iteration] = epoch  # epoch starts from 0. 
+        if line.startswith("epoch "):
+            epoch += 1
+
+    # get map_iteration_to_n_3dgs for each worker
+    def get_map_to_n_3dgs_for_a_worker(file_path):
+        data = open(file_path, "r").readlines()
+        map_iteration_to_n_3dgs = {}
+        map_epoch_to_n_3dgs = []
+        for line in data:
+            if line.startswith("xyz shape: torch.Size(["):
+                # xyz shape: torch.Size([13569, 3])
+                cur_n_3dgs = int(line.split(",")[0].split("[")[-1])
+            if line.startswith("iteration ") and " loss: " in line:
+                iteration = int(line.split(" ")[1])
+                map_iteration_to_n_3dgs[iteration] = cur_n_3dgs
+            if line.startswith("epoch "):
+                map_epoch_to_n_3dgs.append(cur_n_3dgs)
+            if "densify_and_prune. " in line:
+                cur_n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
+        return map_iteration_to_n_3dgs, map_epoch_to_n_3dgs
+    rki_map_iter_to_n_3dgs = []
+    rki_map_epoch_to_n_3dgs = []
+    for suffix in suffix_list:
+        file_path = folder + f"python_{suffix}.log"
+        map_iteration_to_n_3dgs, map_epoch_to_n_3dgs = get_map_to_n_3dgs_for_a_worker(file_path)
+        rki_map_iter_to_n_3dgs.append(map_iteration_to_n_3dgs)
+        rki_map_epoch_to_n_3dgs.append(map_epoch_to_n_3dgs)
+
+
+    def draw_3():
+        # if file exists
+        if os.path.exists(folder + "n_3dgs.png"):
+            return
+        
+        # change y axis to be log mode.
+
+        max_size = np.array(rki_map_epoch_to_n_3dgs).max()
+        max_size = max_size // 10000 * 10000 + 10000
+        y_axis_interval = max_size // 20 // 1000 * 1000
+
+        print("Generating ", folder + "n_3dgs.png")
+        # draw the figure.
+        fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(20, 25))
+        for rk in range(4):
+            ax[0].plot(
+                range(len(rki_map_epoch_to_n_3dgs[rk])),
+                rki_map_epoch_to_n_3dgs[rk],
+                label=f"rk={rk}'s n_3dgs'",
+            )
+
+        ax[0].set_xlabel('epoch', fontsize=25)
+        ax[0].set_ylabel('count', fontsize=25)
+        ax[0].legend(loc='lower right', fontsize=25)
+        ax[0].xaxis.set_major_locator(MultipleLocator(5))
+        ax[0].yaxis.set_major_locator(MultipleLocator(y_axis_interval))
+        ax[0].set_title("n_3dgs Changes During Training", fontsize=25)
+
+        # black, very thick line. sum among 4 workers.
+        ax[1].plot(
+            range(len(rki_map_epoch_to_n_3dgs[0])),
+            np.array(rki_map_epoch_to_n_3dgs).sum(axis=0),
+            label="sum 3dgs among 4 workers",
+            color="black",
+            linewidth=5,
+        )
+        ax[1].set_xlabel('epoch', fontsize=25)
+        ax[1].set_ylabel('count', fontsize=25)
+        ax[1].legend(loc='lower right', fontsize=25)
+        ax[1].xaxis.set_major_locator(MultipleLocator(5))
+        ax[1].set_title("sum 3dgs among 4 workers", fontsize=25)
+
+        rki_map_epoch_to_n_3dgs_percent = np.array(rki_map_epoch_to_n_3dgs) / np.array(rki_map_epoch_to_n_3dgs).sum(axis=0, keepdims=True)
+
+        for rk in range(4):
+            ax[2].plot(
+                range(len(rki_map_epoch_to_n_3dgs[rk])),
+                rki_map_epoch_to_n_3dgs_percent[rk],
+                label=f"rk={rk}'s n_3dgs percent",
+            )
+        max_y = rki_map_epoch_to_n_3dgs_percent.max()
+        ax[2].set_xlabel('epoch', fontsize=25)
+        ax[2].set_ylabel('percentage', fontsize=25)
+        ax[2].legend(loc='lower right', fontsize=25)
+        ax[2].xaxis.set_major_locator(MultipleLocator(5))
+        ax[2].yaxis.set_major_locator(MultipleLocator(round(max_y/10, 2)))
+        ax[2].set_ylim(0, max_y*2)
+        ax[2].set_title("(local n_3dgs) / (global n_edgs) Changes During Training", fontsize=25)
+
+        plt.savefig(folder + "n_3dgs.png")
+    if draw3:
+        draw_3()
+
+    def draw_1(image_id, all_i2jsend_size):
+        # if file exists
+        if os.path.exists(folder + f"i2j_send_size_image_{image_id}.png"):
+            return
+        print("Generating ", folder + f"i2j_send_size_image_{image_id}.png")
+        
+        max_size = np.array(all_i2jsend_size).max()
+        max_size = max_size // 10000 * 10000 + 10000
+        y_axis_interval = max_size // 20 // 1000 * 1000
+
+        # 4 by 4 grid and each subplot is a line chart.
+        fig, ax = plt.subplots(nrows=4, ncols=4, figsize=(40, 60))
+        for i in range(4):
+            for j in range(4):
+                # make the line thicker
+                ax[i][j].plot(
+                    range(len(all_i2jsend_size)),
+                    list(map(lambda t: t[i][j], all_i2jsend_size)),
+                    linewidth=3,
+                    label=f"gpu_{i}_send_to_gpu_{j}",
+                )
+                ax[i][j].set_title(f"gpu_{i}_send_to_gpu_{j}", fontsize=30)
+                if i == 3:
+                    ax[i][j].set_xlabel("epoch", fontsize=24)
+                if j == 0:
+                    ax[i][j].set_ylabel("n_3dgs", fontsize=24)
+                ax[i][j].xaxis.set_major_locator(MultipleLocator(10))
+                ax[i][j].yaxis.set_major_locator(MultipleLocator(y_axis_interval))
+                ax[i][j].tick_params(axis='both', which='major', labelsize=22)
+                ax[i][j].set_ylim(0, max_size)
+
+        plt.savefig(folder + f"i2j_send_size_image_{image_id}.png")
+
+    def draw_2(image_id, all_i2jsend_size):
+        # if file exists
+        if os.path.exists(folder + f"i2j_send_size_image_{image_id}_distribution.png"):
+            return
+        print("Generating ", folder + f"i2j_send_size_image_{image_id}_distribution.png")
+
+        # 4 by 4 grid and each subplot is a line chart.
+        fig, ax = plt.subplots(nrows=2, ncols=4, figsize=(40, 20))
+        # seperate the first row and the second row by a blank line.
+        fig.subplots_adjust(hspace=1)
+
+
+        all_i2jsend_size_np = np.array(all_i2jsend_size)
+
+        # first row is the send volume distribution of i2j_send_size.
+        for i in range(4):
+            # = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-1, keepdims=True)
+            distribution_along_row = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-1, keepdims=True)
+            ax[0][i].set_title(f"gpu_{i}_send_volume_distribution", fontsize=30)
+            ax[0][i].set_xlabel("epoch", fontsize=24)
+            if i == 0:
+                ax[0][i].set_ylabel("precentage", fontsize=24)
+            for j in range(4):
+                ax[0][i].plot(
+                    range(len(all_i2jsend_size)),
+                    distribution_along_row[:, i, j],
+                    linewidth=2,
+                    label=f"send_to_gpu_{j}",
+                )
+
+            ax[0][i].xaxis.set_major_locator(MultipleLocator(10))
+            ax[0][i].yaxis.set_major_locator(MultipleLocator(0.1))
+            ax[0][i].set_ylim(0, 1.0)
+            ax[0][i].tick_params(axis='both', which='major', labelsize=22)
+            ax[0][i].legend(loc='upper right')
+
+        # Second row is the receive volume distribution of i2j_send_size.
+        for i in range(4):
+            distribution_along_column = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-2, keepdims=True)
+            ax[1][i].set_title(f"gpu_{i}_recv_volume_distribution", fontsize=30)
+            ax[1][i].set_xlabel("epoch", fontsize=24)
+            if i == 0:
+                ax[1][i].set_ylabel("precentage", fontsize=24)
+            for j in range(4):
+                ax[1][i].plot(
+                    range(len(all_i2jsend_size)),
+                    distribution_along_column[:, j, i],
+                    linewidth=2,
+                    label=f"recv_from_gpu_{j}",
+                )
+
+            ax[1][i].xaxis.set_major_locator(MultipleLocator(10))
+            ax[1][i].yaxis.set_major_locator(MultipleLocator(0.1))
+            ax[1][i].set_ylim(0, 1.0)
+            ax[1][i].tick_params(axis='both', which='major', labelsize=22)
+            ax[1][i].legend(loc='upper right', fontsize=20)
+
+        plt.savefig(folder + f"i2j_send_size_image_{image_id}_distribution.png")
+
+    for image_id in working_image_ids:
+        cur_strategy_history_rk0 = strategy_history_rk0[str(image_id)]
+        all_i2jsend_size = []
+        for epoch_id in range(len(cur_strategy_history_rk0)):
+            all_i2jsend_size.append(cur_strategy_history_rk0[epoch_id]["strategy"]["i2j_send_size"])
+
+        if draw1:
+            draw_1(image_id, all_i2jsend_size)
+        if draw2:
+            draw_2(image_id, all_i2jsend_size)
+        pass
     
+
+
+def analyze_3dgs_change(folder):
+    if folder[-1] != "/":
+        folder += "/"
+
+    suffix_list = [
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    data = []
+    for rk in range(4):
+        file_path = folder + f"python_{suffix_list[rk]}.log"
+        data.append(open(file_path, "r").readlines())
+
+    iterations = []
+    epochs = []
+
+    n_3dgs_every_epoch = []
+    visible_3dgs_every_epoch = []
+    ave_3dgs_radii_every_epoch = []
+    ave_3dgs_grad_norm_every_epoch = []
+
+    cur_n_3dgs = 0
+    cur_visible_3dgs = 0
+    cur_ave_3dgs_radii = 0
+    cur_ave_3dgs_grad_norm = 0
+    n_image_in_this_epoch = 0
+
+    for line_id, line in enumerate(data[0]):
+        if "iteration " in line and " loss: " in line:
+            iteration = int(line.split(" ")[1])
+            iterations.append(iteration)
+            n_image_in_this_epoch += 1
+
+        if line.startswith("epoch "):
+            epoch = int(line.split(" ")[1])
+            epochs.append(epoch)
+
+            assert len(iterations) % n_image_in_this_epoch == 0
+
+            n_3dgs_every_epoch.append(cur_n_3dgs/n_image_in_this_epoch)
+            visible_3dgs_every_epoch.append(cur_visible_3dgs/n_image_in_this_epoch)
+            ave_3dgs_radii_every_epoch.append(cur_ave_3dgs_radii/n_image_in_this_epoch)
+            ave_3dgs_grad_norm_every_epoch.append(cur_ave_3dgs_grad_norm/n_image_in_this_epoch)
+            n_image_in_this_epoch = 0
+            cur_n_3dgs = 0
+            cur_visible_3dgs = 0
+            cur_ave_3dgs_radii = 0
+            cur_ave_3dgs_grad_norm = 0
+
+        if line.startswith("local_n_3dgs: "):
+            local_n_3dgs = 0
+            local_visible_3dgs = 0
+            local_sum_3dgs_radii = 0
+            local_sum_3dgs_grad_norm = 0
+            for rk in range(4):
+                cur_line = data[rk][line_id]
+                local_n_3dgs += int(cur_line.split("local_n_3dgs: ")[1].split(";")[0])
+                local_visible_3dgs += int(cur_line.split("local_visible_3dgs: ")[1].split(";")[0])
+                local_sum_3dgs_radii += float(cur_line.split("local_sum_3dgs_radii: ")[1].split(";")[0])
+                local_sum_3dgs_grad_norm += float(cur_line.split("local_sum_3dgs_grad_norm: ")[1].split(";")[0])
+
+            cur_n_3dgs += local_n_3dgs
+            cur_visible_3dgs += local_visible_3dgs
+            cur_ave_3dgs_radii += local_sum_3dgs_radii/local_visible_3dgs
+            cur_ave_3dgs_grad_norm += local_sum_3dgs_grad_norm/local_visible_3dgs
+        
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(20, 20))
+    fig.subplots_adjust(hspace=0.5)
+    ax[0].plot(epochs, n_3dgs_every_epoch, label="n_of_3dgs")
+    ax[0].plot(epochs, visible_3dgs_every_epoch, label="n_of_visible_3dgs")
+    # set y axis to be log mode.
+    # ax[0].set_yscale('log')
+    ax[0].set_title("n_of_3dgs and n_of_visible_3dgs", fontsize=24)
+    ax[0].set_xlabel('epoch', fontsize=20)
+    ax[0].set_ylabel('count', fontsize=20)
+    ax[0].xaxis.set_major_locator(MultipleLocator(3))
+    ax[0].legend(loc='lower right', fontsize=20)
+
+    ax[1].plot(epochs, ave_3dgs_radii_every_epoch, label="ave_3dgs_radii")
+    ax[1].set_title("average radii of visible 3dgs' covered area", fontsize=24)
+    ax[1].set_xlabel('epoch', fontsize=20)
+    ax[1].set_ylabel('radii', fontsize=20)
+    ax[1].xaxis.set_major_locator(MultipleLocator(3))
+    ax[1].legend(loc='upper right', fontsize=20)
+
+    ax[2].plot(epochs, ave_3dgs_grad_norm_every_epoch, label="ave_3dgs_grad_norm")
+    ax[2].set_title("average grad_norm of visible 3dgs position on the screen", fontsize=24)
+    ax[2].set_xlabel('epoch', fontsize=20)
+    ax[2].set_ylabel('grad_norm', fontsize=20)
+    ax[2].xaxis.set_major_locator(MultipleLocator(3))
+    ax[2].legend(loc='upper right', fontsize=20)
+
+    plt.savefig(folder + "analyze_3dgs_change.png")
+
+def redis_mode(folder):
+    suffix_list = [
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    process_iterations = [i for i in range(251, 30000, 500)]
+
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    delete_all_file_paths(file_paths)
+
+    file_paths = [folder + f"python_time_ws=4_rk={i}.json" for i in range(4)]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    delete_all_file_paths(file_paths)
+
+def compare_total_communication_volume_and_time(save_folder, folders):
+    dict_i2jsend_stats = {
+        "all_to_all_ave" : {},
+        "all_to_all_max_ave" : {},
+    }
+    for folder in folders:
+        expe_name = folder.split("/")[-2]
+
+        file_path = folder + "strategy_history_ws=4_rk=0.json"
+        data = json.load(open(file_path, "r"))
+
+        python_time_csv = folder + "merged_python_time.csv"
+        python_time_df = pd.read_csv(python_time_csv)
+        python_time_df = python_time_df[python_time_df["ws"] == 4]
+        # get the column `forward_all_to_all_communication`
+        forward_all_to_all_communication = python_time_df["forward_all_to_all_communication"].to_list()
+        forward_all_to_all_communication_ave = sum(forward_all_to_all_communication) / len(forward_all_to_all_communication)
+        forward_all_to_all_communication_max = []
+        for i in range(0, len(forward_all_to_all_communication), 4):
+            forward_all_to_all_communication_max.append(max(forward_all_to_all_communication[i:i+4]))
+        forward_all_to_all_communication_max_ave = sum(forward_all_to_all_communication_max) / len(forward_all_to_all_communication_max)
+        dict_i2jsend_stats["all_to_all_ave"][expe_name] = forward_all_to_all_communication_ave
+        dict_i2jsend_stats["all_to_all_max_ave"][expe_name] = forward_all_to_all_communication_max_ave
+
+    json.dump(dict_i2jsend_stats, open(save_folder + "compare_communication_stats.json", "w"), indent=4)
 
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
@@ -2699,16 +3085,86 @@ if __name__ == "__main__":
     #     ]
     # )
 
-    draw_evaluation_results(
-        [
-            "experiments/bsz1_perf/python_ws=4_rk=0.log",
-            "experiments/bsz2_perf/python_ws=4_rk=0.log",
-            "experiments/bsz4_perf/python_ws=4_rk=0.log",
-            "experiments/bsz8_perf/python_ws=4_rk=0.log",
-            "experiments/bsz16_perf/python_ws=4_rk=0.log",
-            "experiments/bsz32_perf/python_ws=4_rk=0.log",   
-        ]
-    )
+    # draw_evaluation_results(
+    #     [
+    #         "experiments/bsz1_perf/python_ws=4_rk=0.log",
+    #         "experiments/bsz2_perf/python_ws=4_rk=0.log",
+    #         "experiments/bsz4_perf/python_ws=4_rk=0.log",
+    #         "experiments/bsz8_perf/python_ws=4_rk=0.log",
+    #         "experiments/bsz16_perf/python_ws=4_rk=0.log",
+    #         "experiments/bsz32_perf/python_ws=4_rk=0.log",
+    #     ]
+    # )
+
+    # analyze_heuristics("experiments/i2jsend_size_train_adjust_1/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/i2jsend_size_train_adjust_2/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/i2jsend_size_garden_adjust_1/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/i2jsend_size_garden_adjust_2/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/i2jsend_size_bicycle_adjust_1/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/i2jsend_size_bicycle_adjust_2/", working_image_ids=[0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_train_adjust_1/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_train_adjust_2/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_garden_adjust_1/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_garden_adjust_2/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_bicycle_adjust_1/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/i2jsend_size_bicycle_adjust_2/", [0,10,20,30,40])
+    # draw_epoch_loss(["experiments/i2jsend_size_train_adjust_1/python_ws=4_rk=0.log",])
+    # draw_epoch_loss(["experiments/i2jsend_size_train_adjust_2/python_ws=4_rk=0.log",])
+    # draw_epoch_loss(["experiments/i2jsend_size_garden_adjust_1/python_ws=4_rk=0.log",])
+    # draw_epoch_loss(["experiments/i2jsend_size_garden_adjust_2/python_ws=4_rk=0.log",])
+    # draw_epoch_loss(["experiments/i2jsend_size_bicycle_adjust_1/python_ws=4_rk=0.log",])
+    # draw_epoch_loss(["experiments/i2jsend_size_bicycle_adjust_2/python_ws=4_rk=0.log",])
+
+    # analyze_3dgs_change("experiments/analyze_3dgs_change_train/")
+    # analyze_3dgs_change("experiments/analyze_3dgs_change_garden/")
+    # analyze_3dgs_change("experiments/analyze_3dgs_change_bicycle/")
+
+    # i2jsend_size_("experiments/redis_mode_0/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/redis_mode_1/", [0,10,20,30,40])
+    # i2jsend_size_("experiments/redis_mode_2/", [0,10,20,30,40])
+    # compare_end2end_stats(
+    #     save_folder="experiments/redis_mode_0/",
+    #     file_paths=[
+    #         "experiments/redis_mode_0/python_ws=4_rk=0.log",
+    #         "experiments/redis_mode_0/python_ws=4_rk=1.log",
+    #         "experiments/redis_mode_0/python_ws=4_rk=2.log",
+    #         "experiments/redis_mode_0/python_ws=4_rk=3.log",
+    #         "experiments/redis_mode_1/python_ws=4_rk=0.log",
+    #         "experiments/redis_mode_1/python_ws=4_rk=1.log",
+    #         "experiments/redis_mode_1/python_ws=4_rk=2.log",
+    #         "experiments/redis_mode_1/python_ws=4_rk=3.log",
+    #         "experiments/redis_mode_2/python_ws=4_rk=0.log",
+    #         "experiments/redis_mode_2/python_ws=4_rk=1.log",
+    #         "experiments/redis_mode_2/python_ws=4_rk=2.log",
+    #         "experiments/redis_mode_2/python_ws=4_rk=3.log",
+    #     ])
+
+    # redis_mode("experiments/redis_mode_0/")
+    # redis_mode("experiments/redis_mode_1/")
+
+
+    def mode_str(mode):
+        if mode < 4:
+            return str(mode)
+        elif mode == 4:
+            return "1_adjust2"
+
+    for scene in ["train", "garden", "bicycle"]:
+        for mode in range(5):
+            i2jsend_size_(f"experiments/redis_mode_{scene}_{mode_str(mode)}/", [0,10,20,30,40])
+            redis_mode(f"experiments/redis_mode_{scene}_{mode_str(mode)}/")
+
+        file_paths_for_compare = []
+        for mode in range(5):
+            for rk in range(4):
+                file_paths_for_compare.append(f"experiments/redis_mode_{scene}_{mode_str(mode)}/python_ws=4_rk={rk}.log")
+        compare_end2end_stats(
+            save_folder=f"experiments/redis_mode_{scene}_0/",
+            file_paths=file_paths_for_compare)
+        compare_total_communication_volume_and_time(
+            save_folder=f"experiments/redis_mode_{scene}_0/",
+            folders=[f"experiments/redis_mode_{scene}_{mode_str(mode)}/" for mode in range(5)]
+        )
 
     pass
 

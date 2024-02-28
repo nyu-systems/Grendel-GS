@@ -543,6 +543,9 @@ class GaussianModel:
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
+            # NOTE: this is bug in its implementation.
+            assert torch.all(self.max_radii2D == 0), "In its implementation, max_radii2D is all 0. This is a bug."
+            assert torch.all(big_points_vs == False), "In its implementation, big_points_vs is all False. This is a bug."
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
@@ -614,9 +617,18 @@ class GaussianModel:
 
                 all_tensors.append(group["params"][0])
                 all_shapes.append(group["params"][0].shape)
+
+                # release the memory BUG: release the memory will cause error. Maybe it will release memory which may use later.
+                # stored_state["exp_avg"] = None
+                # stored_state["exp_avg_sq"] = None
+                # group["params"][0] = None
+
             else:
                 all_tensors.append(group["params"][0])
                 all_shapes.append(group["params"][0].shape)
+
+                # release the memory BUG: release the memory will cause error. Maybe it will release memory which may use later.
+                # group["params"][0] = None
         return all_tensors, all_shapes
 
     def update_all_optimizer_states(self, updated_tensors):
@@ -645,17 +657,22 @@ class GaussianModel:
         all_tensors, all_shapes = self.get_all_optimizer_states()
         # flatten all tensors with start_dim=1, then concate them at dim=1
         all_tensors_flatten = [tensor.flatten(start_dim=1) for tensor in all_tensors]
-        all_tensors_catted = torch.cat(all_tensors_flatten, dim=1)
+        all_tensors_catted = torch.cat(all_tensors_flatten, dim=1).contiguous()
+        all_tensors_flatten = None # release memory
         
         # all2all
         all_remote_tensors_catted = self.all2all_gaussian_state(all_tensors_catted, destination, i2j_send_size)
+        all_tensors_catted = None # release memory
 
         # split all_tensors_catted to original shapes
         all_remote_tensors_flatten = torch.split(all_remote_tensors_catted, [shape[1:].numel() for shape in all_shapes], dim=1)
+        all_remote_tensors_catted = None # release memory
         all_remote_tensors = [tensor.view(tensor.shape[:1]+shape[1:]) for tensor, shape in zip(all_remote_tensors_flatten, all_shapes)]
+        all_remote_tensors_flatten = None # release memory
 
         # update optimizer states
         optimizable_tensors = self.update_all_optimizer_states(all_remote_tensors)
+        all_remote_tensors = None
 
         return optimizable_tensors
 
@@ -663,19 +680,66 @@ class GaussianModel:
         # return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
         return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
 
+    def get_destination_1(self):
+        # norm p=0
+        return torch.randint(0, utils.WORLD_SIZE, (self.get_xyz.shape[0],), device="cuda")
+
+    def get_destination_2(self):
+        # norm p=inf
+        return self.send_to_gpui_cnt.argmax(dim=1)
+
+    def get_destination_3(self):
+        # norm p=1
+        # send_to_gpui_cnt is (n, world_size), sample according to send_to_gpui_cnt[i,j]/send_to_gpui_cnt[i,:].sum(-1)
+        return torch.multinomial(self.send_to_gpui_cnt.float()+1, 1).squeeze().int() # +1 to avoid 0 probability
+
+    def need_redistribution(self):
+        args = utils.get_args()
+        if utils.get_denfify_iter() == args.redistribute_frequency:
+            return True
+        local_n_3dgs = self.get_xyz.shape[0]
+        # allgather_object local_n_3dgs
+        all_local_n_3dgs = [None for _ in range(utils.WORLD_SIZE)]
+        dist.all_gather_object(all_local_n_3dgs, local_n_3dgs)
+        redistribution_threshold = 1.1
+        if min(all_local_n_3dgs)*redistribution_threshold < max(all_local_n_3dgs):
+            return True
+        return False
+
     def redistribute_gaussians(self):
-        # Send each 3dgs to the GPU which uses it most frequently.
+
+        args = utils.get_args()
+        if args.redistribution_mode == "0":
+            # no redistribution
+            return
         
+        if not self.need_redistribution():
+            return
+
         # Get each 3dgs' destination GPU.
-        destination = self.send_to_gpui_cnt.argmax(dim=1)
+        if args.redistribution_mode == "1":
+            # random redistribution to balance the number of gaussians on each GPU.
+            destination = self.get_destination_1()
+            pass
+        elif args.redistribution_mode == "2":
+            # redistribute all gaussians to the GPU which uses it most frequently.
+            destination = self.get_destination_2()
+            pass
+        elif args.redistribution_mode == "3":
+            # redistribute all gaussians to the GPU which uses it most frequently.
+            destination = self.get_destination_3()
+            pass
+        else:
+            raise ValueError("Invalid redistribution_mode: " + args.redistribution_mode)
+
         # Count the number of 3dgs to be sent to each GPU.
         local2j_send_size = torch.bincount(destination, minlength=utils.WORLD_SIZE).int()
         assert len(local2j_send_size) == utils.WORLD_SIZE, "local2j_send_size: " + str(local2j_send_size)
 
         i2j_send_size = torch.zeros((utils.WORLD_SIZE, utils.WORLD_SIZE), dtype=torch.int, device="cuda")
-        torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size)# TODO: optimize all2all gaussian using such all_gather.
+        torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size)
         i2j_send_size = i2j_send_size.cpu().numpy().tolist()
-        print("rank", utils.LOCAL_RANK, "local2j_send_size: ", local2j_send_size, "i2j_send_size: ", i2j_send_size)
+        # print("rank", utils.LOCAL_RANK, "local2j_send_size: ", local2j_send_size, "i2j_send_size: ", i2j_send_size)
 
         optimizable_tensors = self.all2all_tensors_in_optimizer(destination, i2j_send_size)
         self._xyz = optimizable_tensors["xyz"]
@@ -688,7 +752,7 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        # This function is called right after desify_and_prune. Therefore self.xyz_gradient_accum, self.denom and self.max_radii2D are all zero. 
+        # NOTE: This function is called right after desify_and_prune. Therefore self.xyz_gradient_accum, self.denom and self.max_radii2D are all zero. 
         # We do not need to all2all them here. 
 
         # should I all2all send_to_gpui_cnt? I think I should not. Because 1. for simplicity now, 2. we should refresh it and do not use too old statistics. 

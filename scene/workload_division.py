@@ -87,7 +87,7 @@ class DivisionStrategy_2(DivisionStrategy):
         self.global_running_times = None
         self.heuristic = None
 
-    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib):
+    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib, i2j_send_size):
         if self.global_running_times is not None and self.heuristic is not None:
             return
 
@@ -98,6 +98,7 @@ class DivisionStrategy_2(DivisionStrategy):
         self.sum_n_render = sum_n_render
         self.sum_n_consider = sum_n_consider
         self.sum_n_contrib = sum_n_contrib
+        self.i2j_send_size = i2j_send_size
 
         self.update_heuristic()
 
@@ -136,6 +137,7 @@ class DivisionStrategy_2(DivisionStrategy):
         data["sum_n_render"] = self.sum_n_render
         data["sum_n_consider"] = self.sum_n_consider
         data["sum_n_contrib"] = self.sum_n_contrib
+        data["i2j_send_size"] = self.i2j_send_size
         return data
 
 
@@ -146,7 +148,7 @@ class DivisionStrategy_1(DivisionStrategy):
     def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
         super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode)
 
-    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib):
+    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib, i2j_send_size):
         gloabl_running_times = [None for _ in range(self.world_size)]
         torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
         self.local_running_time = local_running_time
@@ -154,6 +156,7 @@ class DivisionStrategy_1(DivisionStrategy):
         self.sum_n_render = sum_n_render
         self.sum_n_consider = sum_n_consider
         self.sum_n_contrib = sum_n_contrib
+        self.i2j_send_size = i2j_send_size
 
     def to_json(self):
         # convert to json format
@@ -165,6 +168,7 @@ class DivisionStrategy_1(DivisionStrategy):
         data["sum_n_render"] = self.sum_n_render
         data["sum_n_consider"] = self.sum_n_consider
         data["sum_n_contrib"] = self.sum_n_contrib
+        data["i2j_send_size"] = self.i2j_send_size
         return data
 
 
@@ -174,7 +178,7 @@ class DivisionStrategyWS1(DivisionStrategy):
         division_pos = [0, tile_x*tile_y]
         super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, None)
     
-    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib):
+    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib, i2j_send_size=None):
         self.local_running_time = local_running_time
         self.sum_n_render = sum_n_render
         self.sum_n_consider = sum_n_consider
@@ -195,7 +199,7 @@ class DivisionStrategy_4(DivisionStrategy):
     def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
         super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode)
 
-    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib):
+    def update_stats(self, local_running_time, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib, i2j_send_size):
         gloabl_running_times = [None for _ in range(self.world_size)]
         torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
         self.local_running_time = local_running_time
@@ -203,6 +207,7 @@ class DivisionStrategy_4(DivisionStrategy):
         self.sum_n_render = sum_n_render
         self.sum_n_consider = sum_n_consider
         self.sum_n_contrib = sum_n_contrib
+        self.i2j_send_size = i2j_send_size
 
         # assert n_contrib is 1-d array
         assert len(n_contrib.shape) == 1
@@ -229,6 +234,7 @@ class DivisionStrategy_4(DivisionStrategy):
         data["sum_n_render"] = self.sum_n_render
         data["sum_n_consider"] = self.sum_n_consider
         data["sum_n_contrib"] = self.sum_n_contrib
+        data["i2j_send_size"] = self.i2j_send_size
         return data
 
 

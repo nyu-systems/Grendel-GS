@@ -110,10 +110,6 @@ def training(dataset, opt, pipe, args, log_file):
     epoch_progress_cnt = 0
     epoch_camera_size = len(scene.getTrainCameras())
 
-    # init i2jsend_size file
-    if args.save_i2jsend:
-        i2jsend_file = open(args.log_folder+"/i2jsend_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".txt", 'w')
-
     # init workload division strategy stuff
     cameraId2StrategyHistory = {}
     adjust_div_stra_timer = WorkloadDivisionTimer() if args.adjust_div_stra else None
@@ -272,6 +268,10 @@ def training(dataset, opt, pipe, args, log_file):
             i2j_send_size = render_pkg["i2j_send_size"]
             compute_locally = render_pkg["compute_locally"]
             local2j_ids_bool = render_pkg["local2j_ids_bool"]
+        else:
+            i2j_send_size = None
+            compute_locally = None
+            local2j_ids_bool = None
 
         memory_after_forward = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
@@ -299,7 +299,6 @@ def training(dataset, opt, pipe, args, log_file):
             log_string += "memory_iteration_begin: {:.4f} GB. memory_after_forward: {:.4f} GB. memory_after_loss: {:.4f} GB.\n".format(
                 memory_iteration_begin, memory_after_forward, memory_after_loss
             )
-        log_file.write(log_string)
 
         epoch_progress_cnt = epoch_progress_cnt + 1
         epoch_loss = epoch_loss + loss.item()
@@ -326,6 +325,16 @@ def training(dataset, opt, pipe, args, log_file):
         timers.stop("backward")
         utils.check_memory_usage_logging("after backward")
 
+        if args.analyze_3dgs_change:
+            # visibility_filter, radii, viewspace_point_tensor.grad
+            with torch.no_grad():
+                local_n_3dgs = visibility_filter.shape[0]
+                local_visible_3dgs = visibility_filter.sum().item()
+                local_sum_3dgs_radii = radii.sum().item() # only visibility_filter position are non-zero.
+                local_sum_3dgs_grad_norm = torch.norm(viewspace_point_tensor.grad[:, :2], dim=-1).sum().item() # only visibility_filter is non-zero.
+                log_string += "local_n_3dgs: {}; local_visible_3dgs: {}; local_sum_3dgs_radii: {}; local_sum_3dgs_grad_norm: {};\n".format(
+                    local_n_3dgs, local_visible_3dgs, local_sum_3dgs_radii, local_sum_3dgs_grad_norm
+                )
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
@@ -333,37 +342,20 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
-            if args.adjust_mode == "1":
-                if iteration > 20:# If we pass the warmup period.
-                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
-                                        n_render.sum().item(),
-                                        n_consider.sum().item(),
-                                        n_contrib.sum().item())
-                    strategy_history.finish_strategy()
-            elif args.adjust_mode == "2":
-                # print(cuda_args["stats_collector"])
+            need_to_update_strategy = args.adjust_mode in ["1", "2", "4"]
+        else:
+            need_to_update_strategy = (utils.WORLD_SIZE == 1)
+        if iteration <= 20:
+            need_to_update_strategy = False
 
-                if iteration > 20:# If we pass the warmup period.
-                    strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
-                                        n_render.sum().item(),
-                                        n_consider.sum().item(),
-                                        n_contrib.sum().item())
-                    strategy_history.finish_strategy()
-            elif args.adjust_mode == "4":
-                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+        if need_to_update_strategy:
+            strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
                                     n_render.sum().item(),
                                     n_consider.sum().item(),
                                     n_contrib.sum().item(),
-                                    n_contrib)
-                strategy_history.finish_strategy()
-        else:
-            assert utils.WORLD_SIZE == 1, "if not adjust_div_stra, then world_size must be 1."
-            if iteration > 20:
-                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
-                                    n_render.sum().item(),
-                                    n_consider.sum().item(),
-                                    n_contrib.sum().item())
-                strategy_history.finish_strategy()
+                                    n_contrib,
+                                    i2j_send_size)
+            strategy_history.finish_strategy()
 
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
@@ -386,6 +378,8 @@ def training(dataset, opt, pipe, args, log_file):
 
         iter_end.record()
 
+
+        log_file.write(log_string)
 
         with torch.no_grad():
             # Update Statistics for redistribution
@@ -471,10 +465,6 @@ def training(dataset, opt, pipe, args, log_file):
             timers.printTimers(iteration)
 
         log_file.flush()
-
-        if args.save_i2jsend and iteration % args.log_interval == 1:
-            i2jsend_file.write("iteration {}:{}\n".format(iteration, json.dumps(i2j_send_size)))
-            i2jsend_file.flush()
 
     # Finish training
     if args.end2end_time:
@@ -631,6 +621,7 @@ if __name__ == "__main__":
     parser.add_argument("--heuristic_decay", type=float, default=0)
     parser.add_argument("--disable_checkpoint_and_save", action='store_true', default=False)
     parser.add_argument("--enable_redistribute", action='store_true', default=False)
+    parser.add_argument("--redistribution_mode", type=str, default="0")
     parser.add_argument("--redistribute_frequency", type=int, default=10)
     parser.add_argument("--log_iteration_memory_usage", action='store_true', default=False)
     parser.add_argument("--benchmark_stats", action='store_true', default=False)
@@ -638,6 +629,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_tiles_stats_img_num", type=int, default=-1)
     parser.add_argument("--bsz", type=int, default=1)
     parser.add_argument("--performance_stats", action='store_true', default=False)
+    parser.add_argument("--analyze_3dgs_change", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
