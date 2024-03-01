@@ -84,7 +84,7 @@ def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
         start = end
 
         i = j
-        tiles_recv_from_i[i] = torch.empty((recv_from_i_size[i], 3, utils.BLOCK_X, utils.BLOCK_Y), dtype=torch.float32, device="cuda")
+        tiles_recv_from_i[i] = torch.empty((recv_from_i_size[i], 3, utils.BLOCK_Y, utils.BLOCK_X), dtype=torch.float32, device="cuda")
         # XXX: Double check the empty behavior. Because the boundary condition is not clear.
 
     # all_to_all the pixels

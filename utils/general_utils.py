@@ -59,7 +59,12 @@ def get_timers():
     return TIMERS
 
 BLOCK_X, BLOCK_Y = 16, 16
+ONE_DIM_BLOCK_SIZE = 256
 IMG_H, IMG_W = None, None
+
+def set_block_size(x, y, z):
+    global BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE
+    BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE = x, y, z
 
 def set_img_size(h, w):
     global IMG_H, IMG_W

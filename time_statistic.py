@@ -415,7 +415,8 @@ def merge_csv_which_have_same_columns(file_paths, output_file_path):
         # add an empty row for better visualization
         empty_row = {col: None for col in df.columns}
         df = df._append(empty_row, ignore_index=True)
-
+    if df is None:
+        return
     df.to_csv(output_file_path, index=False)
 
 # iter 1001, TimeFor 'forward': 3.405571 ms
@@ -640,6 +641,9 @@ def extract_json_from_gpu_time_log(file_path, load_genereated_json=False):
         print("load from file"+file_path.removesuffix(".log") + ".json")
         with open(file_path.removesuffix(".log") + ".json", 'r') as f:
             return json.load(f)
+
+    if not os.path.exists(file_path):
+        return {}
 
     with open(file_path, 'r') as file:
         file_contents = file.readlines()
@@ -2755,6 +2759,148 @@ def compare_total_communication_volume_and_time(save_folder, folders):
 
     json.dump(dict_i2jsend_stats, open(save_folder + "compare_communication_stats.json", "w"), indent=4)
 
+def average_csv(file_path, save_path):
+    df_all_ws = pd.read_csv(file_path)
+
+    all_ws_in_df = []
+    for x in df_all_ws["ws"].unique():
+        # if x is not NaN
+        if x == x:
+            all_ws_in_df.append(int(x))
+
+    data_to_save = {}
+    for ws in all_ws_in_df:
+        data_to_save_ws = {}
+        df = df_all_ws[df_all_ws["ws"] == ws]
+        for column in df.columns:
+            if column == "rk" or column == "ws" or column == "file_path":
+                continue
+            col_data = df[column]
+            line_id = 0
+            new_col_data = []
+            while line_id < len(df):
+                new_col_data.append(col_data[line_id:line_id+ws].sum())
+                line_id += ws
+            # average
+            data_to_save_ws[column] = round(np.mean(new_col_data), 3)
+        data_to_save[f"ws={ws}"] = data_to_save_ws
+    # json.dump(data_to_save, open(save_path, "w"), indent=4)
+    return data_to_save
+
+def average_gpu_python_time_csv(gpu_file_path, python_file_path, save_path):
+    if os.path.exists(gpu_file_path):
+        gpu_data = average_csv(gpu_file_path, save_path)
+    else:
+        gpu_data = None
+
+    if os.path.exists(python_file_path):
+        python_data = average_csv(python_file_path, save_path)
+    else:
+        python_data = None
+
+    data = {
+        "gpu": gpu_data,
+        "python": python_data,
+    }
+    json.dump(data, open(save_path, "w"), indent=4)
+        
+
+def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
+    # suffix_list = [
+    #     "ws=1_rk=0",
+    #     "ws=4_rk=0",
+    #     "ws=4_rk=1",
+    #     "ws=4_rk=2",
+    #     "ws=4_rk=3",
+    # ]
+
+    if folder[-1] != "/":
+        folder += "/"
+    suffix_list = get_suffix_in_folder(folder)
+
+    time_data = {}
+    for suffix in suffix_list:
+        file_path = folder + f"gpu_time_{suffix}.log"
+        gpu_time_json = extract_json_from_gpu_time_log(file_path)
+        file_path = folder + f"python_time_{suffix}.log"
+        python_time_json = extract_json_from_python_time_log(file_path)
+        time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
+
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    delete_all_file_paths(file_paths)
+    # average_csv(folder + f"merged_gpu_time.csv", folder + f"averaged_gpu_time.json")
+
+    file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    delete_all_file_paths(file_paths)
+    # average_csv(folder + f"merged_python_time.csv", folder + f"averaged_python_time.json")
+    average_gpu_python_time_csv(folder + f"merged_gpu_time.csv", folder + f"merged_python_time.csv", folder + f"averaged_time.json")
+
+def compare_1gpu_and_4gpu_time(file1, file2, column, save_folder):
+    if not os.path.exists(file1) or not os.path.exists(file2):
+        return
+
+    if os.path.exists(save_folder+f"/compare_1gpu_and_4gpu_{column}.csv"):
+        return
+    df1 = pd.read_csv(file1)
+    df2 = pd.read_csv(file2)
+
+    if column == "local_loss_computation":
+        column1 = "loss"
+        column4 = "local_loss_computation"
+    else:
+        column1 = column
+        column4 = column
+
+
+    df1_line_start = 0
+    df4_line_start = 0
+
+    # df_compare = pd.DataFrame(columns=["iteration", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.sum)", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
+    df_compare = pd.DataFrame(columns=["iteration", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
+    iterations = []
+    while df1_line_start<len(df1) and df4_line_start<len(df2):
+        # experiments/analyze_time_train/gpu_time_it=251.csv
+        cur_iteration = int(df1.iloc[df1_line_start]["file_path"].split("/")[-1].split("=")[-1].split(".")[0])
+        iterations.append(cur_iteration)
+        _1gpu = df1.iloc[df1_line_start][column1]
+        _4gpu_sum = df2.iloc[df4_line_start:df4_line_start+4][column4].sum()
+        _4gpu_max = df2.iloc[df4_line_start:df4_line_start+4][column4].max()
+        _4gpu_ave = df2.iloc[df4_line_start:df4_line_start+4][column4].mean()
+        # round to 2 digits
+        df_compare = df_compare._append({
+            "iteration": cur_iteration,
+            "1gpu": round(_1gpu, 2),
+            "4gpu.sum": round(_4gpu_sum, 2),
+            "4gpu.max": round(_4gpu_max, 2),
+            # "1gpu/(4gpu.sum)": round(_1gpu/_4gpu_sum, 2),
+            "1gpu/(4gpu.max)": round(_1gpu/_4gpu_max, 2),
+            "1gpu/(4gpu.ave)": round(_1gpu/_4gpu_ave, 2),
+        }, ignore_index=True)
+
+        df1_line_start += 1 + 1
+        df4_line_start += 4 + 1
+
+    # the last row df_compare is average of all rows in df_compare
+    df_compare = df_compare._append({
+        "iteration": "average",
+        "1gpu": round(df_compare["1gpu"].mean(), 2),
+        "4gpu.sum": round(df_compare["4gpu.sum"].mean(), 2),
+        "4gpu.max": round(df_compare["4gpu.max"].mean(), 2),
+        # "1gpu/(4gpu.sum)": round(df_compare["1gpu/(4gpu.sum)"].mean(), 2),
+        "1gpu/(4gpu.max)": round(df_compare["1gpu/(4gpu.max)"].mean(), 2),
+        "1gpu/(4gpu.ave)": round(df_compare["1gpu/(4gpu.ave)"].mean(), 2),
+    }, ignore_index=True)
+
+    df_compare.to_csv(save_folder+f"/compare_1gpu_and_4gpu_{column}.csv", index=False)
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -3143,28 +3289,117 @@ if __name__ == "__main__":
     # redis_mode("experiments/redis_mode_1/")
 
 
-    def mode_str(mode):
-        if mode < 4:
-            return str(mode)
-        elif mode == 4:
-            return "1_adjust2"
+    # def mode_str(mode):
+    #     if mode < 4:
+    #         return str(mode)
+    #     elif mode == 4:
+    #         return "1_adjust2"
 
-    for scene in ["train", "garden", "bicycle"]:
-        for mode in range(5):
-            i2jsend_size_(f"experiments/redis_mode_{scene}_{mode_str(mode)}/", [0,10,20,30,40])
-            redis_mode(f"experiments/redis_mode_{scene}_{mode_str(mode)}/")
+    # for scene in ["train", "garden", "bicycle"]:
+    #     for mode in range(5):
+    #         i2jsend_size_(f"experiments/redis_mode_{scene}_{mode_str(mode)}/", [0,10,20,30,40])
+    #         redis_mode(f"experiments/redis_mode_{scene}_{mode_str(mode)}/")
 
-        file_paths_for_compare = []
-        for mode in range(5):
-            for rk in range(4):
-                file_paths_for_compare.append(f"experiments/redis_mode_{scene}_{mode_str(mode)}/python_ws=4_rk={rk}.log")
-        compare_end2end_stats(
-            save_folder=f"experiments/redis_mode_{scene}_0/",
-            file_paths=file_paths_for_compare)
-        compare_total_communication_volume_and_time(
-            save_folder=f"experiments/redis_mode_{scene}_0/",
-            folders=[f"experiments/redis_mode_{scene}_{mode_str(mode)}/" for mode in range(5)]
+    #     file_paths_for_compare = []
+    #     for mode in range(5):
+    #         for rk in range(4):
+    #             file_paths_for_compare.append(f"experiments/redis_mode_{scene}_{mode_str(mode)}/python_ws=4_rk={rk}.log")
+    #     compare_end2end_stats(
+    #         save_folder=f"experiments/redis_mode_{scene}_0/",
+    #         file_paths=file_paths_for_compare)
+    #     compare_total_communication_volume_and_time(
+    #         save_folder=f"experiments/redis_mode_{scene}_0/",
+    #         folders=[f"experiments/redis_mode_{scene}_{mode_str(mode)}/" for mode in range(5)]
+    #     )
+
+
+
+
+
+
+    # for file_path in ["experiments/analyze_time_train/",
+    #              "experiments/analyze_time_garden/",
+    #              "experiments/analyze_time_bicycle/"]:
+    #     process_iterations = [i for i in range(251, 30000, 500)]
+    #     analyze_time(
+    #         file_path,
+    #         process_iterations
+    #     )
+
+    columns_python = ["forward",
+                    "forward_prepare_gaussians",
+                    "forward_preprocess_gaussians",
+                    "forward_compute_locally",
+                    "forward_render_gaussians",
+                    "gt_image_load_to_gpu",
+                    "local_loss_computation",
+                    "optimizer_step",
+                    "backward"]
+    columns_gpu = ["70 render time",
+                    "50 SortPairs time",
+                    "b10 render time",
+                    "b20 preprocess time"]
+    # for col in columns_python:
+    #     compare_1gpu_and_4gpu_time(
+    #         "experiments/analyze_time_train/merged_python_time.csv",
+    #         "experiments/redis_mode_train_1_adjust2/merged_python_time.csv",
+    #         col,
+    #         "experiments/analyze_time_train/"
+    #     )
+    # for col in columns_gpu:
+    #     compare_1gpu_and_4gpu_time(
+    #         "experiments/analyze_time_train/merged_gpu_time.csv",
+    #         "experiments/redis_mode_train_1_adjust2/merged_gpu_time.csv",
+    #         col,
+    #         "experiments/analyze_time_train/"
+    #     )
+
+    # compare 4 GPU training using different block sizes to 1 GPU training, and then see the difference.
+    for folder in ["analyze_time_train_bx16by16_64",
+                   "analyze_time_train_bx16by16_128",
+                   "analyze_time_train_bx16by8_256",
+                   "analyze_time_train_bx8by8_256",
+                   "analyze_time_train_bx32by8_256",
+                   "analyze_time_train_only_python_time",
+                   "redis_mode_train_1_adjust2"]:
+        analyze_time(
+            f"experiments/{folder}/",
+            [i for i in range(251, 30000, 500)]
         )
+        for col in columns_python:
+            compare_1gpu_and_4gpu_time(
+                "experiments/analyze_time_train/merged_python_time.csv",
+                f"experiments/{folder}/merged_python_time.csv",
+                col,
+                f"experiments/{folder}/"
+            )
+        for col in columns_gpu:
+            compare_1gpu_and_4gpu_time(
+                "experiments/analyze_time_train/merged_gpu_time.csv",
+                f"experiments/{folder}/merged_gpu_time.csv",
+                col,
+                f"experiments/{folder}/"
+            )
+
+    # analyze_time(
+    #     "experiments/analyze_time_train1_bx8by8_256/",
+    #     [i for i in range(251, 30000, 500)]
+    # )
+    # for col in columns_python:
+    #     compare_1gpu_and_4gpu_time(
+    #         "experiments/analyze_time_train1_bx8by8_256/merged_python_time.csv",
+    #         "experiments/analyze_time_train_bx8by8_256/merged_python_time.csv",
+    #         col,
+    #         "experiments/analyze_time_train1_bx8by8_256/"
+    #     )
+    # for col in columns_gpu:
+    #     compare_1gpu_and_4gpu_time(
+    #         "experiments/analyze_time_train1_bx8by8_256/merged_gpu_time.csv",
+    #         "experiments/analyze_time_train_bx8by8_256/merged_gpu_time.csv",
+    #         col,
+    #         "experiments/analyze_time_train1_bx8by8_256/"
+    #     )
+
 
     pass
 

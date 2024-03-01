@@ -44,6 +44,7 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 import torch.distributed as dist
+import diff_gaussian_rasterization
 
 def training(dataset, opt, pipe, args, log_file):
     (testing_iterations,
@@ -644,6 +645,10 @@ if __name__ == "__main__":
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
 
+    # Make sure block size match between python and cuda code. TODO: modify block size from python code without slow down training.
+    cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
+    utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
+
     if args.benchmark_stats:
         args.zhx_time = True
         args.zhx_python_time = True
@@ -734,6 +739,8 @@ if __name__ == "__main__":
     # Initialize log file and print all args
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
     print_all_args(args, log_file)
+    # Print cuda_block_x, cuda_block_y, one_dim_block_size in log file.
+    log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
 
     training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)
 
