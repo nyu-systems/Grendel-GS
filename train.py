@@ -283,7 +283,7 @@ def training(dataset, opt, pipe, args, log_file):
         # Loss Computation
         if args.image_distribution:
             # Distributed Loss Computation
-            Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally)
+            Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
 
         else:
@@ -349,6 +349,7 @@ def training(dataset, opt, pipe, args, log_file):
         if iteration <= 20:
             need_to_update_strategy = False
 
+        timers.start("strategy.update_stats")
         if need_to_update_strategy:
             strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
                                     n_render.sum().item(),
@@ -357,6 +358,7 @@ def training(dataset, opt, pipe, args, log_file):
                                     n_contrib,
                                     i2j_send_size)
             strategy_history.finish_strategy()
+        timers.stop("strategy.update_stats")
 
 
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
@@ -631,6 +633,7 @@ if __name__ == "__main__":
     parser.add_argument("--bsz", type=int, default=1)
     parser.add_argument("--performance_stats", action='store_true', default=False)
     parser.add_argument("--analyze_3dgs_change", action='store_true', default=False)
+    parser.add_argument("--img_dist_compile_mode", type=str, default="general") # "fast", "general", "allreduce", "functional_allreduce" and "fast_less_comm" mode, "fast" mode is faster but could only apply to current distribution strategy.
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -700,8 +703,6 @@ if __name__ == "__main__":
     assert not (args.image_distribution and not args.memory_distribution), "image_distribution needs memory_distribution!"
     assert not (args.image_distribution and utils.WORLD_SIZE == 1), "image_distribution needs WORLD_SIZE > 1!"
     assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.dist_global_strategy == ""), "dist_global_strategy must be set if adjust_mode is 3."
-    assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.fixed_training_image == -1), "fixed_training_image must be set if adjust_mode is 3."
-    assert not (args.adjust_div_stra and args.adjust_mode == "3" and not args.stop_update_param), "stop_update_param must be set if adjust_mode is 3."
 
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.

@@ -68,6 +68,12 @@ def set_block_size(x, y, z):
 
 def set_img_size(h, w):
     global IMG_H, IMG_W
+    if IMG_H is None and IMG_W is None:
+        # this is the first time we set the image size, log it into the log file;
+        log_file = get_log_file()
+        if log_file is not None:
+            log_file.write(f"Image size: {h}x{w}\n")
+
     IMG_H, IMG_W = h, w
 
 def get_img_size():

@@ -2901,6 +2901,92 @@ def compare_1gpu_and_4gpu_time(file1, file2, column, save_folder):
 
     df_compare.to_csv(save_folder+f"/compare_1gpu_and_4gpu_{column}.csv", index=False)
 
+def merged_compare_1gpu_and_4gpu_time(columns, folder):
+    df = pd.DataFrame(columns=["name", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
+
+    # average scaling for different components in the training process.
+    for column in columns:
+        csv_path = folder + f"/compare_1gpu_and_4gpu_{column}.csv"
+        if not os.path.exists(csv_path):
+            continue
+        df_compare = pd.read_csv(csv_path)
+        df = df._append({
+            "name": column,
+            "1gpu": df_compare.iloc[-1]["1gpu"],
+            "4gpu.sum": df_compare.iloc[-1]["4gpu.sum"],
+            "4gpu.max": df_compare.iloc[-1]["4gpu.max"],
+            "1gpu/(4gpu.max)": df_compare.iloc[-1]["1gpu/(4gpu.max)"],
+            "1gpu/(4gpu.ave)": df_compare.iloc[-1]["1gpu/(4gpu.ave)"],
+        }, ignore_index=True)
+    
+    df.to_csv(folder + "/merged_compare_1gpu_and_4gpu.csv", index=False)
+
+def compare_different_block_sizes(baseline_folder, folders):
+    step_names_to_compare = [
+        "10 preprocess time",
+        "50 SortPairs time",
+        "70 render time",
+        "b10 render time",
+        "b20 preprocess time"
+    ]
+
+    def get_BLOCK_sizes_and_end2end_throughput(folder):
+        # This is not for WS=4
+        lines = open(folder + "python_ws=4_rk=0.log", "r").readlines()
+        # This is by default
+        BLOCK_X = 16
+        BLOCK_Y = 16
+        ONE_DIM_BLOCK_SIZE = 256
+        end2end_throughput = -1
+        L1 = -1
+        PSNR = -1
+        for line in lines:
+            # cuda_block_x: 8; cuda_block_y: 8; one_dim_block_size: 256;
+            if "cuda_block_x" in line:
+                BLOCK_X = int(line.split("cuda_block_x: ")[1].split(";")[0])
+            if "cuda_block_y" in line:
+                BLOCK_Y = int(line.split("cuda_block_y: ")[1].split(";")[0])
+            if "one_dim_block_size" in line:
+                ONE_DIM_BLOCK_SIZE = int(line.split("one_dim_block_size: ")[1].split(";")[0])
+            # end2end total_time: 687.932720 ms, iterations: 30000, throughput 43.61 it/s
+            if ", throughput " in line:
+                end2end_throughput = float(line.split(", throughput ")[1].split(" it/s")[0])
+            # [ITER 30000] Evaluating train: L1 0.036896323785185814 PSNR 24.66712532043457
+            if "Evaluating train: L1" in line:
+                L1 = round(float(line.split("Evaluating train: L1 ")[1].split(" PSNR")[0]), 3)
+                PSNR = round(float(line.split(" PSNR ")[1].strip("\n")), 3)
+        return BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE, end2end_throughput, L1, PSNR
+
+    def get_step_times(folder, step_names_to_compare):
+        #folder+averaged_time.json
+        json_data = json.load(open(folder + "averaged_time.json", "r"))
+        step_times = []
+        for name in step_names_to_compare:
+            if name in json_data["python"]["ws=4"]:
+                step_times.append(json_data["python"]["ws=4"][name])
+            elif name in json_data["gpu"]["ws=4"]:
+                step_times.append(json_data["gpu"]["ws=4"][name])
+        return step_times
+
+    df = pd.DataFrame(columns=
+                ["experiment_name", "BLOCK_X", "BLOCK_Y", "ONE_DIM_BLOCK_SIZE", "end2end_throughput", "L1", "PSNR"]
+                +step_names_to_compare)
+    all_folders = [baseline_folder] + folders
+    for folder in all_folders:
+        BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE, end2end_throughput, L1, PSNR = get_BLOCK_sizes_and_end2end_throughput(folder)
+        step_times = get_step_times(folder, step_names_to_compare)
+        df = df._append({
+            "experiment_name": folder.split("/")[-2],
+            "BLOCK_X": BLOCK_X,
+            "BLOCK_Y": BLOCK_Y,
+            "ONE_DIM_BLOCK_SIZE": ONE_DIM_BLOCK_SIZE,
+            "end2end_throughput": end2end_throughput,
+            "L1": L1,
+            "PSNR": PSNR,
+            **{step_names_to_compare[i]: step_times[i] for i in range(len(step_names_to_compare))}
+        }, ignore_index=True)
+    df.to_csv(baseline_folder + "/compare_different_block_sizes.csv", index=False)
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -3354,32 +3440,41 @@ if __name__ == "__main__":
     #         "experiments/analyze_time_train/"
     #     )
 
-    # compare 4 GPU training using different block sizes to 1 GPU training, and then see the difference.
-    for folder in ["analyze_time_train_bx16by16_64",
-                   "analyze_time_train_bx16by16_128",
-                   "analyze_time_train_bx16by8_256",
-                   "analyze_time_train_bx8by8_256",
-                   "analyze_time_train_bx32by8_256",
-                   "analyze_time_train_only_python_time",
-                   "redis_mode_train_1_adjust2"]:
-        analyze_time(
-            f"experiments/{folder}/",
-            [i for i in range(251, 30000, 500)]
-        )
-        for col in columns_python:
-            compare_1gpu_and_4gpu_time(
-                "experiments/analyze_time_train/merged_python_time.csv",
-                f"experiments/{folder}/merged_python_time.csv",
-                col,
-                f"experiments/{folder}/"
-            )
-        for col in columns_gpu:
-            compare_1gpu_and_4gpu_time(
-                "experiments/analyze_time_train/merged_gpu_time.csv",
-                f"experiments/{folder}/merged_gpu_time.csv",
-                col,
-                f"experiments/{folder}/"
-            )
+    # # compare 4 GPU training using different block sizes to 1 GPU training, and then see the difference.
+    # for folder in ["analyze_time_train_bx16by16_64",
+    #                "analyze_time_train_bx16by16_128",
+    #                "analyze_time_train_bx16by8_256",
+    #                "analyze_time_train_bx8by8_256",
+    #                "analyze_time_train_bx32by8_256",
+    #                "analyze_time_train_only_python_time",
+    #                "redis_mode_train_1_adjust2",
+    #                "faster_image_distri_train",
+    #                "allreduce_image_distri_train",
+    #                "func_allreduce_image_distri_train",
+    #                "fast_less_comm_image_distri_train"]:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(251, 30000, 500)]
+    #     )
+    #     for col in columns_python:
+    #         compare_1gpu_and_4gpu_time(
+    #             "experiments/analyze_time_train/merged_python_time.csv",
+    #             f"experiments/{folder}/merged_python_time.csv",
+    #             col,
+    #             f"experiments/{folder}/"
+    #         )
+    #     for col in columns_gpu:
+    #         compare_1gpu_and_4gpu_time(
+    #             "experiments/analyze_time_train/merged_gpu_time.csv",
+    #             f"experiments/{folder}/merged_gpu_time.csv",
+    #             col,
+    #             f"experiments/{folder}/"
+    #         )
+
+    #     merged_compare_1gpu_and_4gpu_time(
+    #         columns = columns_python+columns_gpu,
+    #         folder = f"experiments/{folder}/"
+    #     )
 
     # analyze_time(
     #     "experiments/analyze_time_train1_bx8by8_256/",
@@ -3400,6 +3495,17 @@ if __name__ == "__main__":
     #         "experiments/analyze_time_train1_bx8by8_256/"
     #     )
 
+
+    compare_different_block_sizes(
+        baseline_folder="experiments/redis_mode_train_1_adjust2/",
+        folders=[
+            "experiments/analyze_time_train_bx16by16_128/",
+            "experiments/analyze_time_train_bx16by16_64/",
+            "experiments/analyze_time_train_bx16by8_256/",
+            "experiments/analyze_time_train_bx8by8_256/",
+            "experiments/analyze_time_train_bx32by8_256/",
+        ]
+    )
 
     pass
 

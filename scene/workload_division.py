@@ -91,8 +91,11 @@ class DivisionStrategy_2(DivisionStrategy):
         if self.global_running_times is not None and self.heuristic is not None:
             return
 
+        timers = utils.get_timers()
         gloabl_running_times = [None for _ in range(self.world_size)]
+        timers.start("[strategy.update_stats]all_gather_object")
         torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        timers.stop("[strategy.update_stats]all_gather_object")
         self.local_running_time = local_running_time
         self.global_running_times = gloabl_running_times
         self.sum_n_render = sum_n_render
@@ -100,7 +103,9 @@ class DivisionStrategy_2(DivisionStrategy):
         self.sum_n_contrib = sum_n_contrib
         self.i2j_send_size = i2j_send_size
 
+        timers.start("[strategy.update_stats]update_heuristic")
         self.update_heuristic()
+        timers.stop("[strategy.update_stats]update_heuristic")
 
     def update_heuristic(self):
         assert self.global_running_times is not None, "You should call update_stats first."
