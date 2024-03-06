@@ -243,6 +243,77 @@ class DivisionStrategy_4(DivisionStrategy):
         return data
 
 
+class DivisionStrategy_5(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode):
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, adjust_mode)
+
+        self.local_running_time = None
+        self.global_running_times = None
+        self.heuristic = None
+
+    def update_stats(self, stats_collector, sum_n_render, sum_n_consider, sum_n_contrib, n_contrib, i2j_send_size):
+        if self.global_running_times is not None and self.heuristic is not None:
+            return
+
+        keys = ["backward_render_time", "forward_render_time", "forward_loss_time"]
+        local_running_time = stats_collector["backward_render_time"]+stats_collector["forward_render_time"]+2*stats_collector["forward_loss_time"]
+
+        timers = utils.get_timers()
+        gloabl_running_times = [None for _ in range(self.world_size)]
+        timers.start("[strategy.update_stats]all_gather_object")
+        torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        timers.stop("[strategy.update_stats]all_gather_object")
+        self.local_running_time = local_running_time
+        self.global_running_times = gloabl_running_times
+        self.sum_n_render = sum_n_render
+        self.sum_n_consider = sum_n_consider
+        self.sum_n_contrib = sum_n_contrib
+        self.i2j_send_size = i2j_send_size
+
+        timers.start("[strategy.update_stats]update_heuristic")
+        self.update_heuristic()
+        timers.stop("[strategy.update_stats]update_heuristic")
+
+    def update_heuristic(self):
+        assert self.global_running_times is not None, "You should call update_stats first."
+        assert self.local_running_time is not None, "You should call update_stats first."
+
+        with torch.no_grad():
+            tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
+            gather_heuristic = [torch.full((self.division_pos[i+1]-self.division_pos[i],),
+                                        self.global_running_times[i] / (self.division_pos[i+1]-self.division_pos[i]),
+                                        dtype=torch.float32,
+                                        device="cuda",
+                                        requires_grad=False)
+                                for i in range(self.world_size)]
+            self.heuristic = torch.cat(gather_heuristic, dim=0)
+    
+    def well_balanced(self, threshold=0.06):
+        # threshold: 0.1 means 10% error is allowed. 
+
+        max_time = max(self.global_running_times)
+        min_time = min(self.global_running_times)
+        
+        if max_time - min_time > max_time * threshold:
+            return False
+
+        return True
+
+    def to_json(self):
+        # convert to json format
+        data = {}
+        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
+        data["global_running_times"] = self.global_running_times
+        data["local_running_time"] = self.local_running_time
+        data["sum_n_render"] = self.sum_n_render
+        data["sum_n_consider"] = self.sum_n_consider
+        data["sum_n_contrib"] = self.sum_n_contrib
+        data["i2j_send_size"] = self.i2j_send_size
+        return data
+
+
 class DivisionStrategyManuallySet(DivisionStrategy):
 
     def __init__(self, camera, world_size, rank, tile_x, tile_y, global_division_pos_str):
@@ -409,6 +480,42 @@ class DivisionStrategyHistory_4(DivisionStrategyHistory):
                 division_pos = self.division_pos_heuristic()
 
             self.working_strategy = DivisionStrategy_4(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
+            self.working_iteration = utils.get_cur_iter()
+        return self.working_strategy
+
+    def finish_strategy(self):
+        with torch.no_grad():
+            self.update_heuristic()
+            if utils.get_args().benchmark_stats:
+                # del self.working_strategy.heuristic
+                self.working_strategy.heuristic = None
+                # Because the heuristic is of size (# of tiles, ) and takes up lots of memory. 
+            self.add(self.working_iteration, self.working_strategy)
+
+
+class DivisionStrategyHistory_5(DivisionStrategyHistory):
+    def __init__(self, camera, world_size, rank, adjust_mode):
+        super().__init__(camera, world_size, rank, adjust_mode)
+        self.cur_heuristic = None
+
+    def update_heuristic(self, strategy=None):
+        if strategy is None:
+            strategy = self.working_strategy
+        self.cur_heuristic = strategy.heuristic
+
+    def division_pos_heuristic(self):
+        # division_pos = division_pos_heuristic(self.cur_heuristic, self.tile_num, self.world_size)
+        # TODO: implement this
+        return division_pos
+
+    def start_strategy(self):
+        with torch.no_grad():
+            if len(self.history) == 0:
+                division_pos = get_evenly_division_pos(self.camera)
+            else:
+                division_pos = self.division_pos_heuristic()
+
+            self.working_strategy = DivisionStrategy_5(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.adjust_mode)
             self.working_iteration = utils.get_cur_iter()
         return self.working_strategy
 

@@ -23,6 +23,7 @@ from scene.workload_division import (DivisionStrategy_1,
                                      DivisionStrategyHistory_1, 
                                      DivisionStrategyHistory_2, 
                                      DivisionStrategyHistory_4, 
+                                     DivisionStrategyHistory_5, 
                                      DivisionStrategyWS1, 
                                      DivisionStrategyManuallySet, 
                                      WorkloadDivisionTimer, 
@@ -220,6 +221,12 @@ def training(dataset, opt, pipe, args, log_file):
                 strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
                 strategy = strategy_history.start_strategy()
                 cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+            elif args.adjust_mode == "5":
+                if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_5(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+                strategy = strategy_history.start_strategy()
+                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
         else:
             assert utils.WORLD_SIZE == 1, "if not adjust_div_stra, then world_size must be 1."
             if viewpoint_cam.uid not in cameraId2StrategyHistory:
@@ -283,7 +290,7 @@ def training(dataset, opt, pipe, args, log_file):
         # Loss Computation
         if args.image_distribution:
             # Distributed Loss Computation
-            Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
+            Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
 
         else:
@@ -343,7 +350,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
-            need_to_update_strategy = args.adjust_mode in ["1", "2", "4"]
+            need_to_update_strategy = args.adjust_mode in ["1", "2", "4", "5"]
         else:
             need_to_update_strategy = (utils.WORLD_SIZE == 1)
         if iteration <= 20:
@@ -351,12 +358,21 @@ def training(dataset, opt, pipe, args, log_file):
 
         timers.start("strategy.update_stats")
         if need_to_update_strategy:
-            strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
-                                    n_render.sum().item(),
-                                    n_consider.sum().item(),
-                                    n_contrib.sum().item(),
-                                    n_contrib,
-                                    i2j_send_size)
+
+            if args.adjust_mode == "5":
+                strategy.update_stats(cuda_args["stats_collector"],
+                                        n_render.sum().item(),
+                                        n_consider.sum().item(),
+                                        n_contrib.sum().item(),
+                                        n_contrib,
+                                        i2j_send_size)
+            else:
+                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
+                                        n_render.sum().item(),
+                                        n_consider.sum().item(),
+                                        n_contrib.sum().item(),
+                                        n_contrib,
+                                        i2j_send_size)
             strategy_history.finish_strategy()
         timers.stop("strategy.update_stats")
 
@@ -547,6 +563,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
             "dist_division_mode": "tile_num",# during testing, we does not have statistics to adjust workload division strategy.
+            "stats_collector": {}
         }
         renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "adjust_div_stra_timer": None, "cuda_args": cuda_args}
 

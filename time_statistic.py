@@ -3496,16 +3496,19 @@ if __name__ == "__main__":
     #     )
 
 
-    compare_different_block_sizes(
-        baseline_folder="experiments/redis_mode_train_1_adjust2/",
-        folders=[
-            "experiments/analyze_time_train_bx16by16_128/",
-            "experiments/analyze_time_train_bx16by16_64/",
-            "experiments/analyze_time_train_bx16by8_256/",
-            "experiments/analyze_time_train_bx8by8_256/",
-            "experiments/analyze_time_train_bx32by8_256/",
-        ]
-    )
+    # compare_different_block_sizes(
+    #     baseline_folder="experiments/redis_mode_train_1_adjust2/",
+    #     folders=[
+    #         "experiments/analyze_time_train_bx16by16_128/",
+    #         "experiments/analyze_time_train_bx16by16_64/",
+    #         "experiments/analyze_time_train_bx16by8_256/",
+    #         "experiments/analyze_time_train_bx8by8_256/",
+    #         "experiments/analyze_time_train_bx32by8_256/",
+    #     ]
+    # )
+
+    #dist_stra5_1
+    analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
 
     pass
 

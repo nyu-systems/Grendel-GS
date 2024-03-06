@@ -94,7 +94,7 @@ def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
     return all_tiles_recv_from_i
 
 
-def general_distributed_loss_computation(image, viewpoint_cam, compute_locally):
+def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args):
     timers = utils.get_timers()
 
 
@@ -180,6 +180,9 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally):
 
     # Loss computation
     timers.start("local_loss_computation")
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect_with_remote_tiles,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -189,6 +192,9 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally):
                                                    local_image_rect_gt,
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
+    end_event.record()
+    torch.cuda.synchronize()
+    cuda_args["stats_collector"]["forward_loss_time"] = end_event.elapsed_time(start_event)
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -317,7 +323,7 @@ def add_remote_pixels_to_image(image,
         configs
     )
 
-def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy):
+def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
     # This method is specific to current distribution strategy space: flatten 2D tiles to a sequence of tiles, and split a tiles sequence into sections, each allocated to a GPU. 
     # Avoid redundant pixel communication and loss computation. In general distirbuted loss computation, we communicate at 16x16 tile level which include reduandant pixels.
     # Currently, I use all2all. Maybe in the future we could change to grouped send/recv if that is faster. (it seems that torch does not have this api as functional version). 
@@ -499,6 +505,9 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
 
     # Loss computation
     timers.start("local_loss_computation")
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect_with_remote_tiles,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -508,6 +517,9 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
                                                    local_image_rect_gt,
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
+    end_event.record()
+    torch.cuda.synchronize()
+    cuda_args["stats_collector"]["forward_loss_time"] = end_event.elapsed_time(start_event)
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -599,7 +611,7 @@ def add_remote_pixels_to_image_less_comm(image,
     )
     
 
-def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy):
+def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
     # Compare to fast_distributed_loss_computation, this method get more remote pixels during forward and do replicated loss computation for pixels near border. 
     # But it avoids another communication and associated memory movement during backward. 
     # This method works when image resolution is small because we want to reduce the number of kernel launches. 
@@ -778,6 +790,9 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
 
     # Loss computation
     timers.start("local_loss_computation")
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect_with_remote_tiles,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -787,6 +802,9 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
                                                    local_image_rect_gt,
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
+    end_event.record()
+    torch.cuda.synchronize()
+    cuda_args["stats_collector"]["forward_loss_time"] = end_event.elapsed_time(start_event)
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -802,7 +820,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
 
 
 
-def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy):
+def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
     # functional allreduce all pixels, we will have another allreduce during backward. 
     # calculate the local loss, no replicated loss compute for pixels.
 
@@ -845,6 +863,9 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
 
     # Loss computation
     timers.start("local_loss_computation")
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -854,6 +875,9 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
                                                    local_image_rect_gt,
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
+    end_event.record()
+    torch.cuda.synchronize()
+    cuda_args["stats_collector"]["forward_loss_time"] = end_event.elapsed_time(start_event)
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -864,7 +888,7 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
     ssim_loss = two_losses[1]
     return Ll1, ssim_loss
 
-def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy):
+def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
     # allreduce all pixels;
     # the the locally touched pixels.
     # replicated loss compute to avoid another allreduce during backward.
@@ -905,6 +929,9 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
 
     # Loss computation
     timers.start("local_loss_computation")
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
                                            local_image_rect_gt,
                                            local_image_rect_pixels_compute_locally)
@@ -914,6 +941,9 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
                                                    local_image_rect_gt,
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
+    end_event.record()
+    torch.cuda.synchronize()
+    cuda_args["stats_collector"]["forward_loss_time"] = end_event.elapsed_time(start_event)
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -927,18 +957,18 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
 
     
 
-def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy=None):
+def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy=None, cuda_args={}):
     args = utils.get_args()
     if args.img_dist_compile_mode == "general":
-        return general_distributed_loss_computation(image, viewpoint_cam, compute_locally)
+        return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args)
     elif args.img_dist_compile_mode == "fast":
-        return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
+        return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
     elif args.img_dist_compile_mode == "functional_allreduce":
-        return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
+        return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
     elif args.img_dist_compile_mode == "allreduce":
-        return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
+        return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
     elif args.img_dist_compile_mode == "fast_less_comm":
-        return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy)
+        return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
 
 
 
