@@ -23,7 +23,6 @@ from scene.workload_division import (DivisionStrategy_1,
                                      DivisionStrategyHistory_1, 
                                      DivisionStrategyHistory_2, 
                                      DivisionStrategyHistory_4, 
-                                     DivisionStrategyHistory_5, 
                                      DivisionStrategyWS1, 
                                      DivisionStrategyManuallySet, 
                                      WorkloadDivisionTimer, 
@@ -163,7 +162,8 @@ def training(dataset, opt, pipe, args, log_file):
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
             "dist_division_mode": args.dist_division_mode,
-            "stats_collector": {}
+            "stats_collector": {},
+            "avoid_pixel_all2all": args.avoid_pixel_all2all
         }
 
 
@@ -350,17 +350,31 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Adjust workload division strategy. 
         if args.adjust_div_stra:
-            need_to_update_strategy = args.adjust_mode in ["1", "2", "4", "5"]
+            need_to_update_strategy = args.adjust_mode in ["1", "2", "4"]
         else:
             need_to_update_strategy = (utils.WORLD_SIZE == 1)
         if iteration <= 20:
             need_to_update_strategy = False
 
+        if cuda_args["stats_collector"]["forward_render_time"] < 0 or cuda_args["stats_collector"]["backward_render_time"] < 0 or cuda_args["stats_collector"]["forward_loss_time"] < 0:
+            print("rk {}; iteration {} forward_render_time: {} backward_render_time: {} forward_loss_time: {}".format(
+                utils.LOCAL_RANK, iteration, cuda_args["stats_collector"]["forward_render_time"], cuda_args["stats_collector"]["backward_render_time"], cuda_args["stats_collector"]["forward_loss_time"]
+            ))
+
         timers.start("strategy.update_stats")
         if need_to_update_strategy:
-
-            if args.adjust_mode == "5":
-                strategy.update_stats(cuda_args["stats_collector"],
+            if args.avoid_pixel_all2all:
+                strategy.update_stats(cuda_args["stats_collector"]["forward_render_time"]+
+                                        cuda_args["stats_collector"]["backward_render_time"]+
+                                        2*cuda_args["stats_collector"]["forward_loss_time"],
+                                        n_render.sum().item(),
+                                        n_consider.sum().item(),
+                                        n_contrib.sum().item(),
+                                        n_contrib,
+                                        i2j_send_size)
+            elif args.img_dist_compile_mode == "fast_less_comm_noallreduceloss":
+                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"]+
+                                        2*cuda_args["stats_collector"]["forward_loss_time"],
                                         n_render.sum().item(),
                                         n_consider.sum().item(),
                                         n_contrib.sum().item(),
@@ -563,7 +577,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
             "dist_division_mode": "tile_num",# during testing, we does not have statistics to adjust workload division strategy.
-            "stats_collector": {}
+            "stats_collector": {},
+            "avoid_pixel_all2all": False # during testing, we use image allreduce, thus different GPUs should compute different parts of the image.
         }
         renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "adjust_div_stra_timer": None, "cuda_args": cuda_args}
 
@@ -650,7 +665,9 @@ if __name__ == "__main__":
     parser.add_argument("--bsz", type=int, default=1)
     parser.add_argument("--performance_stats", action='store_true', default=False)
     parser.add_argument("--analyze_3dgs_change", action='store_true', default=False)
-    parser.add_argument("--img_dist_compile_mode", type=str, default="general") # "fast", "general", "allreduce", "functional_allreduce" and "fast_less_comm" mode, "fast" mode is faster but could only apply to current distribution strategy.
+    parser.add_argument("--img_dist_compile_mode", type=str, default="general") # "fast", "general", "allreduce", "functional_allreduce", "fast_less_comm" and "fast_less_comm_noallreduceloss" mode, "fast" mode is faster but could only apply to current distribution strategy.
+    parser.add_argument("--avoid_pixel_all2all", action='store_true', default=False)
+    parser.add_argument("--avoid_pixel_all2all_log_correctloss", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -720,6 +737,9 @@ if __name__ == "__main__":
     assert not (args.image_distribution and not args.memory_distribution), "image_distribution needs memory_distribution!"
     assert not (args.image_distribution and utils.WORLD_SIZE == 1), "image_distribution needs WORLD_SIZE > 1!"
     assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.dist_global_strategy == ""), "dist_global_strategy must be set if adjust_mode is 3."
+
+    if args.avoid_pixel_all2all:
+        assert args.adjust_mode == "2", "avoid_pixel_all2all needs adjust_mode to be 2."
 
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.

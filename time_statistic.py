@@ -3508,7 +3508,19 @@ if __name__ == "__main__":
     # )
 
     #dist_stra5_1
-    analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
+    # analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
+
+
+    for folder in ["no_avoid_pixel_all2all_train",
+                   "avoid_pixel_all2all_train",
+                   "avoid_pixel_all2all_tr_flc",
+                   "avoid_pixel_all2all_train_2",
+                   "avoid_pixel_all2all_train_flcnal"]:
+        analyze_time(
+            f"experiments/{folder}/",
+            [i for i in range(251, 30000, 500)]
+        )
+        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
 
     pass
 
