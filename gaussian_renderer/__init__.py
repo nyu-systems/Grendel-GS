@@ -74,7 +74,6 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
-           adjust_div_stra_timer=None,
            cuda_args=None,
            timers=None,
            strategy=None):
@@ -159,11 +158,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
 
     ########## [START] CUDA Rasterization Call ##########
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    if adjust_div_stra_timer is not None:
-        adjust_div_stra_timer.start("forward")
-
-
+    # Rasterize visible Gaussians to image, obtain their screen-space intermedia parameters. 
     assert colors_precomp is None, "sep_rendering mode does not support precomputed colors."
     assert cov3D_precomp is None, "sep_rendering mode does not support precomputed 3d covariance."
 
@@ -221,8 +216,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         timers.stop("forward_render_gaussians")
     utils.check_memory_usage_logging("after forward_render_gaussians")
 
-    if adjust_div_stra_timer is not None:
-        adjust_div_stra_timer.stop("forward")
     ########## [END] CUDA Rasterization Call ##########
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.

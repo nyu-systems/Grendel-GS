@@ -16,7 +16,7 @@ import json
 from random import randint
 from utils.loss_utils import l1_loss
 from gaussian_renderer import render, network_gui
-from gaussian_renderer.image_distribution import distributed_loss_computation, replicated_loss_computation
+from gaussian_renderer.loss_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
 from scene.workload_division import (DivisionStrategy_1, 
@@ -36,7 +36,16 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams, print_all_args
+from arguments import (
+    ModelParams, 
+    PipelineParams, 
+    OptimizationParams, 
+    DistributionParams, 
+    BenchmarkParams, 
+    DebugParams, 
+    print_all_args, 
+    check_args
+)
 import time
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -113,7 +122,6 @@ def training(dataset, opt, pipe, args, log_file):
 
     # init workload division strategy stuff
     cameraId2StrategyHistory = {}
-    adjust_div_stra_timer = WorkloadDivisionTimer() if args.adjust_div_stra else None
 
     utils.check_memory_usage_logging("after init and before training loop")    
 
@@ -182,57 +190,52 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         # Prepare Workload division strategy
-        if args.adjust_div_stra:
-            if args.adjust_mode == "1":
-                
-                if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                strategy = strategy_history.start_strategy()
-                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
 
-            elif args.adjust_mode == "2":
-
-                if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_2(viewpoint_cam,
-                                                                                            utils.WORLD_SIZE,
-                                                                                            utils.LOCAL_RANK,
-                                                                                            args.adjust_mode,
-                                                                                            args.heuristic_decay) # TODO: tune this. 
-                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                strategy = strategy_history.start_strategy()
-                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-
-            elif args.adjust_mode == "3":
-                tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
-                tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
-                strategy = DivisionStrategyManuallySet(
-                    viewpoint_cam,
-                    utils.WORLD_SIZE,
-                    utils.LOCAL_RANK,
-                    tile_x,
-                    tile_y,
-                    args.dist_global_strategy
-                )
-                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-            elif args.adjust_mode == "4":
-                if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_4(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                strategy = strategy_history.start_strategy()
-                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-            elif args.adjust_mode == "5":
-                if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                    cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_5(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-                strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-                strategy = strategy_history.start_strategy()
-                cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-        else:
-            assert utils.WORLD_SIZE == 1, "if not adjust_div_stra, then world_size must be 1."
+        # TODO: refactor
+        if utils.WORLD_SIZE == 1:
             if viewpoint_cam.uid not in cameraId2StrategyHistory:
                 cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistoryWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK)
             strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
             strategy = strategy_history.start_strategy()
+            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+        elif args.adjust_mode == "1":
+            if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+            strategy = strategy_history.start_strategy()
+            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+
+        elif args.adjust_mode == "2":
+
+            if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_2(viewpoint_cam,
+                                                                                        utils.WORLD_SIZE,
+                                                                                        utils.LOCAL_RANK,
+                                                                                        args.adjust_mode,
+                                                                                        args.heuristic_decay) # TODO: tune this. 
+            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+            strategy = strategy_history.start_strategy()
+            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+
+        elif args.adjust_mode == "3":
+            tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+            tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
+            strategy = DivisionStrategyManuallySet(
+                viewpoint_cam,
+                utils.WORLD_SIZE,
+                utils.LOCAL_RANK,
+                tile_x,
+                tile_y,
+                args.dist_global_strategy
+            )
+            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+        elif args.adjust_mode == "4":
+            if viewpoint_cam.uid not in cameraId2StrategyHistory:
+                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_4(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
+            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+            strategy = strategy_history.start_strategy()
+            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+
 
 
         memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
@@ -252,7 +255,6 @@ def training(dataset, opt, pipe, args, log_file):
         # Forward
         timers.start("forward")
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
-                            adjust_div_stra_timer=adjust_div_stra_timer,
                             cuda_args=cuda_args,
                             timers=timers,
                             strategy=strategy)
@@ -288,7 +290,7 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         # Loss Computation
-        if args.image_distribution:
+        if args.loss_distribution:
             # Distributed Loss Computation
             Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
@@ -325,11 +327,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Backward
         timers.start("backward")
-        if args.adjust_div_stra:
-            adjust_div_stra_timer.start("backward")
         loss.backward()
-        if args.adjust_div_stra:
-            adjust_div_stra_timer.stop("backward")
         timers.stop("backward")
         utils.check_memory_usage_logging("after backward")
 
@@ -349,17 +347,9 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         # Adjust workload division strategy. 
-        if args.adjust_div_stra:
-            need_to_update_strategy = args.adjust_mode in ["1", "2", "4"]
-        else:
-            need_to_update_strategy = (utils.WORLD_SIZE == 1)
+        need_to_update_strategy = (args.adjust_mode in ["1", "2", "4"]) or (utils.WORLD_SIZE == 1)
         if iteration <= 20:
             need_to_update_strategy = False
-
-        if cuda_args["stats_collector"]["forward_render_time"] < 0 or cuda_args["stats_collector"]["backward_render_time"] < 0 or cuda_args["stats_collector"]["forward_loss_time"] < 0:
-            print("rk {}; iteration {} forward_render_time: {} backward_render_time: {} forward_loss_time: {}".format(
-                utils.LOCAL_RANK, iteration, cuda_args["stats_collector"]["forward_render_time"], cuda_args["stats_collector"]["backward_render_time"], cuda_args["stats_collector"]["forward_loss_time"]
-            ))
 
         timers.start("strategy.update_stats")
         if need_to_update_strategy:
@@ -372,7 +362,7 @@ def training(dataset, opt, pipe, args, log_file):
                                         n_contrib.sum().item(),
                                         n_contrib,
                                         i2j_send_size)
-            elif args.img_dist_compile_mode == "fast_less_comm_noallreduceloss":
+            elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
                 strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"]+
                                         2*cuda_args["stats_collector"]["forward_loss_time"],
                                         n_render.sum().item(),
@@ -455,7 +445,7 @@ def training(dataset, opt, pipe, args, log_file):
                     timers.stop("densify_and_prune")
 
                     # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
-                    if args.enable_redistribute and ( utils.get_denfify_iter() % args.redistribute_frequency == 0 ):
+                    if args.redistribute_gaussians_mode != "no_redistribute" and ( utils.get_denfify_iter() % args.redistribute_gaussians_frequency == 0 ):
                         num_3dgs_before_redistribute = gaussians.get_xyz.shape[0]
                         timers.start("redistribute_gaussians")
                         gaussians.redistribute_gaussians()
@@ -510,7 +500,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Save some statistics to file for future usage. 
 
-        if (args.adjust_div_stra and args.adjust_mode in ["1", "2", "4"]) or (not args.adjust_div_stra and utils.WORLD_SIZE == 1):
+        if args.adjust_mode in ["1", "2", "4"] or utils.WORLD_SIZE == 1:
             data_json = {}
             for camera_id, strategy_history in cameraId2StrategyHistory.items():
                 data_json[camera_id] = strategy_history.to_json()
@@ -520,7 +510,7 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         # DEBUG
-        if args.memory_distribution:
+        if args.memory_distribution and args.save_send_to_gpui_cnt:
             # save gaussians.send_to_gpui_cnt to file.
             with open(args.log_folder+"/send_to_gpui_cnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
                 send_to_gpui_cnt_cpu = gaussians.send_to_gpui_cnt.cpu().numpy().tolist()
@@ -580,7 +570,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             "stats_collector": {},
             "avoid_pixel_all2all": False # during testing, we use image allreduce, thus different GPUs should compute different parts of the image.
         }
-        renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "adjust_div_stra_timer": None, "cuda_args": cuda_args}
+        renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "cuda_args": cuda_args}
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -621,6 +611,9 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
+    dist_p = DistributionParams(parser)
+    bench_p = BenchmarkParams(parser)
+    debug_p = DebugParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -629,155 +622,41 @@ if __name__ == "__main__":
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default = None)
-    # TODO: restart from a checkpoint will give a different result because of training image orders are different.
-    # I should make the order the same later.
+    parser.add_argument("--start_checkpoint", type=str, default = None) # NOTE: restart from a checkpoint will give a different loss because of training image orders are different.
     parser.add_argument("--log_folder", type=str, default = "logs")
-    parser.add_argument("--zhx_debug", action='store_true', default=False)
-    parser.add_argument("--zhx_time", action='store_true', default=False)
-    parser.add_argument("--zhx_python_time", action='store_true', default=False)
     parser.add_argument("--log_interval", type=int, default=50)
-    parser.add_argument("--fixed_training_image", type=int, default=-1)
-    parser.add_argument("--disable_auto_densification", action='store_true', default=False)
-    parser.add_argument("--end2end_time", action='store_true', default=False)
-    parser.add_argument("--dist_division_mode", type=str, default="tile_num")
-    parser.add_argument("--stop_update_param", action='store_true', default=False)
-    parser.add_argument("--duplicate_gs_cnt", type=int, default=0)
-    parser.add_argument("--adjust_div_stra", action='store_true', default=False)
-    parser.add_argument("--adjust_mode", type=str, default="heuristic")# none, history_heuristic, 
-    parser.add_argument("--dist_global_strategy", type=str, default="")
-    parser.add_argument("--lazy_load_image", action='store_true', default=False) # lazily move image to gpu.
-    parser.add_argument("--memory_distribution", action='store_true', default=False) # distribute memory in distributed training.
-    parser.add_argument("--force_python_timer_iterations", nargs="+", type=int, default=[600, 700, 800]) # print timers at these iterations. 600 is the default first densification iteration.
-    parser.add_argument("--save_i2jsend", action='store_true', default=False) # save i2jsend_size to file.
-    parser.add_argument("--time_image_loading", action='store_true', default=False) # time image loading.
-    parser.add_argument("--check_memory_usage", action='store_true', default=False) # check memory usage.
-    parser.add_argument("--image_distribution", action='store_true', default=False)
-    parser.add_argument("--heuristic_decay", type=float, default=0)
-    parser.add_argument("--disable_checkpoint_and_save", action='store_true', default=False)
-    parser.add_argument("--enable_redistribute", action='store_true', default=False)
-    parser.add_argument("--redistribution_mode", type=str, default="0")
-    parser.add_argument("--redistribute_frequency", type=int, default=10)
-    parser.add_argument("--log_iteration_memory_usage", action='store_true', default=False)
-    parser.add_argument("--benchmark_stats", action='store_true', default=False)
-    parser.add_argument("--stop_adjust2_well_balanced", action='store_true', default=False)
-    parser.add_argument("--log_tiles_stats_img_num", type=int, default=-1)
-    parser.add_argument("--bsz", type=int, default=1)
-    parser.add_argument("--performance_stats", action='store_true', default=False)
-    parser.add_argument("--analyze_3dgs_change", action='store_true', default=False)
-    parser.add_argument("--img_dist_compile_mode", type=str, default="general") # "fast", "general", "allreduce", "functional_allreduce", "fast_less_comm" and "fast_less_comm_noallreduceloss" mode, "fast" mode is faster but could only apply to current distribution strategy.
-    parser.add_argument("--avoid_pixel_all2all", action='store_true', default=False)
-    parser.add_argument("--avoid_pixel_all2all_log_correctloss", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-
-    ## Prepare arguments.
-    # Set up global args
-    utils.set_args(args)
 
     # Set up distributed training
     init_distributed()
     print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 
+    ## Prepare arguments.
     # Check arguments
-    assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
-
-    # Make sure block size match between python and cuda code. TODO: modify block size from python code without slow down training.
-    cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
-    utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
-
-    if args.benchmark_stats:
-        args.zhx_time = True
-        args.zhx_python_time = True
-        args.log_iteration_memory_usage = True
-        args.check_memory_usage = True
-        args.end2end_time = True
-        args.disable_checkpoint_and_save = True
-        args.checkpoint_iterations = []
-        args.save_iterations = []
-        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
-        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
-        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
-        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
-
-    if args.performance_stats:
-        args.eval = True
-        args.zhx_time = False
-        args.zhx_python_time = False
-        args.end2end_time = True
-        args.log_iteration_memory_usage = False
-        args.check_memory_usage = False
-        args.save_iterations = [2000, 7000, 15000, 30000]
-        args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
-        args.checkpoint_iterations = []
-
-        # use the fastest mode.
-        if utils.WORLD_SIZE > 1:
-            args.adjust_div_stra = True
-            args.adjust_mode = "1"
-        else:
-            args.adjust_div_stra = False
-        args.lazy_load_image = True
-        args.memory_distribution = True
-        args.image_distribution = True
-
-        assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
-        assert not args.disable_auto_densification, "performance_stats mode needs auto densification."
-        assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
-        assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
-
-    if args.adjust_div_stra and utils.WORLD_SIZE == 1:
-        print("adjust_div_stra is enabled, but WORLD_SIZE is 1. disable adjust_div_stra.")
-        args.adjust_div_stra = False
-    assert not (args.memory_distribution and utils.WORLD_SIZE == 1), "memory_distribution needs WORLD_SIZE > 1!"
-    assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
-    assert not (args.memory_distribution and not args.adjust_div_stra), "has not implement memory_distribution \
-        without args.adjust_div_stra flag. Could use adjust_mode=none to enable naive tile_num based adjustment."
-    assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
-    assert not (args.image_distribution and not args.memory_distribution), "image_distribution needs memory_distribution!"
-    assert not (args.image_distribution and utils.WORLD_SIZE == 1), "image_distribution needs WORLD_SIZE > 1!"
-    assert not (args.adjust_div_stra and args.adjust_mode == "3" and args.dist_global_strategy == ""), "dist_global_strategy must be set if adjust_mode is 3."
-
-    if args.avoid_pixel_all2all:
-        assert args.adjust_mode == "2", "avoid_pixel_all2all needs adjust_mode to be 2."
-
-    if args.fixed_training_image != -1:
-        args.test_iterations = [] # disable testing during training.
-        args.disable_auto_densification = True
-
-    if args.enable_redistribute:
-       assert args.memory_distribution, "enable_redistribute needs memory_distribution!"
-       args.disable_checkpoint_and_save = True # checkpoint and save are not implemented in mode of enable_redistribute.
-
-    if args.disable_checkpoint_and_save:
-        print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
-        args.checkpoint_iterations = []
-        args.save_iterations = []
-    
-    if args.log_iteration_memory_usage:
-        args.check_memory_usage = True
+    check_args(args)
+    # Set up global args
+    utils.set_args(args)
 
 
     # create log folder
     if utils.LOCAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
-
     if utils.WORLD_SIZE > 1:
         torch.distributed.barrier()# make sure log_folder is created before other ranks start writing log.
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
-
-    # Start GUI server, configure and run training 
-    if False:# disable network_gui for now
-        network_gui.init(args.ip, args.port+utils.LOCAL_RANK)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     # Initialize log file and print all args
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
     print_all_args(args, log_file)
-    # Print cuda_block_x, cuda_block_y, one_dim_block_size in log file.
+
+    # Make sure block size match between python and cuda code. TODO: modify block size from python code without slow down training.
+    cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
+    utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
     log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
 
     training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)

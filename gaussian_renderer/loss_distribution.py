@@ -348,7 +348,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
     # print(f"rk: {utils.LOCAL_RANK}, tile_ids_l: {tile_ids_l}, tile_ids_r: {tile_ids_r}, strategy.tile_x: {strategy.tile_x}, first_tile_y: {first_tile_y}, first_tile_x: {first_tile_x}, first_pixel_y: {first_pixel_y}, first_pixel_x: {first_pixel_x}")
     
-    timers.start("[image_distribution]prepare_tensor_for_communication")
+    timers.start("[loss_distribution]prepare_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -402,9 +402,9 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
                                           send_to_rk_plus_1_part2.flatten(), 
                                           send_to_rk_plus_1_part3.flatten()], dim=0).contiguous()
 
-    timers.stop("[image_distribution]prepare_tensor_for_communication")
+    timers.stop("[loss_distribution]prepare_tensor_for_communication")
 
-    timers.start("[image_distribution]communication")
+    timers.start("[loss_distribution]communication")
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
@@ -425,7 +425,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
             recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
-    timers.stop("[image_distribution]communication")
+    timers.stop("[loss_distribution]communication")
 
     def n_of_elements(shape):
         n = 1
@@ -433,7 +433,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
             n *= s
         return n
 
-    timers.start("[image_distribution]extract_tensor_for_communication")
+    timers.start("[loss_distribution]extract_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -472,7 +472,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
         recv_from_rk_plus_1_part1 = None
         recv_from_rk_plus_1_part2 = None
         recv_from_rk_plus_1_part3 = None
-    timers.stop("[image_distribution]extract_tensor_for_communication")
+    timers.stop("[loss_distribution]extract_tensor_for_communication")
 
     # add the received parts to the original image
     # first to make sure, result is correct;
@@ -481,12 +481,12 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
                first_pixel_y, first_pixel_x, last_pixel_y_plus1, last_pixel_x_plus1,
                half_window_size)
 
-    timers.start("[image_distribution]add_remote_pixels_to_image")
+    timers.start("[loss_distribution]add_remote_pixels_to_image")
     local_image_rect_with_remote_tiles = add_remote_pixels_to_image(image,
                                                     recv_from_rk_minus_1_part1, recv_from_rk_minus_1_part2, recv_from_rk_minus_1_part3,
                                                     recv_from_rk_plus_1_part1, recv_from_rk_plus_1_part2, recv_from_rk_plus_1_part3,
                                                     configs)
-    timers.stop("[image_distribution]add_remote_pixels_to_image")
+    timers.stop("[loss_distribution]add_remote_pixels_to_image")
 
     coverage_min_y = max(first_pixel_y-half_window_size, 0)
     coverage_max_y = min(last_pixel_y_plus1+half_window_size, utils.IMG_H)
@@ -635,7 +635,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     first_tile_y, first_tile_x = tile_ids_l // strategy.tile_x, tile_ids_l % strategy.tile_x
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
     
-    timers.start("[image_distribution]prepare_tensor_for_communication")
+    timers.start("[loss_distribution]prepare_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -689,10 +689,10 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
             send_to_rk_plus_1 = torch.cat([send_to_rk_plus_1_part1.flatten(),
                                           send_to_rk_plus_1_part2.flatten(),
                                           send_to_rk_plus_1_part3.flatten()], dim=0).contiguous()
-    timers.stop("[image_distribution]prepare_tensor_for_communication")
+    timers.stop("[loss_distribution]prepare_tensor_for_communication")
 
 
-    timers.start("[image_distribution]communication")
+    timers.start("[loss_distribution]communication")
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
@@ -713,7 +713,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
             recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
-    timers.stop("[image_distribution]communication")
+    timers.stop("[loss_distribution]communication")
 
     def n_of_elements(shape):
         n = 1
@@ -721,7 +721,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
             n *= s
         return n
 
-    timers.start("[image_distribution]extract_tensor_for_communication")
+    timers.start("[loss_distribution]extract_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -760,7 +760,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
         recv_from_rk_plus_1_part1 = None
         recv_from_rk_plus_1_part2 = None
         recv_from_rk_plus_1_part3 = None
-    timers.stop("[image_distribution]extract_tensor_for_communication")
+    timers.stop("[loss_distribution]extract_tensor_for_communication")
 
     # add the received parts to the original image
     # first to make sure, result is correct;
@@ -769,12 +769,12 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
                first_pixel_y, first_pixel_x, last_pixel_y_plus1, last_pixel_x_plus1,
                window_size)
 
-    timers.start("[image_distribution]add_remote_pixels_to_image")
+    timers.start("[loss_distribution]add_remote_pixels_to_image")
     local_image_rect_with_remote_tiles = add_remote_pixels_to_image_less_comm(image, 
                                             recv_from_rk_minus_1_part1, recv_from_rk_minus_1_part2, recv_from_rk_minus_1_part3,
                                             recv_from_rk_plus_1_part1, recv_from_rk_plus_1_part2, recv_from_rk_plus_1_part3,
                                             configs)
-    timers.stop("[image_distribution]add_remote_pixels_to_image")
+    timers.stop("[loss_distribution]add_remote_pixels_to_image")
 
     coverage_min_y = max(first_pixel_y-window_size, 0)
     coverage_max_y = min(last_pixel_y_plus1+window_size, utils.IMG_H)
@@ -837,7 +837,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     first_tile_y, first_tile_x = tile_ids_l // strategy.tile_x, tile_ids_l % strategy.tile_x
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
     
-    timers.start("[image_distribution]prepare_tensor_for_communication")
+    timers.start("[loss_distribution]prepare_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -891,10 +891,10 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
             send_to_rk_plus_1 = torch.cat([send_to_rk_plus_1_part1.flatten(),
                                           send_to_rk_plus_1_part2.flatten(),
                                           send_to_rk_plus_1_part3.flatten()], dim=0).contiguous()
-    timers.stop("[image_distribution]prepare_tensor_for_communication")
+    timers.stop("[loss_distribution]prepare_tensor_for_communication")
 
 
-    timers.start("[image_distribution]communication")
+    timers.start("[loss_distribution]communication")
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
@@ -915,7 +915,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
             recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
-    timers.stop("[image_distribution]communication")
+    timers.stop("[loss_distribution]communication")
 
     def n_of_elements(shape):
         n = 1
@@ -923,7 +923,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
             n *= s
         return n
 
-    timers.start("[image_distribution]extract_tensor_for_communication")
+    timers.start("[loss_distribution]extract_tensor_for_communication")
     if utils.LOCAL_RANK != 0:
 
         if first_pixel_x == 0:
@@ -962,7 +962,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
         recv_from_rk_plus_1_part1 = None
         recv_from_rk_plus_1_part2 = None
         recv_from_rk_plus_1_part3 = None
-    timers.stop("[image_distribution]extract_tensor_for_communication")
+    timers.stop("[loss_distribution]extract_tensor_for_communication")
 
     # add the received parts to the original image
     # first to make sure, result is correct;
@@ -971,12 +971,12 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
                first_pixel_y, first_pixel_x, last_pixel_y_plus1, last_pixel_x_plus1,
                window_size)
 
-    timers.start("[image_distribution]add_remote_pixels_to_image")
+    timers.start("[loss_distribution]add_remote_pixels_to_image")
     local_image_rect_with_remote_tiles = add_remote_pixels_to_image_less_comm(image, 
                                             recv_from_rk_minus_1_part1, recv_from_rk_minus_1_part2, recv_from_rk_minus_1_part3,
                                             recv_from_rk_plus_1_part1, recv_from_rk_plus_1_part2, recv_from_rk_plus_1_part3,
                                             configs)
-    timers.stop("[image_distribution]add_remote_pixels_to_image")
+    timers.stop("[loss_distribution]add_remote_pixels_to_image")
 
     coverage_min_y = max(first_pixel_y-window_size, 0)
     coverage_max_y = min(last_pixel_y_plus1+window_size, utils.IMG_H)
@@ -1232,17 +1232,17 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy
         return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
 
 
-    if args.img_dist_compile_mode == "general":
+    if args.loss_distribution_mode == "general":
         return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args)
-    elif args.img_dist_compile_mode == "fast":
+    elif args.loss_distribution_mode == "fast":
         return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.img_dist_compile_mode == "functional_allreduce":
+    elif args.loss_distribution_mode == "functional_allreduce":
         return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.img_dist_compile_mode == "allreduce":
+    elif args.loss_distribution_mode == "allreduce":
         return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.img_dist_compile_mode == "fast_less_comm":
+    elif args.loss_distribution_mode == "fast_less_comm":
         return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.img_dist_compile_mode == "fast_less_comm_noallreduceloss":
+    elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
         return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
 
 

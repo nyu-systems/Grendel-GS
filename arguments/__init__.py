@@ -12,6 +12,7 @@
 from argparse import ArgumentParser, Namespace
 import sys
 import os
+import utils.general_utils as utils
 
 class GroupParams:
     pass
@@ -34,6 +35,8 @@ class ParamGroup:
             else:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
+                elif t == list:
+                    group.add_argument("--" + key, default=value, nargs="+", type=type(value[0]))
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 
@@ -89,6 +92,75 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
         super().__init__(parser, "Optimization Parameters")
 
+class DistributionParams(ParamGroup):
+    def __init__(self, parser):
+
+        # Deprecated Arguments
+        self.dist_division_mode = "tile_num" # Deprecated
+        self.adjust_div_stra = False # Deprecated. Distribution strategy adjustment during training for pixel-wise render computation.
+        self.enable_redistribute = True # Deprecated. Enable redistribution for 3dgs storage location.
+        self.redistribution_mode = "0" # Deprecated. Redistribution mode for 3dgs storage location.
+        self.redistribute_frequency = 10 # Deprecated. Redistribution frequency for 3dgs storage location.
+        self.stop_adjust2_well_balanced = False # Deprecated. Stop adjustment if workloads are well balanced.
+        self.img_dist_compile_mode = "general" # Deprecated. Distribution mode for pixel-wise loss computation.
+        self.image_distribution = True # Deprecated. Distribution for pixel-wise loss computation.
+
+
+        # Distribution for pixel-wise render computation.
+        self.adjust_mode = "1" # distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
+        self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
+        self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
+        self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
+        self.dist_global_strategy = "" # if self.adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
+
+        # Distribution for 3DGS-wise workloads.
+        self.memory_distribution = True # enable distribution for 3DGS storage memory and preprocess forward and backward compute. 
+        self.redistribute_gaussians_mode = "no_redistribute" # enable redistribution for 3DGS storage location. "no_redistribute" is no redistribution. 
+        self.redistribute_gaussians_frequency = 10 # redistribution frequency for 3DGS storage location.
+        self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location: min*self.redistribute_gaussian_threshold < max --> redistribute.
+
+        # Distribution for pixel-wise loss computation.
+        self.loss_distribution = True # enable distribution for pixel-wise loss computation.
+        self.loss_distribution_mode = "general" # "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
+        self.avoid_pixel_all2all = False # avoid pixel-wise all2all communication by replicated border pixel rendering during forward. 
+        self.avoid_pixel_all2all_log_correctloss = False # log correct loss for pixel-wise all2all communication.
+
+        # Data Parallel
+        self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
+
+        super().__init__(parser, "Distribution Parameters")
+
+class BenchmarkParams(ParamGroup):
+    def __init__(self, parser):
+        self.zhx_time = False # log some steps' running time with cuda events timer.
+        self.zhx_python_time = False # log some steps' running time with python timer.
+        self.end2end_time = False # log end2end training time.
+        self.check_memory_usage = False # check memory usage.
+        self.log_iteration_memory_usage = False # log memory usage for every iteration.
+
+        self.benchmark_stats = False # Benchmark mode: it will enable some flags to log detailed statistics to research purposes.
+        self.performance_stats = False # Performance mode: to know its generation quality, it will evaluate/save models at some iterations and use them for render.py and metrics.py .
+
+        self.analyze_3dgs_change = False # log some 3dgs parameters change to analyze 3dgs change.
+
+        super().__init__(parser, "Benchmark Parameters")
+
+class DebugParams(ParamGroup):
+    def __init__(self, parser):
+        self.zhx_debug = False # log debug information that zhx needs.
+        self.fixed_training_image = -1 # if not -1, use this image as the training image.
+        self.disable_auto_densification = False # disable auto densification.
+        self.stop_update_param = False # stop updating parameters. No optimizer.step() will be called.
+        self.duplicate_gs_cnt = 0 # create more 3D gaussian, each 3DGS from point cloud will be duplicated by self.duplicate_gs_cnt times.
+        self.force_python_timer_iterations = [600, 700, 800] # forcibly print timers at these iterations.
+
+        self.save_i2jsend = False # Deprecated. It was used to save i2jsend_size to file for debugging. Now, we save size of communication from gpui to gpuj in strategy_history_ws=4_rk=0.json .
+        self.time_image_loading = False # Log image loading time.
+        self.disable_checkpoint_and_save = False # Disable checkpoint and save.
+        self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
+
+        super().__init__(parser, "Debug Parameters")
+
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"
@@ -118,3 +190,77 @@ def print_all_args(args, log_file):
     for arg in vars(args):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
     log_file.write("-"*30+"\n\n")
+
+def check_args(args):
+
+    # Check arguments
+    assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
+
+    if args.benchmark_stats:
+        args.zhx_time = True
+        args.zhx_python_time = True
+        args.log_iteration_memory_usage = True
+        args.check_memory_usage = True
+        args.end2end_time = True
+        args.disable_checkpoint_and_save = True
+        args.checkpoint_iterations = []
+        args.save_iterations = []
+        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
+        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
+        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
+        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
+
+    if args.performance_stats:
+        args.eval = True
+        args.zhx_time = False
+        args.zhx_python_time = False
+        args.end2end_time = True
+        args.log_iteration_memory_usage = False
+        args.check_memory_usage = False
+        args.save_iterations = [2000, 7000, 15000, 30000]
+        args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
+        args.checkpoint_iterations = []
+
+        # use the fastest mode.
+        args.adjust_mode = "2"
+        args.lazy_load_image = True
+        args.memory_distribution = True
+        args.loss_distribution = True
+
+        assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
+        assert not args.disable_auto_densification, "performance_stats mode needs auto densification."
+        assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
+        assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
+
+    if utils.WORLD_SIZE == 1:
+        args.memory_distribution = False
+        args.loss_distribution = False
+
+    assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
+    assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
+    assert not (args.loss_distribution and not args.memory_distribution), "loss_distribution needs memory_distribution!"
+
+    if args.adjust_mode == "3":
+        assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
+
+    if args.avoid_pixel_all2all:
+        assert args.adjust_mode == "2", "avoid_pixel_all2all needs adjust_mode to be 2."
+        # TODO: refactor adjust_mode
+
+    if args.fixed_training_image != -1:
+        args.test_iterations = [] # disable testing during training.
+        args.disable_auto_densification = True
+
+    if args.redistribute_gaussians_mode != "no_redistribute":
+       print(args.memory_distribution)
+       assert args.memory_distribution, "enable_redistribute needs memory_distribution!"
+       args.disable_checkpoint_and_save = True # checkpoint and save are not implemented in mode of enable_redistribute.
+
+    if args.disable_checkpoint_and_save:
+        print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
+        args.checkpoint_iterations = []
+        args.save_iterations = []
+    
+    if args.log_iteration_memory_usage:
+        args.check_memory_usage = True
+ 

@@ -693,44 +693,40 @@ class GaussianModel:
         # send_to_gpui_cnt is (n, world_size), sample according to send_to_gpui_cnt[i,j]/send_to_gpui_cnt[i,:].sum(-1)
         return torch.multinomial(self.send_to_gpui_cnt.float()+1, 1).squeeze().int() # +1 to avoid 0 probability
 
-    def need_redistribution(self):
+    def need_redistribute_gaussians(self):
         args = utils.get_args()
-        if utils.get_denfify_iter() == args.redistribute_frequency:
+        if utils.get_denfify_iter() == args.redistribute_gaussians_frequency:
+            # do redistribution after the first densification.
             return True
         local_n_3dgs = self.get_xyz.shape[0]
-        # allgather_object local_n_3dgs
         all_local_n_3dgs = [None for _ in range(utils.WORLD_SIZE)]
         dist.all_gather_object(all_local_n_3dgs, local_n_3dgs)
-        redistribution_threshold = 1.1
-        if min(all_local_n_3dgs)*redistribution_threshold < max(all_local_n_3dgs):
+        if min(all_local_n_3dgs)*args.redistribute_gaussians_threshold < max(all_local_n_3dgs):
             return True
         return False
 
     def redistribute_gaussians(self):
 
         args = utils.get_args()
-        if args.redistribution_mode == "0":
+        if args.redistribute_gaussians_mode == "0":
             # no redistribution
             return
         
-        if not self.need_redistribution():
+        if not self.need_redistribute_gaussians():
             return
 
         # Get each 3dgs' destination GPU.
-        if args.redistribution_mode == "1":
+        if args.redistribute_gaussians_mode == "1":
             # random redistribution to balance the number of gaussians on each GPU.
             destination = self.get_destination_1()
-            pass
-        elif args.redistribution_mode == "2":
+        elif args.redistribute_gaussians_mode == "2":
             # redistribute all gaussians to the GPU which uses it most frequently.
             destination = self.get_destination_2()
-            pass
-        elif args.redistribution_mode == "3":
+        elif args.redistribute_gaussians_mode == "3":
             # redistribute all gaussians to the GPU which uses it most frequently.
             destination = self.get_destination_3()
-            pass
         else:
-            raise ValueError("Invalid redistribution_mode: " + args.redistribution_mode)
+            raise ValueError("Invalid redistribute_gaussians_mode: " + args.redistribute_gaussians_mode)
 
         # Count the number of 3dgs to be sent to each GPU.
         local2j_send_size = torch.bincount(destination, minlength=utils.WORLD_SIZE).int()

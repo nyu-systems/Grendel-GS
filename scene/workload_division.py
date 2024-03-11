@@ -356,8 +356,14 @@ class DivisionStrategyHistory_2(DivisionStrategyHistory):
             self.cur_heuristic = new_heuristic
             return
         args = utils.get_args()
-        if not args.stop_adjust2_well_balanced and strategy.well_balanced():
+
+        if args.stop_adjust_if_workloads_well_balanced and strategy.well_balanced():
             # if the new strategy has already been well balanced, we do not have to update the heuristic.
+            
+            # FIXME: This should be a bug; we should always update the heuristic. 
+            # But we do not need to create a new distribution strategy. 
+            # But that will lead to larger scheduling overhead. 
+
             return
 
         # update self.cur_heuristic
