@@ -103,6 +103,7 @@ def get_local_running_time_by_modes(stats_collector):
             stats_collector["backward_render_time"]+
             2*stats_collector["forward_loss_time"]
         )
+        # return stats_collector["pixelwise_workloads_time"]
 
     raise ValueError(f"Unknown render_distribution_mode: {args.render_distribution_mode}")
 
