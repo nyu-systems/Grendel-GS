@@ -19,16 +19,7 @@ from gaussian_renderer import render, network_gui
 from gaussian_renderer.loss_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
-from scene.workload_division import (DivisionStrategy_1, 
-                                     DivisionStrategyHistory_1, 
-                                     DivisionStrategyHistory_2, 
-                                     DivisionStrategyHistory_4, 
-                                     DivisionStrategyWS1, 
-                                     DivisionStrategyManuallySet, 
-                                     WorkloadDivisionTimer, 
-                                     get_evenly_global_strategy_str, 
-                                     DivisionStrategyHistoryWS1
-)
+from scene.workload_division import get_evenly_global_strategy_str, create_division_strategy_history
 from utils.general_utils import safe_state, init_distributed
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -128,22 +119,6 @@ def training(dataset, opt, pipe, args, log_file):
     train_start_time = time.time()
 
     for iteration in range(first_iter, opt.iterations + 1):        
-        if False:# disable network_gui for now
-            if network_gui.conn == None:
-                network_gui.try_connect()
-            while network_gui.conn != None:
-                try:
-                    net_image_bytes = None
-                    custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                    if custom_cam != None:
-                        net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                    network_gui.send(net_image_bytes, dataset.source_path)
-                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                        break
-                except Exception as e:
-                    network_gui.conn = None
-
 
         # Step Initialization
         utils.set_cur_iter(iteration)
@@ -157,23 +132,6 @@ def training(dataset, opt, pipe, args, log_file):
         # DEBUG: understand time for one cuda synchronize call.
         # timers.start("test_cuda_synchronize_time")
         # timers.stop("test_cuda_synchronize_time")
-
-
-        # Prepare arguments for rendering cuda code. The values should all be string.
-        cuda_args = {
-            "mode": "train",
-            "world_size": str(utils.WORLD_SIZE),
-            "local_rank": str(utils.LOCAL_RANK),
-            "log_folder": args.log_folder,
-            "log_interval": str(args.log_interval),
-            "iteration": str(iteration),
-            "zhx_debug": str(args.zhx_debug),
-            "zhx_time": str(args.zhx_time),
-            "dist_division_mode": args.dist_division_mode,
-            "stats_collector": {},
-            "avoid_pixel_all2all": args.avoid_pixel_all2all
-        }
-
 
 
         # Prepara data: Pick a random Camera
@@ -191,51 +149,26 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Prepare Workload division strategy
 
-        # TODO: refactor
-        if utils.WORLD_SIZE == 1:
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistoryWS1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK)
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            strategy = strategy_history.start_strategy()
-            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-        elif args.adjust_mode == "1":
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_1(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            strategy = strategy_history.start_strategy()
-            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
+        if viewpoint_cam.uid not in cameraId2StrategyHistory:
+            cameraId2StrategyHistory[viewpoint_cam.uid] = create_division_strategy_history(viewpoint_cam, 
+                                                                                           args.render_distribution_mode)
+        strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
+        strategy = strategy_history.start_strategy()
 
-        elif args.adjust_mode == "2":
-
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_2(viewpoint_cam,
-                                                                                        utils.WORLD_SIZE,
-                                                                                        utils.LOCAL_RANK,
-                                                                                        args.adjust_mode,
-                                                                                        args.heuristic_decay) # TODO: tune this. 
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            strategy = strategy_history.start_strategy()
-            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-
-        elif args.adjust_mode == "3":
-            tile_x = (viewpoint_cam.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
-            tile_y = (viewpoint_cam.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
-            strategy = DivisionStrategyManuallySet(
-                viewpoint_cam,
-                utils.WORLD_SIZE,
-                utils.LOCAL_RANK,
-                tile_x,
-                tile_y,
-                args.dist_global_strategy
-            )
-            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-        elif args.adjust_mode == "4":
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory_4(viewpoint_cam, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            strategy = strategy_history.start_strategy()
-            cuda_args["dist_global_strategy"] = strategy.get_gloabl_strategy_str()
-
+        # Prepare arguments for rendering cuda code. The values should all be string.
+        cuda_args = {
+            "mode": "train",
+            "world_size": str(utils.WORLD_SIZE),
+            "local_rank": str(utils.LOCAL_RANK),
+            "log_folder": args.log_folder,
+            "log_interval": str(args.log_interval),
+            "iteration": str(iteration),
+            "zhx_debug": str(args.zhx_debug),
+            "zhx_time": str(args.zhx_time),
+            "dist_global_strategy": strategy.get_gloabl_strategy_str(),
+            "avoid_pixel_all2all": strategy.is_avoid_pixel_all2all(),
+            "stats_collector": {},
+        }
 
 
         memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
@@ -294,7 +227,6 @@ def training(dataset, opt, pipe, args, log_file):
             # Distributed Loss Computation
             Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
-
         else:
             # Replicated Loss Computation
             Ll1, ssim_loss = replicated_loss_computation(image, viewpoint_cam)
@@ -304,7 +236,6 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Logging
         log_string = "iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item())
-        # log_file.write("iteration {} image: {} loss: {}\n".format(iteration, viewpoint_cam.image_name, loss.item()))
         if args.log_iteration_memory_usage:
             log_string += "memory_iteration_begin: {:.4f} GB. memory_after_forward: {:.4f} GB. memory_after_loss: {:.4f} GB.\n".format(
                 memory_iteration_begin, memory_after_forward, memory_after_loss
@@ -332,7 +263,7 @@ def training(dataset, opt, pipe, args, log_file):
         utils.check_memory_usage_logging("after backward")
 
         if args.analyze_3dgs_change:
-            # visibility_filter, radii, viewspace_point_tensor.grad
+            # save some statistics in log_file for analyzing 3dgs change.
             with torch.no_grad():
                 local_n_3dgs = visibility_filter.shape[0]
                 local_visible_3dgs = visibility_filter.sum().item()
@@ -347,36 +278,13 @@ def training(dataset, opt, pipe, args, log_file):
 
 
         # Adjust workload division strategy. 
-        need_to_update_strategy = (args.adjust_mode in ["1", "2", "4"]) or (utils.WORLD_SIZE == 1)
-        if iteration <= 20:
-            need_to_update_strategy = False
-
         timers.start("strategy.update_stats")
-        if need_to_update_strategy:
-            if args.avoid_pixel_all2all:
-                strategy.update_stats(cuda_args["stats_collector"]["forward_render_time"]+
-                                        cuda_args["stats_collector"]["backward_render_time"]+
-                                        2*cuda_args["stats_collector"]["forward_loss_time"],
-                                        n_render.sum().item(),
-                                        n_consider.sum().item(),
-                                        n_contrib.sum().item(),
-                                        n_contrib,
-                                        i2j_send_size)
-            elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
-                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"]+
-                                        2*cuda_args["stats_collector"]["forward_loss_time"],
-                                        n_render.sum().item(),
-                                        n_consider.sum().item(),
-                                        n_contrib.sum().item(),
-                                        n_contrib,
-                                        i2j_send_size)
-            else:
-                strategy.update_stats(cuda_args["stats_collector"]["backward_render_time"],
-                                        n_render.sum().item(),
-                                        n_consider.sum().item(),
-                                        n_contrib.sum().item(),
-                                        n_contrib,
-                                        i2j_send_size)
+        if iteration > args.adjust_strategy_warmp_iterations:
+            strategy.update_stats(cuda_args["stats_collector"],
+                                    n_render,
+                                    n_consider,
+                                    n_contrib,
+                                    i2j_send_size)
             strategy_history.finish_strategy()
         timers.stop("strategy.update_stats")
 
@@ -497,16 +405,13 @@ def training(dataset, opt, pipe, args, log_file):
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
     if not args.performance_stats:
-
         # Save some statistics to file for future usage. 
-
-        if args.adjust_mode in ["1", "2", "4"] or utils.WORLD_SIZE == 1:
-            data_json = {}
-            for camera_id, strategy_history in cameraId2StrategyHistory.items():
-                data_json[camera_id] = strategy_history.to_json()
-            
-            with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
-                json.dump(data_json, f)
+        data_json = {}
+        for camera_id, strategy_history in cameraId2StrategyHistory.items():
+            data_json[camera_id] = strategy_history.to_json()
+        
+        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+            json.dump(data_json, f)
 
 
         # DEBUG
@@ -566,9 +471,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             "iteration": str(iteration),# this is training iteration, not testing iteration.
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
-            "dist_division_mode": "tile_num",# during testing, we does not have statistics to adjust workload division strategy.
-            "stats_collector": {},
-            "avoid_pixel_all2all": False # during testing, we use image allreduce, thus different GPUs should compute different parts of the image.
+            "avoid_pixel_all2all": False, # during testing, we use image allreduce, thus different GPUs should compute different parts of the image.
+            "stats_collector": {}
         }
         renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "cuda_args": cuda_args}
 
@@ -577,18 +481,16 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    # TODO: refactor code here. 
                     cuda_args["dist_global_strategy"] = get_evenly_global_strategy_str(viewpoint)# HACK: Use naive distribution strategy during testing.
-                    hack_history = DivisionStrategyHistory_1(viewpoint, utils.WORLD_SIZE, utils.LOCAL_RANK, args.adjust_mode)# HACK
+                    hack_history = create_division_strategy_history(viewpoint, "evaluation")
                     renderKwargs["strategy"] = hack_history.start_strategy()# HACK: Use naive distribution strategy during testing.
                     image = renderFunc(viewpoint, scene.gaussians, *renderArgs, **renderKwargs)["render"]
                     if utils.WORLD_SIZE > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
                     image = torch.clamp(image, 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -596,13 +498,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 print("\n[ITER {}] rank {} Evaluating {}: L1 {} PSNR {}".format(iteration, utils.LOCAL_RANK, config['name'], l1_test, psnr_test))
                 log_file.write("[ITER {}] Evaluating {}: L1 {} PSNR {}\n".format(iteration, config['name'], l1_test, psnr_test))
 
-                if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
-
-        if tb_writer:
-            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":

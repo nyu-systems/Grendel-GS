@@ -38,7 +38,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         "iteration": str(-1),
         "zhx_debug": str(False),
         "zhx_time": str(False),
-        "dist_division_mode": "tile_num",
     }# TODO: This is a ugly hack. 
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):

@@ -94,24 +94,15 @@ class OptimizationParams(ParamGroup):
 
 class DistributionParams(ParamGroup):
     def __init__(self, parser):
-
-        # Deprecated Arguments
-        self.dist_division_mode = "tile_num" # Deprecated
-        self.adjust_div_stra = False # Deprecated. Distribution strategy adjustment during training for pixel-wise render computation.
-        self.enable_redistribute = True # Deprecated. Enable redistribution for 3dgs storage location.
-        self.redistribution_mode = "0" # Deprecated. Redistribution mode for 3dgs storage location.
-        self.redistribute_frequency = 10 # Deprecated. Redistribution frequency for 3dgs storage location.
-        self.stop_adjust2_well_balanced = False # Deprecated. Stop adjustment if workloads are well balanced.
-        self.img_dist_compile_mode = "general" # Deprecated. Distribution mode for pixel-wise loss computation.
-        self.image_distribution = True # Deprecated. Distribution for pixel-wise loss computation.
-
-
         # Distribution for pixel-wise render computation.
-        self.adjust_mode = "1" # distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
+        self.render_distribution = True # default to be True if world_size > 1.
+        self.render_distribution_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
         self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
         self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
         self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
         self.dist_global_strategy = "" # if self.adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
+        self.adjust_strategy_warmp_iterations = 20 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
+        self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
 
         # Distribution for 3DGS-wise workloads.
         self.memory_distribution = True # enable distribution for 3DGS storage memory and preprocess forward and backward compute. 
@@ -122,11 +113,26 @@ class DistributionParams(ParamGroup):
         # Distribution for pixel-wise loss computation.
         self.loss_distribution = True # enable distribution for pixel-wise loss computation.
         self.loss_distribution_mode = "general" # "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
-        self.avoid_pixel_all2all = False # avoid pixel-wise all2all communication by replicated border pixel rendering during forward. 
-        self.avoid_pixel_all2all_log_correctloss = False # log correct loss for pixel-wise all2all communication.
+        self.get_global_exact_loss = False # if True, we recompute loss without redundant border pixel computation to get exact number. This is for debugging.
 
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
+
+
+
+        # Deprecated Arguments
+        self.dist_division_mode = "tile_num" # Deprecated
+        self.adjust_div_stra = False # Deprecated. Distribution strategy adjustment during training for pixel-wise render computation.
+        self.enable_redistribute = True # Deprecated. Enable redistribution for 3dgs storage location.
+        self.redistribution_mode = "0" # Deprecated. Redistribution mode for 3dgs storage location.
+        self.redistribute_frequency = 10 # Deprecated. Redistribution frequency for 3dgs storage location.
+        self.stop_adjust2_well_balanced = False # Deprecated. Stop adjustment if workloads are well balanced.
+        self.img_dist_compile_mode = "general" # Deprecated. Distribution mode for pixel-wise loss computation.
+        self.image_distribution = True # Deprecated. Distribution for pixel-wise loss computation.
+        self.adjust_mode = "1" # Deprecated. 
+        self.avoid_pixel_all2all = False # Deprecated. avoid pixel-wise all2all communication by replicated border pixel rendering during forward. 
+        self.avoid_pixel_all2all_log_correctloss = False # Deprecated. log correct loss for pixel-wise all2all communication.
+
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -233,6 +239,7 @@ def check_args(args):
         assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
 
     if utils.WORLD_SIZE == 1:
+        args.render_distribution = False
         args.memory_distribution = False
         args.loss_distribution = False
 
@@ -240,12 +247,13 @@ def check_args(args):
     assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
     assert not (args.loss_distribution and not args.memory_distribution), "loss_distribution needs memory_distribution!"
 
-    if args.adjust_mode == "3":
+    if args.render_distribution_mode == "3":
         assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
 
-    if args.avoid_pixel_all2all:
-        assert args.adjust_mode == "2", "avoid_pixel_all2all needs adjust_mode to be 2."
-        # TODO: refactor adjust_mode
+    if args.render_distribution_mode == "5":
+        args.loss_distribution_mode = "avoid_pixel_all2all"
+        if utils.LOCAL_RANK == 0:
+            print("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_mode is 5.")
 
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.

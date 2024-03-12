@@ -1191,7 +1191,7 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
     utils.check_memory_usage_logging("after ssim_loss")
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
 
-    if args.avoid_pixel_all2all_log_correctloss:
+    if args.get_global_exact_loss:
         # get the loss without redundant pixels compute, to make sure it runs correctly.
         # this is for debugging. 
         with torch.no_grad():
@@ -1228,10 +1228,6 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
 def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy=None, cuda_args={}):
     args = utils.get_args()
 
-    if args.avoid_pixel_all2all:
-        return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-
-
     if args.loss_distribution_mode == "general":
         return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args)
     elif args.loss_distribution_mode == "fast":
@@ -1244,6 +1240,8 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy
         return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
     elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
         return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
+    elif args.loss_distribution_mode == "avoid_pixel_all2all":
+        return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
 
 
 
