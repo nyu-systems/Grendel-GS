@@ -17,6 +17,7 @@ from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import utils.general_utils as utils
+from tqdm import tqdm
 import numpy as np
 import json
 from pathlib import Path
@@ -69,12 +70,8 @@ def getNerfppNorm(cam_info):
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     args = utils.get_args()
     cam_infos = []
-    for idx, key in enumerate(cam_extrinsics):
-        if utils.LOCAL_RANK == 0:
-            sys.stdout.write('\r')
-            # the exact output you're looking for:
-            sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
-            sys.stdout.flush()
+    utils.print_rank_0("Loading cameras from disk...")
+    for idx, key in tqdm(enumerate(cam_extrinsics), total=len(cam_extrinsics), disable=(utils.LOCAL_RANK != 0)):
 
         extr = cam_extrinsics[key]
         intr = cam_intrinsics[extr.camera_id]
@@ -107,7 +104,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
-    sys.stdout.write('\n')
     return cam_infos
 
 def fetchPly(path):

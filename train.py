@@ -82,7 +82,7 @@ def training(dataset, opt, pipe, args, log_file):
         assert not args.memory_distribution, "memory_distribution does not support checkpoint yet!"
         (model_params, first_iter) = torch.load(checkpoint, map_location=torch.device("cuda", utils.LOCAL_RANK))
         gaussians.restore(model_params, opt)
-        print("rank {} Restored from checkpoint: {}, at iteration {}".format(utils.LOCAL_RANK, checkpoint, first_iter))
+        utils.print_rank_0("Restored from checkpoint: {}, at iteration {}".format(checkpoint, first_iter))
         log_file.write("rank {} Restored from checkpoint: {}, at iteration {}\n".format(utils.LOCAL_RANK, checkpoint, first_iter))
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -102,7 +102,7 @@ def training(dataset, opt, pipe, args, log_file):
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
     first_iter += 1
 
     # init epoch stats
@@ -330,7 +330,7 @@ def training(dataset, opt, pipe, args, log_file):
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), log_file)
             if iteration in saving_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
+                utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
 
@@ -387,7 +387,7 @@ def training(dataset, opt, pipe, args, log_file):
                 utils.check_memory_usage_logging("after optimizer step")
 
             if utils.LOCAL_RANK == 0 and (iteration in checkpoint_iterations): #TODO: have not handled args.memory_distribution yet.
-                print("\n[ITER {}] Saving Checkpoint".format(iteration))
+                utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
                 log_file.write("[ITER {}] Saving Checkpoint\n".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
     
@@ -436,24 +436,16 @@ def prepare_output_and_logger(args):
     # Set up output folder
     if utils.LOCAL_RANK != 0:
         return None
-    print("Output folder: {}".format(args.model_path))
+    utils.print_rank_0("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
-    # Create Tensorboard writer
+    # Create Tensorboard writer. Disable for now. 
     tb_writer = None
-    if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
-    else:
-        print("Tensorboard not available: not logging progress")
     return tb_writer
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, log_file):
-    if tb_writer:
-        tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
-        tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
-        tb_writer.add_scalar('iter_time', elapsed, iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -495,7 +487,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] rank {} Evaluating {}: L1 {} PSNR {}".format(iteration, utils.LOCAL_RANK, config['name'], l1_test, psnr_test))
+                utils.print_rank_0("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 log_file.write("[ITER {}] Evaluating {}: L1 {} PSNR {}\n".format(iteration, config['name'], l1_test, psnr_test))
 
         torch.cuda.empty_cache()
@@ -525,7 +517,7 @@ if __name__ == "__main__":
 
     # Set up distributed training
     init_distributed()
-    print("Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
+    print("Initializing -> Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
 
     ## Prepare arguments.
     # Check arguments
@@ -557,4 +549,4 @@ if __name__ == "__main__":
     training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)
 
     # All done
-    print("\nTraining complete.")
+    utils.print_rank_0("\nTraining complete.")

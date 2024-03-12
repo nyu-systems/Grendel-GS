@@ -92,6 +92,12 @@ def inc_densify_iter():
     global DENSIFY_ITER
     DENSIFY_ITER += 1
 
+def print_rank_0(str):
+    global LOCAL_RANK
+    if LOCAL_RANK == 0:
+        print(str)
+
+
 def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()

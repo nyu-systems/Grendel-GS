@@ -252,20 +252,19 @@ def check_args(args):
 
     if args.render_distribution_mode == "5":
         args.loss_distribution_mode = "avoid_pixel_all2all"
-        if utils.LOCAL_RANK == 0:
-            print("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_mode is 5.")
+        utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_mode is 5.")
 
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.
         args.disable_auto_densification = True
 
     if args.redistribute_gaussians_mode != "no_redistribute":
-       print(args.memory_distribution)
+       utils.print_rank_0(args.memory_distribution)
        assert args.memory_distribution, "enable_redistribute needs memory_distribution!"
        args.disable_checkpoint_and_save = True # checkpoint and save are not implemented in mode of enable_redistribute.
 
     if args.disable_checkpoint_and_save:
-        print("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
+        utils.print_rank_0("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
         args.checkpoint_iterations = []
         args.save_iterations = []
     

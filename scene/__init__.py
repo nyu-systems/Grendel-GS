@@ -70,11 +70,9 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
-            if utils.LOCAL_RANK == 0:
-                print("Loading Training Cameras")
+            utils.print_rank_0("Decoding Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            if utils.LOCAL_RANK == 0:
-                print("Loading Test Cameras")
+            utils.print_rank_0("Decoding Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         utils.check_memory_usage_logging("after Loading all images")

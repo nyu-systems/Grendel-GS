@@ -12,6 +12,8 @@
 from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch, get_args, get_log_file
+import utils.general_utils as utils
+from tqdm import tqdm
 from utils.graphics_utils import fov2focal
 import time
 
@@ -61,8 +63,7 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
 
     args = get_args()
-    from tqdm import tqdm
-    for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos)):
+    for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos), disable=(utils.LOCAL_RANK != 0)):
         if not hasattr(args, "fixed_training_image") or args.fixed_training_image == -1 or id == args.fixed_training_image:
             camera_list.append(loadCam(args, id, c, resolution_scale))
         else:
