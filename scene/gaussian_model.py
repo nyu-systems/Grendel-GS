@@ -556,19 +556,6 @@ class GaussianModel:
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-    def duplicate_gaussians(self, K):
-
-        self._xyz = nn.Parameter(self._xyz.repeat(K, 1).detach().requires_grad_(True))
-        self._features_dc = nn.Parameter(self._features_dc.repeat(K, 1, 1).detach().requires_grad_(True))
-        self._features_rest = nn.Parameter(self._features_rest.repeat(K, 1, 1).detach().requires_grad_(True))
-        self._scaling = nn.Parameter(self._scaling.repeat(K, 1).detach().requires_grad_(True))
-        self._rotation = nn.Parameter(self._rotation.repeat(K, 1).detach().requires_grad_(True))
-        self._opacity = nn.Parameter(self._opacity.repeat(K, 1).detach().requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-        # add noise to xyz
-        self._xyz = nn.Parameter((self._xyz + torch.randn_like(self._xyz) * 0.01).detach().requires_grad_(True))
-
     def all2all_gaussian_state(self, state, destination, i2j_send_size):
         # state: (N, ...) tensor
         state_to_gpuj = []

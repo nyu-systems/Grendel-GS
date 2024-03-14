@@ -23,7 +23,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -96,3 +96,13 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+
+    def log_scene_info_to_file(self, log_file, prefix_str=""):
+
+        # Print shape of gaussians parameters. 
+        log_file.write("xyz shape: {}\n".format(self.gaussians._xyz.shape))
+        log_file.write("f_dc shape: {}\n".format(self.gaussians._features_dc.shape))
+        log_file.write("f_rest shape: {}\n".format(self.gaussians._features_rest.shape))
+        log_file.write("opacity shape: {}\n".format(self.gaussians._opacity.shape))
+        log_file.write("scaling shape: {}\n".format(self.gaussians._scaling.shape))
+        log_file.write("rotation shape: {}\n".format(self.gaussians._rotation.shape))

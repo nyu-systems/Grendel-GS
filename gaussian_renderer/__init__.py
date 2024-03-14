@@ -164,6 +164,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     if timers is not None:
         timers.start("forward_preprocess_gaussians")
+    #[3DGS-wise preprocess]
     means2D, rgb, conic_opacity, radii, depths = rasterizer.preprocess_gaussians(
         means3D=means3D,
         scales=scales,
@@ -180,7 +181,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         means2D.retain_grad()
         # NOTE: means2D is (P, 2) tensor. This is different from means2D in not sep_rendering mode i.e. (P, 3). TODO: double check. 
 
-    # all to all communication for means2D, rgb, conic_opacity, radii, depths
+    #[3DGS all2all]: all to all communication for means2D, rgb, conic_opacity, radii, depths
     if args.memory_distribution:
         if timers is not None:
             timers.start("forward_all_to_all_communication")
@@ -203,6 +204,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # render
     if timers is not None:
         timers.start("forward_render_gaussians")
+    #[Pixel-wise render]
     rendered_image, n_render, n_consider, n_contrib = rasterizer.render_gaussians(
         means2D=means2D if not args.memory_distribution else means2D_redistributed,
         conic_opacity=conic_opacity if not args.memory_distribution else conic_opacity_redistributed,

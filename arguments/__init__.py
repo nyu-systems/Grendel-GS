@@ -157,7 +157,6 @@ class DebugParams(ParamGroup):
         self.fixed_training_image = -1 # if not -1, use this image as the training image.
         self.disable_auto_densification = False # disable auto densification.
         self.stop_update_param = False # stop updating parameters. No optimizer.step() will be called.
-        self.duplicate_gs_cnt = 0 # create more 3D gaussian, each 3DGS from point cloud will be duplicated by self.duplicate_gs_cnt times.
         self.force_python_timer_iterations = [600, 700, 800] # forcibly print timers at these iterations.
 
         self.save_i2jsend = False # Deprecated. It was used to save i2jsend_size to file for debugging. Now, we save size of communication from gpui to gpuj in strategy_history_ws=4_rk=0.json .
