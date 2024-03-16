@@ -14,6 +14,12 @@ conda activate gaussian_splatting
 ```
 If you want to use other name for this conda environment, you should change the `name:` field in the environment.yml
 
+Then, we need to compile two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn`. `diff-gaussian-rasterization` contains render cuda kernels, which will be continuously modified by us. Therefore, let us first install it in development mode. 
+```shell
+pip install -e submodules/diff-gaussian-rasterization
+pip install submodules/simple-knn
+```
+
 ### Training
 
 ```shell
