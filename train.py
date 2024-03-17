@@ -11,22 +11,20 @@
 
 import os
 import torch
-import numpy as np
 import json
 from random import randint
 from utils.loss_utils import l1_loss
-from gaussian_renderer import render, network_gui
+from gaussian_renderer import render
 from gaussian_renderer.loss_distribution import distributed_loss_computation, replicated_loss_computation
 import sys
 from scene import Scene, GaussianModel
 from scene.workload_division import get_evenly_global_strategy_str, create_division_strategy_history
-from utils.general_utils import safe_state, init_distributed
+from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
 from utils.timer import Timer
-import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser
 from arguments import (
     ModelParams, 
     PipelineParams, 
@@ -38,71 +36,39 @@ from arguments import (
     check_args
 )
 import time
-try:
-    from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_FOUND = True
-except ImportError:
-    TENSORBOARD_FOUND = False
 import torch.distributed as dist
 import diff_gaussian_rasterization
 
-def training(dataset, opt, pipe, args, log_file):
-    (testing_iterations,
-     saving_iterations, 
-     checkpoint_iterations, 
-     checkpoint, 
-     debug_from, 
-     fixed_training_image, 
-     disable_auto_densification) = (
-        args.test_iterations,
-        args.save_iterations,
-        args.checkpoint_iterations,
-        args.start_checkpoint,
-        args.debug_from,
-        args.fixed_training_image,
-        args.disable_auto_densification
-    )
+def training(dataset_args, opt_args, pipe_args, args, log_file):
+    # dataset_args, opt_args, pipe_args, args contain arguments containing all kinds of settings and configurations. 
+    # In which, the first three are sub-domains, and the fourth one contains all of them.
 
     timers = Timer(args)
     utils.set_timers(timers)
     utils.set_log_file(log_file)
     utils.set_cur_iter(0)
+    prepare_output_and_logger(dataset_args)
+
+    gaussians = GaussianModel(dataset_args.sh_degree)
+    with torch.no_grad():
+        scene = Scene(dataset_args, gaussians)
+        scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
+        gaussians.training_setup(opt_args)
 
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
-
-    with torch.no_grad():
-        scene = Scene(dataset, gaussians)
-        if args.duplicate_gs_cnt > 0:
-            gaussians.duplicate_gaussians(args.duplicate_gs_cnt)
-        gaussians.training_setup(opt)
-
-    if checkpoint:
+    if args.start_checkpoint:
         assert not args.memory_distribution, "memory_distribution does not support checkpoint yet!"
-        (model_params, first_iter) = torch.load(checkpoint, map_location=torch.device("cuda", utils.LOCAL_RANK))
-        gaussians.restore(model_params, opt)
-        utils.print_rank_0("Restored from checkpoint: {}, at iteration {}".format(checkpoint, first_iter))
-        log_file.write("rank {} Restored from checkpoint: {}, at iteration {}\n".format(utils.LOCAL_RANK, checkpoint, first_iter))
+        (model_params, first_iter) = torch.load(args.start_checkpoint, map_location=torch.device("cuda", utils.LOCAL_RANK))
+        gaussians.restore(model_params, opt_args)
+        utils.print_rank_0("Restored from checkpoint: {}, at iteration {}".format(args.start_checkpoint, first_iter))
+        log_file.write("rank {} Restored from checkpoint: {}, at iteration {}\n".format(utils.LOCAL_RANK, args.start_checkpoint, first_iter))
 
-    bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
+    bg_color = [1, 1, 1] if dataset_args.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
-    iter_start = torch.cuda.Event(enable_timing = True)
-    iter_end = torch.cuda.Event(enable_timing = True)
-
-    # Print shape of gaussians parameters. 
-    log_file.write("xyz shape: {}\n".format(gaussians._xyz.shape))
-    log_file.write("f_dc shape: {}\n".format(gaussians._features_dc.shape))
-    log_file.write("f_rest shape: {}\n".format(gaussians._features_rest.shape))
-    log_file.write("opacity shape: {}\n".format(gaussians._opacity.shape))
-    log_file.write("scaling shape: {}\n".format(gaussians._scaling.shape))
-    log_file.write("rotation shape: {}\n".format(gaussians._rotation.shape))
-
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
+    progress_bar = tqdm(range(first_iter, opt_args.iterations), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
     first_iter += 1
 
     # init epoch stats
@@ -118,14 +84,14 @@ def training(dataset, opt, pipe, args, log_file):
 
     train_start_time = time.time()
 
-    for iteration in range(first_iter, opt.iterations + 1):        
+    # Training Loop
+    for iteration in range(first_iter, opt_args.iterations + 1):        
 
         # Step Initialization
         utils.set_cur_iter(iteration)
         timers.clear()
         timers.start("pre_forward")
-        iter_start.record()
-        gaussians.update_learning_rate(iteration, warmup_iter=opt.warmup_iter, scale_lr=opt.scale_lr)
+        gaussians.update_learning_rate(iteration, warmup_iter=opt_args.warmup_iter, scale_lr=opt_args.scale_lr)
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
@@ -140,11 +106,11 @@ def training(dataset, opt, pipe, args, log_file):
             log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = None
-        if fixed_training_image == -1:
+        if args.fixed_training_image == -1:
             camera_id = randint(0, len(viewpoint_stack)-1)
             viewpoint_cam = viewpoint_stack.pop(camera_id)
         else:
-            viewpoint_cam = viewpoint_stack[fixed_training_image]
+            viewpoint_cam = viewpoint_stack[args.fixed_training_image]
         utils.set_img_size(viewpoint_cam.image_height, viewpoint_cam.image_width)
 
 
@@ -175,10 +141,7 @@ def training(dataset, opt, pipe, args, log_file):
         memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
         # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
-
-        bg = torch.rand((3), device="cuda") if opt.random_background else background
+        bg = torch.rand((3), device="cuda") if opt_args.random_background else background
         timers.stop("pre_forward")
 
         # NOTE: this is to make sure: we are measuring time for local work.
@@ -188,7 +151,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Forward
         timers.start("forward")
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
+        render_pkg = render(viewpoint_cam, gaussians, pipe_args, bg,
                             cuda_args=cuda_args,
                             timers=timers,
                             strategy=strategy)
@@ -227,11 +190,10 @@ def training(dataset, opt, pipe, args, log_file):
         if args.loss_distribution:
             # Distributed Loss Computation
             Ll1, ssim_loss = distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
         else:
             # Replicated Loss Computation
             Ll1, ssim_loss = replicated_loss_computation(image, viewpoint_cam)
-            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_loss)
+        loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
         utils.check_memory_usage_logging("after loss")
         memory_after_loss = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
@@ -242,6 +204,7 @@ def training(dataset, opt, pipe, args, log_file):
                 memory_iteration_begin, memory_after_forward, memory_after_loss
             )
 
+        # Update Epoch Statistics
         epoch_progress_cnt = epoch_progress_cnt + 1
         epoch_loss = epoch_loss + loss.item()
         if epoch_progress_cnt == epoch_camera_size:
@@ -307,10 +270,6 @@ def training(dataset, opt, pipe, args, log_file):
         if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
             torch.distributed.barrier()
 
-
-        iter_end.record()
-
-
         log_file.write(log_string)
 
         with torch.no_grad():
@@ -325,18 +284,18 @@ def training(dataset, opt, pipe, args, log_file):
                 if iteration % 10 == 0:
                     progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                     progress_bar.update(10)
-                if iteration == opt.iterations:
+                if iteration == opt_args.iterations:
                     progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), log_file)
-            if iteration in saving_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
+            training_report(iteration, l1_loss, args.test_iterations, scene, render, (pipe_args, background))
+            if iteration in args.save_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            if not disable_auto_densification and iteration < opt.densify_until_iter:
+            if not args.disable_auto_densification and iteration < opt_args.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
                 timers.start("densification")
 
@@ -345,12 +304,12 @@ def training(dataset, opt, pipe, args, log_file):
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
                 timers.stop("densification_update_stats")
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                if iteration > opt_args.densify_from_iter and iteration % opt_args.densification_interval == 0:
                     assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
 
                     timers.start("densify_and_prune")
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    size_threshold = 20 if iteration > opt_args.opacity_reset_interval else None
+                    gaussians.densify_and_prune(opt_args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                     timers.stop("densify_and_prune")
 
                     # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
@@ -371,7 +330,7 @@ def training(dataset, opt, pipe, args, log_file):
 
                     utils.inc_densify_iter()
                 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                if iteration % opt_args.opacity_reset_interval == 0 or (dataset_args.white_background and iteration == opt_args.densify_from_iter):
                     timers.start("reset_opacity")
                     gaussians.reset_opacity()
                     timers.stop("reset_opacity")
@@ -379,7 +338,7 @@ def training(dataset, opt, pipe, args, log_file):
                 timers.stop("densification")
 
             # Optimizer step
-            if iteration < opt.iterations and iteration % args.bsz == 0:
+            if iteration < opt_args.iterations and iteration % args.bsz == 0:
                 timers.start("optimizer_step")
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -387,7 +346,7 @@ def training(dataset, opt, pipe, args, log_file):
                 timers.stop("optimizer_step")
                 utils.check_memory_usage_logging("after optimizer step")
 
-            if utils.LOCAL_RANK == 0 and (iteration in checkpoint_iterations): #TODO: have not handled args.memory_distribution yet.
+            if utils.LOCAL_RANK == 0 and (iteration in args.checkpoint_iterations): #TODO: have not handled args.memory_distribution yet.
                 utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
                 log_file.write("[ITER {}] Saving Checkpoint\n".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
@@ -401,12 +360,12 @@ def training(dataset, opt, pipe, args, log_file):
     # Finish training
     if args.end2end_time:
         torch.cuda.synchronize()
-        log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt.iterations, opt.iterations/(time.time() - train_start_time)))
+        log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt_args.iterations, opt_args.iterations/(time.time() - train_start_time)))
     
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
+    # Save some running statistics to file.
     if not args.performance_stats:
-        # Save some statistics to file for future usage. 
         data_json = {}
         for camera_id, strategy_history in cameraId2StrategyHistory.items():
             data_json[camera_id] = strategy_history.to_json()
@@ -414,8 +373,6 @@ def training(dataset, opt, pipe, args, log_file):
         with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
-
-        # DEBUG
         if args.memory_distribution and args.save_send_to_gpui_cnt:
             # save gaussians.send_to_gpui_cnt to file.
             with open(args.log_folder+"/send_to_gpui_cnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
@@ -425,29 +382,9 @@ def training(dataset, opt, pipe, args, log_file):
                     data2save.append( ",".join([str(x) for x in send_to_gpui_cnt_cpu[i]]) )
                 json.dump(data2save, f, indent=4)
 
+def training_report(iteration, l1_loss, testing_iterations, scene : Scene, renderFunc, renderArgs):
 
-def prepare_output_and_logger(args):    
-    if not args.model_path:
-        if os.getenv('OAR_JOB_ID'):
-            unique_str=os.getenv('OAR_JOB_ID')
-        else:
-            unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
-
-    # Set up output folder
-    if utils.LOCAL_RANK != 0:
-        return None
-    utils.print_rank_0("Output folder: {}".format(args.model_path))
-    os.makedirs(args.model_path, exist_ok = True)
-    with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-        cfg_log_f.write(str(Namespace(**vars(args))))
-
-    # Create Tensorboard writer. Disable for now. 
-    tb_writer = None
-    return tb_writer
-
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, log_file):
-
+    log_file = utils.get_log_file()
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
