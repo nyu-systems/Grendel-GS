@@ -60,6 +60,8 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     # each element should be a list of size of pos_recv_from_i[i] for all i. i.e. [None for _ in range(utils.WORLD_SIZE)]
     torch.distributed.all_gather_object(j_recv_from_i_size, recv_from_i_size)
     send_to_j_size = [j_recv_from_i_size[j][utils.LOCAL_RANK] for j in range(utils.WORLD_SIZE)]
+    # maybe this can be optimized, i only need j to send the number j need from i, not the number j need from all is.
+    # but maybe this is not a big problem since overhead is very small.
     timers.stop("[all_pos_send_to_j]all_gather_send_to_j_size")
 
     timers.start("[all_pos_send_to_j]all_to_all_pos_send_to_j")
@@ -127,6 +129,9 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, 
 
     # Load local tiles to send remotely.
     timers.start("[loss]load_image_tiles_by_pos")
+    # why do not directly use slice, that way do not have to manually implement the backward function.
+    # maybe we need the output to be continous?
+    # that is right, we are about to do communication, we can not send a list of tensors
     all_tiles_send_to_j = diff_gaussian_rasterization.load_image_tiles_by_pos(
         local_image_rect, # local image rect
         all_pos_send_to_j, # in global coordinates. 
@@ -1229,6 +1234,8 @@ def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy
     args = utils.get_args()
 
     if args.loss_distribution_mode == "general":
+        # tradeoff between replicated compute   and communication
+        # remove need for sync between different stages
         return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args)
     elif args.loss_distribution_mode == "fast":
         return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)

@@ -187,6 +187,15 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
+        self.initial_lr_dict = {
+            "xyz": training_args.position_lr_init * self.spatial_lr_scale,
+            "f_dc": training_args.feature_lr,
+            "f_rest": training_args.feature_lr / 20.0,
+            "opacity": training_args.opacity_lr,
+            "scaling": training_args.scaling_lr,
+            "rotation": training_args.rotation_lr
+        }
+
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
@@ -238,13 +247,22 @@ class GaussianModel:
             sync_grads(viewspace_point_tensor)
             return sparse_ids_mask
 
-    def update_learning_rate(self, iteration):
+    def update_learning_rate(self, iteration, warmup_iter=0, scale_lr=1.0):
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
-                return lr
+            else: 
+                param_group['lr'] = self.initial_lr_dict[param_group["name"]]
+                # return lr
+        # add a linear warmup
+        if warmup_iter > 0 and iteration < warmup_iter:
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] *= iteration / warmup_iter
+        # scale the learning rate
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] *= scale_lr
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']

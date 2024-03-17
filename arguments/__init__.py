@@ -90,6 +90,8 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        self.warmup_iter = 0
+        self.scale_lr = 1.0
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):

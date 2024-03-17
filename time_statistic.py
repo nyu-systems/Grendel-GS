@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import os
 from matplotlib.ticker import MultipleLocator
+import re
+from scipy.signal import savgol_filter
 
 # TODO: delete them later
 folder = None
@@ -2334,6 +2336,28 @@ def draw_epoch_loss(file_paths):
     ax.legend(loc='upper right')
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
     plt.savefig(folder+"compare_epoch_loss.png")
+
+def draw_iteration_loss(file_paths, window_length=21, polyorder=3):
+    # if file exists
+    iteration_losses = []
+    for file_path in file_paths:
+        iteration_loss = []
+        lines = open(file_path, "r").readlines()
+        for line in lines:
+            # iteration 503 image: 00240 loss: 0.28812167048454285
+            reg_exp = re.compile(r"iteration \d+ image: \d+ loss: \d+\.\d+")
+            if reg_exp.match(line):
+                iteration_loss.append(float(line.split(" ")[5]))
+        # smooth out the iteration_loss
+        iteration_loss = savgol_filter(iteration_loss, window_length, polyorder)
+
+        iteration_losses.append(iteration_loss)
+    fig, ax = plt.subplots(figsize=(20, 10))
+    for i, iteration_loss in enumerate(iteration_losses):
+        ax.plot(range(len(iteration_loss)), iteration_loss, label=file_paths[i])
+    ax.legend(loc='upper right')
+    folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
+    plt.savefig(folder+"compare_iteration_loss.png")
 
 def draw_evaluation_results(file_paths):
     eval_tests_PSNR = []

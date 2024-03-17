@@ -125,7 +125,7 @@ def training(dataset, opt, pipe, args, log_file):
         timers.clear()
         timers.start("pre_forward")
         iter_start.record()
-        gaussians.update_learning_rate(iteration)
+        gaussians.update_learning_rate(iteration, warmup_iter=opt.warmup_iter, scale_lr=opt.scale_lr)
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
@@ -136,6 +136,7 @@ def training(dataset, opt, pipe, args, log_file):
 
         # Prepara data: Pick a random Camera
         if not viewpoint_stack:
+            # TODO: check if will reset when is empty
             log_file.write("reset viewpoint stack\n")
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = None
