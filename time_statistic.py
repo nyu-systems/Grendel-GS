@@ -2737,12 +2737,24 @@ def compare_total_communication_volume_and_time(save_folder, folders):
     dict_i2jsend_stats = {
         "all_to_all_ave" : {},
         "all_to_all_max_ave" : {},
+        "all_to_all_volume_sum" : {},
     }
     for folder in folders:
         expe_name = folder.split("/")[-2]
 
         file_path = folder + "strategy_history_ws=4_rk=0.json"
         data = json.load(open(file_path, "r"))
+
+        all_i2jsend_size = 0
+        for image_id in data:
+            cur_strategy_history_rk0 = data[image_id]
+            for epoch_id in range(len(cur_strategy_history_rk0)):
+                for x in range(4):
+                    for y in range(4):
+                        if x == y:
+                            continue
+                        all_i2jsend_size += cur_strategy_history_rk0[epoch_id]["strategy"]["i2j_send_size"][x][y]
+
 
         python_time_csv = folder + "merged_python_time.csv"
         python_time_df = pd.read_csv(python_time_csv)
@@ -2756,6 +2768,7 @@ def compare_total_communication_volume_and_time(save_folder, folders):
         forward_all_to_all_communication_max_ave = sum(forward_all_to_all_communication_max) / len(forward_all_to_all_communication_max)
         dict_i2jsend_stats["all_to_all_ave"][expe_name] = forward_all_to_all_communication_ave
         dict_i2jsend_stats["all_to_all_max_ave"][expe_name] = forward_all_to_all_communication_max_ave
+        dict_i2jsend_stats["all_to_all_volume_sum"][expe_name] = all_i2jsend_size
 
     json.dump(dict_i2jsend_stats, open(save_folder + "compare_communication_stats.json", "w"), indent=4)
 
@@ -3511,17 +3524,56 @@ if __name__ == "__main__":
     # analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
 
 
-    for folder in ["no_avoid_pixel_all2all_train",
-                   "avoid_pixel_all2all_train",
-                   "avoid_pixel_all2all_tr_flc",
-                   "avoid_pixel_all2all_train_2",
-                   "avoid_pixel_all2all_train_flcnal"]:
-        analyze_time(
-            f"experiments/{folder}/",
-            [i for i in range(251, 30000, 500)]
-        )
-        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+    # for folder in ["no_avoid_pixel_all2all_train",
+    #                "avoid_pixel_all2all_train",
+    #                "avoid_pixel_all2all_tr_flc",
+    #                "avoid_pixel_all2all_train_2",
+    #                "avoid_pixel_all2all_train_flcnal"]:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(251, 30000, 500)]
+    #     )
+    #     analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
 
-    pass
+    for folder in [
+                    "bicycle_mode1",
+                    "bicycle_mode2",
+                    "bicycle_mode4",
+                    "garden_mode1",
+                    "garden_mode2",
+                    "garden_mode4",
+                    "train_mode1",
+                    "train_mode2",
+                    "train_mode4"
+                    ]:
+        # analyze_time(
+        #     f"experiments/{folder}/",
+        #     [i for i in range(251, 30000, 500)]
+        # )
+        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+        pass
+    for scene in ["train", "garden", "bicycle"]:
+        compare_end2end_stats(
+            save_folder=f"experiments/{scene}_mode1/",
+            file_paths=[
+                f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
+                f"experiments/{scene}_mode1/python_ws=4_rk=1.log",
+                f"experiments/{scene}_mode1/python_ws=4_rk=2.log",
+                f"experiments/{scene}_mode1/python_ws=4_rk=3.log",
+                f"experiments/{scene}_mode2/python_ws=4_rk=0.log",
+                f"experiments/{scene}_mode2/python_ws=4_rk=1.log",
+                f"experiments/{scene}_mode2/python_ws=4_rk=2.log",
+                f"experiments/{scene}_mode2/python_ws=4_rk=3.log",
+                f"experiments/{scene}_mode4/python_ws=4_rk=0.log",
+                f"experiments/{scene}_mode4/python_ws=4_rk=1.log",
+                f"experiments/{scene}_mode4/python_ws=4_rk=2.log",
+                f"experiments/{scene}_mode4/python_ws=4_rk=3.log",
+            ])
+
+        compare_total_communication_volume_and_time(
+            save_folder=f"experiments/{scene}_mode1/",
+            folders=[f"experiments/{scene}_mode{mode}/" for mode in [1,2,4]]
+        )
+
 
 

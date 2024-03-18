@@ -680,6 +680,40 @@ class GaussianModel:
         # send_to_gpui_cnt is (n, world_size), sample according to send_to_gpui_cnt[i,j]/send_to_gpui_cnt[i,:].sum(-1)
         return torch.multinomial(self.send_to_gpui_cnt.float()+1, 1).squeeze().int() # +1 to avoid 0 probability
 
+    def get_destination_4_method1(self):
+        # allgather 3Dmean's z, then sort and calculate the destination on each rank locally.
+
+        local_z = self.get_xyz[:, 2].contiguous()
+
+        # There is problem for torch.gather api to gather different sizes. so we use allgather here. 
+        # https://discuss.pytorch.org/t/dist-gather-tensors-of-different-sizes/51251
+
+        # allgather n_3dgs_on_gpus to rank 0
+        n_3dgs_on_gpus = [None for _ in range(utils.WORLD_SIZE)]
+        dist.all_gather_object(n_3dgs_on_gpus, local_z.shape[0])
+
+
+        # gather 3Dmean's z (height) to rank 0
+        all_local_z = [torch.zeros((n_3dgs_on_gpus[i],), dtype=torch.float, device="cuda") for i in range(utils.WORLD_SIZE)]
+        dist.all_gather(all_local_z, local_z)
+
+        n_3dgs_globally = sum(n_3dgs_on_gpus)
+        n_3dgs_evenly = n_3dgs_globally // utils.WORLD_SIZE + 1
+
+        # sort 
+        catted_all_local_z = torch.cat(all_local_z, dim=0).contiguous()
+        sorted_indices = torch.argsort(catted_all_local_z, descending=True, stable=True)
+
+        destination = torch.zeros((n_3dgs_globally,), dtype=torch.int, device="cuda")
+        for i in range(utils.WORLD_SIZE):
+            destination[sorted_indices[i*n_3dgs_evenly:min((i+1)*n_3dgs_evenly, n_3dgs_globally)]] = i
+        
+        # scatter back to all ranks
+        return destination[sum(n_3dgs_on_gpus[:utils.LOCAL_RANK]):sum(n_3dgs_on_gpus[:utils.LOCAL_RANK+1])]
+
+    def get_destination_4(self):
+        return self.get_destination_4_method1()
+
     def need_redistribute_gaussians(self):
         args = utils.get_args()
         if utils.get_denfify_iter() == args.redistribute_gaussians_frequency:
@@ -710,8 +744,13 @@ class GaussianModel:
             # redistribute all gaussians to the GPU which uses it most frequently.
             destination = self.get_destination_2()
         elif args.redistribute_gaussians_mode == "3":
-            # redistribute all gaussians to the GPU which uses it most frequently.
+            # It achieves a balance between mode 1 and mode 2. 
             destination = self.get_destination_3()
+        elif args.redistribute_gaussians_mode == "4":
+            # redistribute all gaussians and aim to 
+            # 1. distribute 3DGS evenly by quantity
+            # 2. provide locality by letting higher 3DGS on GPU with small indices and lower 3DGS on GPU with large indices.
+            destination = self.get_destination_4()
         else:
             raise ValueError("Invalid redistribute_gaussians_mode: " + args.redistribute_gaussians_mode)
 
