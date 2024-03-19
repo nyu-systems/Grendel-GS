@@ -16,6 +16,7 @@ import numpy as np
 import random
 import os
 import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
 
@@ -24,6 +25,9 @@ LOG_FILE = None
 CUR_ITER = None
 LOCAL_RANK = 0
 WORLD_SIZE = 1
+DP_GROUP = None
+MP_GROUP = None
+DEFAULT_GROUP = None
 TIMERS = None
 DENSIFY_ITER = 0
 
@@ -104,14 +108,34 @@ def check_enable_python_timer():
     iteration = get_cur_iter()
     return args.zhx_python_time and ( iteration % args.log_interval == 1 or iteration in args.force_python_timer_iterations)
 
-def init_distributed():
+def init_distributed(args):
     global LOCAL_RANK, WORLD_SIZE
     LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
     WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
     if WORLD_SIZE > 1:
-        dist.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
+        torch.distributed.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
         assert torch.cuda.is_available(), "Distributed mode requires CUDA"
         assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
+
+        assert WORLD_SIZE % args.dp_size == 0, "World size should be divisible by dp_size"
+        args.mp_size = WORLD_SIZE // args.dp_size
+
+        global DP_GROUP, MP_GROUP, DEFAULT_GROUP
+
+        mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
+        # Users can access the underlying process group thru `get_group` API.
+        DP_GROUP = mesh_2d.get_group(mesh_dim="dp")
+        MP_GROUP = mesh_2d.get_group(mesh_dim="mp")
+        DEFAULT_GROUP = dist.group.WORLD
+
+        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))
+        # exit()
+
+def get_local_chunk_l_r(size, rank, world_size):
+    chunk_size = (size + world_size - 1) // world_size
+    l = rank * chunk_size
+    r = min(l + chunk_size, size)
+    return l, r
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))

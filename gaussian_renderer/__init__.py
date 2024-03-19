@@ -17,7 +17,7 @@ from utils.sh_utils import eval_sh
 import utils.general_utils as utils
 import torch.distributed.nn.functional as dist_func
 
-def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
+def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):# TODO: support DP_all2all here. Now, this is just for MP_all2all.
     local2j_ids, local2j_ids_bool = rasterizer.get_local2j_ids(means2D, radii, cuda_args)
     # (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
     # (# of 3dgs, world_size) ubt: local2j_ids_bool[i,j] is True if 3dg i should be sent to gpu j.
@@ -25,7 +25,7 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
     # NOTE: i2j_send_size is an  world_size*world_size integer tensor, containing the number of 3dgs that should be sent from gpu i to gpu j.
     i2j_send_size = torch.zeros((utils.WORLD_SIZE, utils.WORLD_SIZE), dtype=torch.int, device="cuda")
     local2j_send_size = torch.tensor([len(local2j_ids[i]) for i in range(utils.WORLD_SIZE)], dtype=torch.int, device="cuda")
-    torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size)
+    torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size, group=utils.MP_GROUP)
     i2j_send_size = i2j_send_size.cpu().numpy().tolist()
 
     def one_all_to_all(tensor, use_function_version=False):
@@ -38,12 +38,14 @@ def all_to_all_communication(rasterizer, means2D, rgb, conic_opacity, radii, dep
         if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
             dist_func.all_to_all(
                 output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki
+                input_tensor_list=tensor_to_rki,
+                group=utils.MP_GROUP
             )# The function version could naturally enable communication during backward. 
         else:
             torch.distributed.all_to_all(
                 output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki
+                input_tensor_list=tensor_to_rki,
+                group=utils.MP_GROUP
             )
         return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
 

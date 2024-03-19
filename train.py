@@ -39,6 +39,10 @@ import time
 import torch.distributed as dist
 import diff_gaussian_rasterization
 
+def globally_sync_for_timer():
+    if utils.check_enable_python_timer() and utils.MP_GROUP.size() > 1:
+        torch.distributed.barrier(group=utils.MP_GROUP)
+
 def training(dataset_args, opt_args, pipe_args, args, log_file):
     # dataset_args, opt_args, pipe_args, args contain arguments containing all kinds of settings and configurations. 
     # In which, the first three are sub-domains, and the fourth one contains all of them.
@@ -145,8 +149,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         # NOTE: this is to make sure: we are measuring time for local work.
         # where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
         # Forward
         timers.start("forward")
@@ -181,8 +184,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         memory_after_forward = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
 
         # Loss Computation
@@ -215,8 +217,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             epoch_loss = 0
 
 
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
 
         # Backward
@@ -236,8 +237,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                     local_n_3dgs, local_visible_3dgs, local_sum_3dgs_radii, local_sum_3dgs_grad_norm
                 )
 
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
 
         # Adjust workload division strategy. 
@@ -252,22 +252,25 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         timers.stop("strategy.update_stats")
 
 
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
 
-        # Sync Gradients. NOTE: do not sync grad in args.memory_distribution mode
+        # Sync Gradients across model parallel group if we do not enable memory_distribution.
         if not args.memory_distribution:
-            timers.start("sync_gradients")
-            sparse_ids_mask = gaussians.sync_gradients(viewspace_point_tensor, utils.WORLD_SIZE)
+            timers.start("sync_gradients_across_mp")
+            sparse_ids_mask = gaussians.sync_gradients_across_mp(viewspace_point_tensor)
             non_zero_indices_cnt = sparse_ids_mask.sum().item()
             total_indices_cnt = sparse_ids_mask.shape[0]
             log_file.write("iteration {} non_zero_indices_cnt: {} total_indices_cnt: {} ratio: {}\n".format(iteration, non_zero_indices_cnt, total_indices_cnt, non_zero_indices_cnt/total_indices_cnt))
-            timers.stop("sync_gradients")
+            timers.stop("sync_gradients_across_mp")
 
+        # Sync Gradients across data parallel group if we do not enable memory_distribution.
+        if args.dp_size > 1 and args.dp_mode == "1":
+            timers.start("sync_gradients_across_dp")
+            sparse_ids_mask = gaussians.sync_gradients_across_dp()# TODO: implement this.
+            timers.stop("sync_gradients_across_dp")
 
-        if utils.check_enable_python_timer() and utils.WORLD_SIZE > 1:
-            torch.distributed.barrier()
+        globally_sync_for_timer()
 
         log_file.write(log_string)
 
@@ -386,6 +389,9 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, rende
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if iteration in testing_iterations:
+        if args.dp_size > 1:
+            assert False, "DP does not support testing yet."
+
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
@@ -405,7 +411,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, rende
         }
         renderKwargs = {"scaling_modifier": 1.0, "override_color": None, "cuda_args": cuda_args}
 
-        for config in validation_configs:
+        for config in validation_configs:#TODO: implement the data parallel.
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
@@ -415,8 +421,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, rende
                     hack_history = create_division_strategy_history(viewpoint, "evaluation")
                     renderKwargs["strategy"] = hack_history.start_strategy()# HACK: Use naive distribution strategy during testing.
                     image = renderFunc(viewpoint, scene.gaussians, *renderArgs, **renderKwargs)["render"]
-                    if utils.WORLD_SIZE > 1:
-                        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
+                    if utils.MP_GROUP.size() > 1:
+                        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     image = torch.clamp(image, 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
 
@@ -453,8 +459,7 @@ if __name__ == "__main__":
     args.save_iterations.append(args.iterations)
 
     # Set up distributed training
-    init_distributed()
-    print("Initializing -> Local rank: " + str(utils.LOCAL_RANK) + " World size: " + str(utils.WORLD_SIZE))
+    init_distributed(args)
 
     ## Prepare arguments.
     # Check arguments
@@ -468,7 +473,7 @@ if __name__ == "__main__":
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
     if utils.WORLD_SIZE > 1:
-        torch.distributed.barrier()# make sure log_folder is created before other ranks start writing log.
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)# make sure log_folder is created before other ranks start writing log.
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
@@ -476,6 +481,8 @@ if __name__ == "__main__":
 
     # Initialize log file and print all args
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
+    # log_file = type('dummy', (object,), {'write': lambda x: None})()
+    # log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_dprk="+str(utils.DP_GROUP.rank())+"_mprk="+str(utils.MP_GROUP.rank())+".log", 'w')
     print_all_args(args, log_file)
 
     # Make sure block size match between python and cuda code. TODO: modify block size from python code without slow down training.

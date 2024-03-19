@@ -53,7 +53,7 @@ def get_evenly_global_strategy_str(camera):
 
 def check_division_indices_globally_same(division_indices):
     recevie = [None for _ in range(utils.WORLD_SIZE)]
-    torch.distributed.all_gather_object(recevie, division_indices)
+    torch.distributed.all_gather_object(recevie, division_indices, group=utils.MP_GROUP)
     for i in range(utils.WORLD_SIZE):
         for j in range(utils.WORLD_SIZE):
             assert recevie[i][j] == division_indices[j], f"check_division_indices_globally_save failed: {i} {j}"
@@ -176,7 +176,7 @@ class DivisionStrategy_1(DivisionStrategy):
     def update_stats(self, stats_collector, n_render, n_consider, n_contrib, i2j_send_size):
         local_running_time = stats_collector["backward_render_time"] # For now, use the heaviest part as the running time.
         gloabl_running_times = [None for _ in range(self.world_size)]
-        torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        torch.distributed.all_gather_object(gloabl_running_times, local_running_time, group=utils.MP_GROUP)
         self.local_running_time = local_running_time
         self.global_running_times = gloabl_running_times
         self.sum_n_render = n_render.sum().item()
@@ -211,7 +211,7 @@ class DivisionStrategy_2(DivisionStrategy):
         timers = utils.get_timers()
         gloabl_running_times = [None for _ in range(self.world_size)]
         timers.start("[strategy.update_stats]all_gather_object")
-        torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        torch.distributed.all_gather_object(gloabl_running_times, local_running_time, group=utils.MP_GROUP)
         timers.stop("[strategy.update_stats]all_gather_object")
         self.local_running_time = local_running_time
         self.global_running_times = gloabl_running_times
@@ -273,7 +273,7 @@ class DivisionStrategy_4(DivisionStrategy):
     def update_stats(self, stats_collector, n_render, n_consider, n_contrib, i2j_send_size):
         local_running_time = stats_collector["backward_render_time"]
         gloabl_running_times = [None for _ in range(self.world_size)]
-        torch.distributed.all_gather_object(gloabl_running_times, local_running_time)
+        torch.distributed.all_gather_object(gloabl_running_times, local_running_time, group=utils.MP_GROUP)
         self.local_running_time = local_running_time
         self.global_running_times = gloabl_running_times
         self.sum_n_render = n_render.sum().item()
@@ -293,7 +293,7 @@ class DivisionStrategy_4(DivisionStrategy):
 
         with torch.no_grad():
             self.heuristic = self.n_contrib
-            torch.distributed.all_reduce(self.heuristic, op=dist.ReduceOp.SUM)
+            torch.distributed.all_reduce(self.heuristic, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
 
 
     def to_json(self):

@@ -117,7 +117,12 @@ class DistributionParams(ParamGroup):
 
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
-
+        self.dp_size = 1 # data parallel degree.
+        self.mp_size = -1 # model parallel degree.
+        # data parallel mode.
+        # "1" is shard 3dgs storage across MP group and gradient sync. 
+        # "2" is shard 3dgs storage across the global group and use all2all to replace the gradient sync. 
+        self.dp_mode = "1" 
 
 
         # Deprecated Arguments

@@ -3535,45 +3535,58 @@ if __name__ == "__main__":
     #     )
     #     analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
 
-    for folder in [
-                    "bicycle_mode1",
-                    "bicycle_mode2",
-                    "bicycle_mode4",
-                    "garden_mode1",
-                    "garden_mode2",
-                    "garden_mode4",
-                    "train_mode1",
-                    "train_mode2",
-                    "train_mode4"
-                    ]:
-        # analyze_time(
-        #     f"experiments/{folder}/",
-        #     [i for i in range(251, 30000, 500)]
-        # )
-        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
-        pass
-    for scene in ["train", "garden", "bicycle"]:
-        compare_end2end_stats(
-            save_folder=f"experiments/{scene}_mode1/",
-            file_paths=[
-                f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
-                f"experiments/{scene}_mode1/python_ws=4_rk=1.log",
-                f"experiments/{scene}_mode1/python_ws=4_rk=2.log",
-                f"experiments/{scene}_mode1/python_ws=4_rk=3.log",
-                f"experiments/{scene}_mode2/python_ws=4_rk=0.log",
-                f"experiments/{scene}_mode2/python_ws=4_rk=1.log",
-                f"experiments/{scene}_mode2/python_ws=4_rk=2.log",
-                f"experiments/{scene}_mode2/python_ws=4_rk=3.log",
-                f"experiments/{scene}_mode4/python_ws=4_rk=0.log",
-                f"experiments/{scene}_mode4/python_ws=4_rk=1.log",
-                f"experiments/{scene}_mode4/python_ws=4_rk=2.log",
-                f"experiments/{scene}_mode4/python_ws=4_rk=3.log",
-            ])
+    # for folder in [
+    #                 "bicycle_mode1",
+    #                 "bicycle_mode2",
+    #                 "bicycle_mode4",
+    #                 "garden_mode1",
+    #                 "garden_mode2",
+    #                 "garden_mode4",
+    #                 "train_mode1",
+    #                 "train_mode2",
+    #                 "train_mode4",
+    #                 ]:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(251, 30000, 500)]
+    #     )
+    #     # analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+    #     pass
+    # for scene in ["train", "garden", "bicycle"]:
+    #     compare_end2end_stats(
+    #         save_folder=f"experiments/{scene}_mode1/",
+    #         file_paths=[
+    #             f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
+    #             f"experiments/{scene}_mode1/python_ws=4_rk=1.log",
+    #             f"experiments/{scene}_mode1/python_ws=4_rk=2.log",
+    #             f"experiments/{scene}_mode1/python_ws=4_rk=3.log",
+    #             f"experiments/{scene}_mode2/python_ws=4_rk=0.log",
+    #             f"experiments/{scene}_mode2/python_ws=4_rk=1.log",
+    #             f"experiments/{scene}_mode2/python_ws=4_rk=2.log",
+    #             f"experiments/{scene}_mode2/python_ws=4_rk=3.log",
+    #             f"experiments/{scene}_mode4/python_ws=4_rk=0.log",
+    #             f"experiments/{scene}_mode4/python_ws=4_rk=1.log",
+    #             f"experiments/{scene}_mode4/python_ws=4_rk=2.log",
+    #             f"experiments/{scene}_mode4/python_ws=4_rk=3.log",
+    #         ])
 
-        compare_total_communication_volume_and_time(
-            save_folder=f"experiments/{scene}_mode1/",
-            folders=[f"experiments/{scene}_mode{mode}/" for mode in [1,2,4]]
+    #     compare_total_communication_volume_and_time(
+    #         save_folder=f"experiments/{scene}_mode1/",
+    #         folders=[f"experiments/{scene}_mode{mode}/" for mode in [1,2,4]]
+    #     )
+
+    for folder in ["bench_train_1gpu",
+                    "bench_bicycle_1gpu",
+                    "bench_garden_1gpu"]:
+        analyze_time(
+            f"experiments/{folder}/",
+            [i for i in range(251, 30000, 500)]
         )
-
-
+        scene = folder.split("_")[1]
+        compare_end2end_stats(
+            save_folder=f"experiments/bench_{scene}_1gpu/",
+            file_paths=[
+                f"experiments/bench_{scene}_1gpu/python_ws=1_rk=0.log",
+                f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
+            ])
 

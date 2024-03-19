@@ -39,7 +39,7 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     # because bool tensor use 1 byte for 1 element: https://discuss.pytorch.org/t/why-does-each-torch-bool-value-take-up-an-entire-byte/183822
     # TODO: This could be optimized by using bitset. Divide communication volume by 8. 
     all_locally_compute = torch.empty((utils.WORLD_SIZE,)+ compute_locally.shape, dtype=torch.bool, device="cuda")
-    torch.distributed.all_gather_into_tensor(all_locally_compute, compute_locally)
+    torch.distributed.all_gather_into_tensor(all_locally_compute, compute_locally, group=utils.MP_GROUP)
     # Suppose we are sending from i to j. 
     pos_mask_to_recv_from_i = [None for _ in range(utils.WORLD_SIZE)]
     pos_recv_from_i = [None for _ in range(utils.WORLD_SIZE)]
@@ -58,7 +58,7 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     all_pos_recv_from_i = torch.cat(pos_recv_from_i, dim=0)
     j_recv_from_i_size = [None for _ in range(utils.WORLD_SIZE)] # jth row and ith column(j_recv_from_i_size[j][i]) is the size of sending from i to j.
     # each element should be a list of size of pos_recv_from_i[i] for all i. i.e. [None for _ in range(utils.WORLD_SIZE)]
-    torch.distributed.all_gather_object(j_recv_from_i_size, recv_from_i_size)
+    torch.distributed.all_gather_object(j_recv_from_i_size, recv_from_i_size, group=utils.MP_GROUP)
     send_to_j_size = [j_recv_from_i_size[j][utils.LOCAL_RANK] for j in range(utils.WORLD_SIZE)]
     timers.stop("[all_pos_send_to_j]all_gather_send_to_j_size")
 
@@ -67,7 +67,7 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     pos_send_to_j = [None for _ in range(utils.WORLD_SIZE)]
     for j in range(utils.WORLD_SIZE):
         pos_send_to_j[j] = torch.empty((send_to_j_size[j], 2), dtype=torch.long, device="cuda")
-    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i)
+    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP)
     all_pos_send_to_j = torch.cat(pos_send_to_j, dim=0).contiguous()
     timers.stop("[all_pos_send_to_j]all_to_all_pos_send_to_j")
 
@@ -89,7 +89,7 @@ def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
         # XXX: Double check the empty behavior. Because the boundary condition is not clear.
 
     # all_to_all the pixels
-    torch.distributed.nn.functional.all_to_all(tiles_recv_from_i, tiles_send_to_j) # The gradient successfully goes back. 
+    torch.distributed.nn.functional.all_to_all(tiles_recv_from_i, tiles_send_to_j, group=utils.MP_GROUP) # The gradient successfully goes back. 
     
     all_tiles_recv_from_i = torch.cat(tiles_recv_from_i, dim=0).contiguous()
     return all_tiles_recv_from_i
@@ -198,7 +198,7 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, 
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
-    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
 
@@ -417,7 +417,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
             recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
             send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
         
-        torch.distributed.nn.functional.all_to_all(recv_list, send_list)
+        torch.distributed.nn.functional.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
         if utils.LOCAL_RANK != 0:
             recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
@@ -521,7 +521,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
-    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
     Ll1 = two_losses[0]
@@ -705,7 +705,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
             recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
             send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
         
-        torch.distributed.all_to_all(recv_list, send_list)
+        torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
         if utils.LOCAL_RANK != 0:
             recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
@@ -804,7 +804,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
-    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
     Ll1 = two_losses[0]
@@ -907,7 +907,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
             recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
             send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
         
-        torch.distributed.all_to_all(recv_list, send_list)
+        torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
         if utils.LOCAL_RANK != 0:
             recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
@@ -1021,8 +1021,8 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
 
     # Image allreduce
     timers.start("image_allreduce")
-    if utils.WORLD_SIZE > 1:
-        torch.distributed.nn.functional.all_reduce(image, op=dist.ReduceOp.SUM)
+    if utils.MP_GROUP.size() > 1:
+        torch.distributed.nn.functional.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
         # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
 
     timers.stop("image_allreduce")
@@ -1072,7 +1072,7 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
-    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
     Ll1 = two_losses[0]
@@ -1088,8 +1088,8 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
 
     # Image allreduce
     timers.start("image_allreduce")
-    if utils.WORLD_SIZE > 1:
-        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
+    if utils.MP_GROUP.size() > 1:
+        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
         # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.        
     timers.stop("image_allreduce")
 
@@ -1136,7 +1136,7 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
-    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+    torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
     # NOTE: We do not have to use allreduce here. It does not affect gradients' correctness. If we want to measure the speed, disable it.
 
     Ll1 = two_losses[0]
@@ -1209,7 +1209,7 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
                                                         local_image_rect_pixels_compute_locally)
             pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
             two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
-            torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM)
+            torch.distributed.all_reduce(two_losses, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
             loss = (1.0 - args.lambda_dssim) * two_losses[0] + args.lambda_dssim * (1.0 - two_losses[1])
             log_file = utils.get_log_file()
             log_file.write(f"loss without redundant pixels compute: {loss.item()}\n")
@@ -1252,8 +1252,8 @@ def replicated_loss_computation(image, viewpoint_cam):
 
     # Image allreduce
     timers.start("image_allreduce")
-    if utils.WORLD_SIZE > 1:
-        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM)
+    if utils.MP_GROUP.size() > 1:
+        torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
         # make sure non-local pixels are 0 instead of background, otherwise all_reduce sum will give 2*background.
     timers.stop("image_allreduce")
 
