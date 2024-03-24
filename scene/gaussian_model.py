@@ -20,7 +20,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-import utils.general_utils as utils, SingleGPUGroup
+import utils.general_utils as utils
 import torch.distributed as dist
 
 class GaussianModel:
@@ -183,8 +183,7 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         shard_world_size = self.group_for_redistribution().size()
-        if shard_world_size > 1:
-            self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], shard_world_size), dtype=torch.int, device="cuda")
+        self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], shard_world_size), dtype=torch.int, device="cuda")
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -553,7 +552,7 @@ class GaussianModel:
     def group_for_redistribution(self):
         args = utils.get_args()
         if args.memory_distribution_mode == "0":
-            return SingleGPUGroup()
+            return utils.SingleGPUGroup()
         elif args.memory_distribution_mode == "1":
             return utils.MP_GROUP
         elif args.memory_distribution_mode == "2":
@@ -679,6 +678,8 @@ class GaussianModel:
 
     def need_redistribute_gaussians(self, group):
         args = utils.get_args()
+        if group.size() == 1:
+            return False
         if utils.get_denfify_iter() == args.redistribute_gaussians_frequency:
             # do redistribution after the first densification.
             return True
@@ -795,8 +796,18 @@ def sync_gradients_densely(gaussians, group):
         sync_grads(gaussians._rotation)
 
 def sync_gradients_fused_densely(gaussians, group):
-    raise NotImplementedError("Fused dense sync gradients is not implemented yet.")
-    pass
+    with torch.no_grad():
+        # 1. cat all parameters' grad to a single tensor
+        # 2. allreduce
+        # 3. split the allreduced tensor to each parameter's grad
+        all_params_grads = [param.grad.data for param in [gaussians._xyz, gaussians._features_dc, gaussians._features_rest, gaussians._opacity, gaussians._scaling, gaussians._rotation]]
+        all_params_grads_dim1 = [param_grad.shape[1] for param_grad in all_params_grads]
+        catted_params_grads = torch.cat(all_params_grads, dim=1).contiguous()
+        torch.distributed.all_reduce(catted_params_grads, op=dist.ReduceOp.SUM, group=group)
+        split_params_grads = torch.split(catted_params_grads, all_params_grads_dim1, dim=1)
+        for param_grad, split_param_grad in zip(all_params_grads, split_params_grads):
+            param_grad.copy_(split_param_grad)
+
 
 def sync_gradients_fused_sparsely(gaussians, group):
     raise NotImplementedError("Fused sparse sync gradients is not implemented yet.")

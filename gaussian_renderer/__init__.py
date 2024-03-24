@@ -36,14 +36,14 @@ def get_cuda_args(strategy, mode="train"):# "test"
 
     cuda_args = {
             "mode": mode,
-            "world_size": str(utils.WORLD_SIZE),
-            "local_rank": str(utils.LOCAL_RANK),
+            "world_size": str(utils.MP_GROUP.size()),
+            "local_rank": str(utils.MP_GROUP.rank()),
             "log_folder": args.log_folder,
             "log_interval": str(args.log_interval),
             "iteration": str(iteration),
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
-            "dist_global_strategy": strategy.get_gloabl_strategy_str(),
+            "dist_global_strategy": strategy.get_global_strategy_str(),
             "avoid_pixel_all2all": avoid_pixel_all2all,
             "stats_collector": {},
         }
@@ -487,8 +487,8 @@ def memory_distr_mode2_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc 
     screenspace_pkg = {
                 "batched_locally_preprocessed_mean2D": batched_means2D,
                 "batched_locally_preprocessed_radii": batched_radii,
-                "rasterizer": batched_rasterizers[utils.DEFAULT_GROUP.rank()],
-                "cuda_args": batched_cuda_args[utils.DEFAULT_GROUP.rank()],
+                "rasterizer": batched_rasterizers[utils.DP_GROUP.rank()],
+                "cuda_args": batched_cuda_args[utils.DP_GROUP.rank()],
                 "means2D_for_render": means2D_redistributed,
                 "rgb_for_render": rgb_redistributed,
                 "conic_opacity_for_render": conic_opacity_redistributed,

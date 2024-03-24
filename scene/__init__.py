@@ -127,8 +127,6 @@ class SceneDataset:
 
         self.cur_epoch_cameras = []
         self.cur_iteration = 0
-        self.cur_epoch = 0
-        self.cur_iteration_in_epoch = 0
 
         self.iteration_loss = []
         self.epoch_loss = []
@@ -136,12 +134,17 @@ class SceneDataset:
         self.log_file = utils.get_log_file()
         self.args = utils.get_args()
 
+    @property
+    def cur_epoch(self):
+        return len(self.epoch_loss)
+    
+    @property
+    def cur_iteration_in_epoch(self):
+        return len(self.iteration_loss)
+
     def get_one_camera(self):
         if len(self.cur_epoch_cameras) == 0:
             self.cur_epoch_cameras = self.cameras.copy()
-            self.cur_epoch += 1
-            self.cur_iteration_in_epoch = 0
-        self.cur_iteration_in_epoch += 1
         self.cur_iteration += 1
 
         # TODO: fixed_training_image not implemented. 
@@ -162,5 +165,5 @@ class SceneDataset:
                 self.epoch_loss.append(
                     sum(self.iteration_loss[-self.camera_size:]) / self.camera_size
                 )
-                self.log_file.write("epoch {} loss: {}\n".format(self.cur_epoch-1, self.epoch_loss[-1]))
+                self.log_file.write("epoch {} loss: {}\n".format(len(self.epoch_loss), self.epoch_loss[-1]))
                 self.iteration_loss = []

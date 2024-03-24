@@ -67,7 +67,7 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     pos_send_to_j = [None for _ in range(utils.MP_GROUP.size())]
     for j in range(utils.MP_GROUP.size()):
         pos_send_to_j[j] = torch.empty((send_to_j_size[j], 2), dtype=torch.long, device="cuda")
-    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP.size())
+    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP)
     all_pos_send_to_j = torch.cat(pos_send_to_j, dim=0).contiguous()
     timers.stop("[all_pos_send_to_j]all_to_all_pos_send_to_j")
 

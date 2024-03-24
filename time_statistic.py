@@ -2818,7 +2818,7 @@ def average_gpu_python_time_csv(gpu_file_path, python_file_path, save_path):
     json.dump(data, open(save_path, "w"), indent=4)
         
 
-def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
+def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)], no_gpu_time=False, no_python_time=False):
     # suffix_list = [
     #     "ws=1_rk=0",
     #     "ws=4_rk=0",
@@ -2839,20 +2839,22 @@ def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
         python_time_json = extract_json_from_python_time_log(file_path)
         time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
 
-    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
-    for iteration in process_iterations:
-        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
-    file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
-    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
-    delete_all_file_paths(file_paths)
+    if not no_gpu_time:
+        file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+        for iteration in process_iterations:
+            extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+        file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
+        merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+        delete_all_file_paths(file_paths)
     # average_csv(folder + f"merged_gpu_time.csv", folder + f"averaged_gpu_time.json")
 
-    file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
-    for iteration in process_iterations:
-        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
-    file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
-    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
-    delete_all_file_paths(file_paths)
+    if not no_python_time:
+        file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
+        for iteration in process_iterations:
+            extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+        file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
+        merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+        delete_all_file_paths(file_paths)
     # average_csv(folder + f"merged_python_time.csv", folder + f"averaged_python_time.json")
     average_gpu_python_time_csv(folder + f"merged_gpu_time.csv", folder + f"merged_python_time.csv", folder + f"averaged_time.json")
 
@@ -3575,18 +3577,62 @@ if __name__ == "__main__":
     #         folders=[f"experiments/{scene}_mode{mode}/" for mode in [1,2,4]]
     #     )
 
-    for folder in ["bench_train_1gpu",
-                    "bench_bicycle_1gpu",
-                    "bench_garden_1gpu"]:
+    # for folder in ["bench_train_1gpu",
+    #                 "bench_bicycle_1gpu",
+    #                 "bench_garden_1gpu"]:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(251, 30000, 500)]
+    #     )
+    #     scene = folder.split("_")[1]
+    #     compare_end2end_stats(
+    #         save_folder=f"experiments/bench_{scene}_1gpu/",
+    #         file_paths=[
+    #             f"experiments/bench_{scene}_1gpu/python_ws=1_rk=0.log",
+    #             f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
+    #         ])
+
+    dp_system_debug_expes = ["debug_dp_1gpu",
+        "debug_dpsize1_memdis0_1",
+        "debug_dpsize1_memdis1_1",
+        "debug_dpsize2_memdis0_1",
+        "debug_dpsize2_memdis0_adj5_1",
+        "debug_dpsize2_memdis0_ws2_1",
+        "debug_dpsize2_memdis1_1",
+        "debug_dpsize2_memdis1_adj5_1",
+        "debug_dpsize2_memdis2_1",
+        "debug_dpsize2_memdis2_adj5_1",
+        "debug_dpsize4_memdis0_1",
+        "debug_dpsize4_memdis0_adj5_1",
+        "debug_dpsize4_memdis1_1",
+        "debug_dpsize4_memdis1_adj5_1",
+        "debug_dpsize4_memdis2_1",
+        "debug_dpsize4_memdis2_adj5_1"]
+    for folder in dp_system_debug_expes:
         analyze_time(
             f"experiments/{folder}/",
-            [i for i in range(251, 30000, 500)]
+            [i for i in range(51, 7000, 100)],
+            no_gpu_time=True
         )
-        scene = folder.split("_")[1]
-        compare_end2end_stats(
-            save_folder=f"experiments/bench_{scene}_1gpu/",
-            file_paths=[
-                f"experiments/bench_{scene}_1gpu/python_ws=1_rk=0.log",
-                f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
-            ])
+    compare_end2end_stats(
+        save_folder=f"experiments/debug_dp_1gpu/",
+        file_paths=[
+            f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log",
+        ] + [f"experiments/{folder}/python_ws=4_rk=0.log" for folder in dp_system_debug_expes[1:]]
+    )
 
+    sync_grad_mode_expes = ["debug_dpsize2_memdis2_adj5_1",
+        "debug_dpsize2_memdis2_adj5_spg_1",
+        "debug_dpsize2_memdis2_adj5_fude_1"]
+    for folder in sync_grad_mode_expes:
+        analyze_time(
+            f"experiments/{folder}/",
+            [i for i in range(51, 7000, 100)],
+            no_gpu_time=True
+        )
+    compare_end2end_stats(
+        save_folder=f"experiments/debug_dpsize2_memdis2_adj5_1/",
+        file_paths=[f"experiments/{folder}/python_ws=4_rk=0.log" for folder in sync_grad_mode_expes] +
+                   [f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log"]
+    )
+        

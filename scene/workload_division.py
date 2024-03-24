@@ -137,13 +137,13 @@ class DivisionStrategy:
     def update_stats(self, stats_collector, n_render, n_consider, n_contrib, i2j_send_size):
         pass
 
-    def get_gloabl_strategy_str(self):
+    def get_global_strategy_str(self):
         return division_pos_to_global_strategy_str(self.division_pos)
 
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         return data
 
@@ -199,7 +199,7 @@ class DivisionStrategy_1(DivisionStrategy):
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         data["global_running_times"] = self.global_running_times
         data["local_running_time"] = self.local_running_time
@@ -224,7 +224,7 @@ class DivisionStrategy_1_simplified(DivisionStrategy):
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         data["global_running_times"] = self.global_running_times
         data["local_running_time"] = self.local_running_time
@@ -284,7 +284,7 @@ class DivisionStrategy_2(DivisionStrategy):
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         data["global_running_times"] = self.global_running_times
         data["local_running_time"] = self.local_running_time
@@ -314,7 +314,7 @@ class DivisionStrategy_2_simplified(DivisionStrategy_2):
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         data["global_running_times"] = self.global_running_times
         data["local_running_time"] = self.local_running_time
@@ -360,7 +360,7 @@ class DivisionStrategy_4(DivisionStrategy):
     def to_json(self):
         # convert to json format
         data = {}
-        data["gloabl_strategy_str"] = self.get_gloabl_strategy_str()
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
         data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
         data["global_running_times"] = self.global_running_times
         data["local_running_time"] = self.local_running_time

@@ -104,7 +104,7 @@ def check_enable_python_timer():
 
 def check_update_at_this_iter(iteration, bsz, update_interval, update_residual):
     residual_l = iteration % update_interval
-    residual_r = iteration + bsz
+    residual_r = residual_l + bsz
     # residual_l <= update_residual < residual_r
     if residual_l <= update_residual and update_residual < residual_r:
         return True
@@ -123,6 +123,20 @@ class SingleGPUGroup:
 
     def size(self):
         return 1
+
+def check_comm_group():
+    tensor = torch.ones(1, device="cuda")
+    if WORLD_SIZE > 1:
+        torch.distributed.all_reduce(tensor, group=DEFAULT_GROUP)
+        print(f"DEFAULT_GROUP.rank() {DEFAULT_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
+    tensor = torch.ones(1, device="cuda")
+    if DP_GROUP.size() > 1:
+        torch.distributed.all_reduce(tensor, group=DP_GROUP)
+        print(f"DP_GROUP.rank() {DP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
+    tensor = torch.ones(1, device="cuda")
+    if MP_GROUP.size() > 1:
+        torch.distributed.all_reduce(tensor, group=MP_GROUP)
+        print(f"MP_GROUP.rank() {MP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
 
 def init_distributed(args):
     global LOCAL_RANK, WORLD_SIZE
@@ -145,15 +159,18 @@ def init_distributed(args):
         DEFAULT_GROUP = dist.group.WORLD
 
         print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))
+        # torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))
+        # check_comm_group()
+        # exit()
     else:
         DP_GROUP = SingleGPUGroup()
         MP_GROUP = SingleGPUGroup()
         DEFAULT_GROUP = SingleGPUGroup()
 
-def get_local_chunk_l_r(size, rank, world_size):
-    chunk_size = (size + world_size - 1) // world_size
+def get_local_chunk_l_r(array_length, world_size, rank):
+    chunk_size = (array_length + world_size - 1) // world_size
     l = rank * chunk_size
-    r = min(l + chunk_size, size)
+    r = min(l + chunk_size, array_length)
     return l, r
 
 def inverse_sigmoid(x):
@@ -268,7 +285,6 @@ def build_scaling_rotation(s, r):
     return L
 
 def safe_state(silent):
-    from utils.general_utils import LOCAL_RANK
     old_f = sys.stdout
     class F:
         def __init__(self, silent):
@@ -289,6 +305,7 @@ def safe_state(silent):
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
+    global LOCAL_RANK
     torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))
 
 def prepare_output_and_logger(args):    

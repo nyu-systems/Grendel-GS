@@ -37,7 +37,10 @@ class ParamGroup:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
                 elif t == list:
-                    group.add_argument("--" + key, default=value, nargs="+", type=type(value[0]))
+                    type_to_use = int
+                    if len(value) > 0:
+                        type_to_use = type(value[0])
+                    group.add_argument("--" + key, default=value, nargs="+", type=type_to_use)
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 
@@ -295,3 +298,6 @@ def check_args(args):
     if args.render_distribution_adjust_mode == "5":
         args.loss_distribution_mode = "avoid_pixel_all2all"
         utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_adjust_mode is 5.")
+
+    # sort test_iterations
+    args.test_iterations.sort()

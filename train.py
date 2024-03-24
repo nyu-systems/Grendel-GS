@@ -69,6 +69,7 @@ def densification(iteration, scene, gaussians, screenspace_pkg):
 
         if iteration > args.densify_from_iter and utils.check_update_at_this_iter(iteration, args.bsz, args.densification_interval, 0):
             assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
+            # utils.print_rank_0("iteration: {}, bsz: {}, update_interval: {}, update_residual: {}".format(iteration, args.bsz, args.densification_interval, 0))
 
             timers.start("densify_and_prune")
             size_threshold = 20 if iteration > args.opacity_reset_interval else None
@@ -131,9 +132,11 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
     # Training Loop
     train_start_time = time.time()
-    for iteration in tqdm(range(1, opt_args.iterations + 1, args.bsz), desc="Training progress", disable=(utils.LOCAL_RANK != 0)):
+    progress_bar = tqdm(range(1, opt_args.iterations + 1), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
+    for iteration in range(1, opt_args.iterations + 1, args.bsz):
 
         # Step Initialization
+        progress_bar.update(args.bsz)
         utils.set_cur_iter(iteration)
         timers.clear()
         timers.start("pre_forward")
@@ -145,6 +148,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         # Prepare data: Pick random Cameras for training
         batched_cameras = train_dataset.get_batched_cameras(args.bsz)
         local_render_viewpoint_cam = batched_cameras[utils.DP_GROUP.rank()]
+        utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
 
         # Prepare Workload division strategy
         batched_strategies = []
@@ -220,15 +224,16 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
         if utils.DP_GROUP.size() > 1:
             losses = torch.empty( (utils.DP_GROUP.size(), ), dtype=torch.float32, device="cuda")
-            torch.distributed.all_gather_into_tensor(losses, loss, dtype=torch.float32, device="cuda", group=utils.DP_GROUP)
+            torch.distributed.all_gather_into_tensor(losses, loss, group=utils.DP_GROUP)
             losses_cpu = losses.cpu().tolist()
             loss_cpu = losses[utils.DP_GROUP.rank()]
         else:
             loss_cpu = loss.item()
             losses_cpu = [loss_cpu]
-        train_dataset.update_loss(losses_cpu)
+        train_dataset.update_losses(losses_cpu)
 
         # Logging
+        losses_cpu = [round(loss, 6) for loss in losses_cpu]
         log_string = "iteration[{},{}) loss: {} image: {}\n".format(iteration, iteration+args.bsz,
                                                                     losses_cpu,
                                                                     [viewpoint_cam.image_name for viewpoint_cam in batched_cameras])
@@ -283,7 +288,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background):
     log_file = utils.get_log_file()
     # Report test and samples of training set
-    if iteration in testing_iterations:
+    if utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
+        testing_iterations.pop(0)
+        utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                             {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
@@ -316,15 +323,15 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                     if idx + utils.DP_GROUP.rank() < num_cameras + 1:
                         l1_test += l1_loss(image, gt_image).mean().double()
                         psnr_test += psnr(image, gt_image).mean().double()
-                torch.distributed.all_reduce(l1_test, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
-                torch.distributed.all_reduce(psnr_test, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
+                if utils.DP_GROUP.size() > 1:
+                    torch.distributed.all_reduce(l1_test, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
+                    torch.distributed.all_reduce(psnr_test, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
                 psnr_test /= num_cameras
                 l1_test /= num_cameras
                 utils.print_rank_0("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 log_file.write("[ITER {}] Evaluating {}: L1 {} PSNR {}\n".format(iteration, config['name'], l1_test, psnr_test))
 
         torch.cuda.empty_cache()
-        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
 if __name__ == "__main__":
     # Set up command line argument parser
