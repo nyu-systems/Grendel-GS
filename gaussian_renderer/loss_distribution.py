@@ -38,14 +38,14 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     # allgather locally_compute. For 4K, the size of one locally_compute is 4000*4000 = 16MB. It is not a short time. 
     # because bool tensor use 1 byte for 1 element: https://discuss.pytorch.org/t/why-does-each-torch-bool-value-take-up-an-entire-byte/183822
     # TODO: This could be optimized by using bitset. Divide communication volume by 8. 
-    all_locally_compute = torch.empty((utils.WORLD_SIZE,)+ compute_locally.shape, dtype=torch.bool, device="cuda")
+    all_locally_compute = torch.empty((utils.MP_GROUP.size(),)+ compute_locally.shape, dtype=torch.bool, device="cuda")
     torch.distributed.all_gather_into_tensor(all_locally_compute, compute_locally, group=utils.MP_GROUP)
     # Suppose we are sending from i to j. 
-    pos_mask_to_recv_from_i = [None for _ in range(utils.WORLD_SIZE)]
-    pos_recv_from_i = [None for _ in range(utils.WORLD_SIZE)]
-    recv_from_i_size = [None for _ in range(utils.WORLD_SIZE)]
-    for i in range(utils.WORLD_SIZE):
-        if i != utils.LOCAL_RANK:
+    pos_mask_to_recv_from_i = [None for _ in range(utils.MP_GROUP.size())]
+    pos_recv_from_i = [None for _ in range(utils.MP_GROUP.size())]
+    recv_from_i_size = [None for _ in range(utils.MP_GROUP.size())]
+    for i in range(utils.MP_GROUP.size()):
+        if i != utils.MP_GROUP.rank():
             pos_mask_to_recv_from_i[i] = torch.logical_and(all_locally_compute[i], touched_locally)
             pos_recv_from_i[i] = torch.nonzero(pos_mask_to_recv_from_i[i], as_tuple=False).contiguous() # (num_pos, 2); contiguous() is needed here.
             recv_from_i_size[i] = pos_recv_from_i[i].shape[0]
@@ -56,18 +56,18 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     
     timers.start("[all_pos_send_to_j]all_gather_send_to_j_size")# NOTE: This is slow because all_gather_object involves cpu2gpu+gpu2gpu+gpu2cpu communication here. 
     all_pos_recv_from_i = torch.cat(pos_recv_from_i, dim=0)
-    j_recv_from_i_size = [None for _ in range(utils.WORLD_SIZE)] # jth row and ith column(j_recv_from_i_size[j][i]) is the size of sending from i to j.
-    # each element should be a list of size of pos_recv_from_i[i] for all i. i.e. [None for _ in range(utils.WORLD_SIZE)]
+    j_recv_from_i_size = [None for _ in range(utils.MP_GROUP.size())] # jth row and ith column(j_recv_from_i_size[j][i]) is the size of sending from i to j.
+    # each element should be a list of size of pos_recv_from_i[i] for all i. i.e. [None for _ in range(utils.MP_GROUP.size())]
     torch.distributed.all_gather_object(j_recv_from_i_size, recv_from_i_size, group=utils.MP_GROUP)
-    send_to_j_size = [j_recv_from_i_size[j][utils.LOCAL_RANK] for j in range(utils.WORLD_SIZE)]
+    send_to_j_size = [j_recv_from_i_size[j][utils.MP_GROUP.rank()] for j in range(utils.MP_GROUP.size())]
     timers.stop("[all_pos_send_to_j]all_gather_send_to_j_size")
 
     timers.start("[all_pos_send_to_j]all_to_all_pos_send_to_j")
     # Use send_to_j_size[i] as the shape of the tensor
-    pos_send_to_j = [None for _ in range(utils.WORLD_SIZE)]
-    for j in range(utils.WORLD_SIZE):
+    pos_send_to_j = [None for _ in range(utils.MP_GROUP.size())]
+    for j in range(utils.MP_GROUP.size()):
         pos_send_to_j[j] = torch.empty((send_to_j_size[j], 2), dtype=torch.long, device="cuda")
-    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP)
+    torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP.size())
     all_pos_send_to_j = torch.cat(pos_send_to_j, dim=0).contiguous()
     timers.stop("[all_pos_send_to_j]all_to_all_pos_send_to_j")
 
@@ -76,10 +76,10 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
 
 def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
     # split all_tiles_send_to_j into tiles_send_to_j, according to the size of pos_send_to_j[j]
-    tiles_send_to_j = [None for _ in range(utils.WORLD_SIZE)]
-    tiles_recv_from_i = [None for _ in range(utils.WORLD_SIZE)]
+    tiles_send_to_j = [None for _ in range(utils.MP_GROUP.size())]
+    tiles_recv_from_i = [None for _ in range(utils.MP_GROUP.size())]
     start = 0
-    for j in range(utils.WORLD_SIZE):
+    for j in range(utils.MP_GROUP.size()):
         end = start + send_to_j_size[j]
         tiles_send_to_j[j] = all_tiles_send_to_j[start:end].contiguous()
         start = end
@@ -95,7 +95,7 @@ def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
     return all_tiles_recv_from_i
 
 
-def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args):
+def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, statistic_collector):
     timers = utils.get_timers()
 
 
@@ -193,7 +193,7 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, 
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
 
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
@@ -227,7 +227,7 @@ class _AddRemotePixelsToImage(torch.autograd.Function):
         coverage_max_y = min(last_pixel_y_plus1+half_window_size, utils.IMG_H)
         image_with_remote_pixels = image[:, coverage_min_y: coverage_max_y, :].contiguous()
 
-        if utils.LOCAL_RANK != 0:
+        if utils.MP_GROUP.rank() != 0:
             if first_pixel_x == 0:
                 image_with_remote_pixels[:, 0:half_window_size, :] = recv_from_rk_minus_1_part1
             else:
@@ -235,7 +235,7 @@ class _AddRemotePixelsToImage(torch.autograd.Function):
                 image_with_remote_pixels[:, (first_pixel_y-half_window_size)-coverage_min_y:(first_pixel_y+utils.BLOCK_Y-half_window_size)-coverage_min_y, first_pixel_x-half_window_size:first_pixel_x] = recv_from_rk_minus_1_part2
                 image_with_remote_pixels[:, (first_pixel_y-half_window_size)-coverage_min_y:(first_pixel_y)-coverage_min_y, first_pixel_x:utils.IMG_W] = recv_from_rk_minus_1_part3
 
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
             if last_pixel_x_plus1 == utils.IMG_W:
                 # recv from rank+1
                 image_with_remote_pixels[:, (last_pixel_y_plus1)-coverage_min_y:(last_pixel_y_plus1+half_window_size)-coverage_min_y, :] = recv_from_rk_plus_1_part1
@@ -263,7 +263,7 @@ class _AddRemotePixelsToImage(torch.autograd.Function):
         coverage_min_y = max(first_pixel_y-half_window_size, 0)
         coverage_max_y = min(last_pixel_y_plus1+half_window_size, utils.IMG_H)
 
-        if utils.LOCAL_RANK != 0:
+        if utils.MP_GROUP.rank() != 0:
             if first_pixel_x == 0:
                 grad_recv_from_rk_minus_1_part1 = grad_image_with_remote_pixels[:, 0:half_window_size, :].clone().contiguous()
                 grad_image_with_remote_pixels[:, 0:half_window_size, :] = 0
@@ -285,7 +285,7 @@ class _AddRemotePixelsToImage(torch.autograd.Function):
             grad_recv_from_rk_minus_1_part3 = None
 
 
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
 
             if last_pixel_x_plus1 == utils.IMG_W:
                 # recv from rank+1
@@ -323,7 +323,7 @@ def add_remote_pixels_to_image(image,
         configs
     )
 
-def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     # This method is specific to current distribution strategy space: flatten 2D tiles to a sequence of tiles, and split a tiles sequence into sections, each allocated to a GPU. 
     # Avoid redundant pixel communication and loss computation. In general distirbuted loss computation, we communicate at 16x16 tile level which include reduandant pixels.
     # Currently, I use all2all. Maybe in the future we could change to grouped send/recv if that is faster. (it seems that torch does not have this api as functional version). 
@@ -346,10 +346,10 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
 
     first_tile_y, first_tile_x = tile_ids_l // strategy.tile_x, tile_ids_l % strategy.tile_x
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
-    # print(f"rk: {utils.LOCAL_RANK}, tile_ids_l: {tile_ids_l}, tile_ids_r: {tile_ids_r}, strategy.tile_x: {strategy.tile_x}, first_tile_y: {first_tile_y}, first_tile_x: {first_tile_x}, first_pixel_y: {first_pixel_y}, first_pixel_x: {first_pixel_x}")
+    # print(f"rk: {utils.MP_GROUP.rank()}, tile_ids_l: {tile_ids_l}, tile_ids_r: {tile_ids_r}, strategy.tile_x: {strategy.tile_x}, first_tile_y: {first_tile_y}, first_tile_x: {first_tile_x}, first_pixel_y: {first_pixel_y}, first_pixel_x: {first_pixel_x}")
     
     timers.start("[loss_distribution]prepare_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             # recv from rank-1
@@ -381,8 +381,8 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
     else:
         last_pixel_y_plus1, last_pixel_x_plus1 = min(last_tile_y * utils.BLOCK_Y+utils.BLOCK_Y, utils.IMG_H), last_tile_x * utils.BLOCK_X
 
-    # print(f"rk: {utils.LOCAL_RANK}, last_tile_y {last_tile_y}, last_tile_x {last_tile_x}, first_pixel_y: {first_pixel_y}, first_pixel_x: {first_pixel_x}, last_pixel_y_plus1: {last_pixel_y_plus1}, last_pixel_x_plus1: {last_pixel_x_plus1}")
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    # print(f"rk: {utils.MP_GROUP.rank()}, last_tile_y {last_tile_y}, last_tile_x {last_tile_x}, first_pixel_y: {first_pixel_y}, first_pixel_x: {first_pixel_x}, last_pixel_y_plus1: {last_pixel_y_plus1}, last_pixel_x_plus1: {last_pixel_x_plus1}")
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
 
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_buffer = torch.empty((3, half_window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
@@ -408,21 +408,21 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
-        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        if utils.LOCAL_RANK != 0:
-            recv_list[utils.LOCAL_RANK-1] = recv_from_rk_minus_1_buffer
-            send_list[utils.LOCAL_RANK-1] = send_to_rk_minus_1
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
-            send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
+        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        if utils.MP_GROUP.rank() != 0:
+            recv_list[utils.MP_GROUP.rank()-1] = recv_from_rk_minus_1_buffer
+            send_list[utils.MP_GROUP.rank()-1] = send_to_rk_minus_1
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_list[utils.MP_GROUP.rank()+1] = recv_from_rk_plus_1_buffer
+            send_list[utils.MP_GROUP.rank()+1] = send_to_rk_plus_1
         
         torch.distributed.nn.functional.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
-        if utils.LOCAL_RANK != 0:
-            recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
+        if utils.MP_GROUP.rank() != 0:
+            recv_from_rk_minus_1 = recv_list[utils.MP_GROUP.rank()-1]
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_from_rk_plus_1 = recv_list[utils.MP_GROUP.rank()+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
     timers.stop("[loss_distribution]communication")
@@ -434,7 +434,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
         return n
 
     timers.start("[loss_distribution]extract_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             recv_from_rk_minus_1_part1 = recv_from_rk_minus_1
@@ -454,7 +454,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
         recv_from_rk_minus_1_part2 = None
         recv_from_rk_minus_1_part3 = None
 
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_part1 = recv_from_rk_plus_1
             recv_from_rk_plus_1_part2 = None
@@ -517,7 +517,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -550,7 +550,7 @@ class _AddRemotePixelsToImageLessComm(torch.autograd.Function):
         coverage_max_y = min(last_pixel_y_plus1+window_size, utils.IMG_H)
         image_with_remote_pixels = image[:, coverage_min_y: coverage_max_y, :].contiguous()
 
-        if utils.LOCAL_RANK != 0:
+        if utils.MP_GROUP.rank() != 0:
             if first_pixel_x == 0:
                 image_with_remote_pixels[:, 0:window_size, :] = recv_from_rk_minus_1_part1
             else:
@@ -558,7 +558,7 @@ class _AddRemotePixelsToImageLessComm(torch.autograd.Function):
                 image_with_remote_pixels[:, (first_pixel_y-window_size)-coverage_min_y:(first_pixel_y+utils.BLOCK_Y-window_size)-coverage_min_y, first_pixel_x-window_size:first_pixel_x] = recv_from_rk_minus_1_part2
                 image_with_remote_pixels[:, (first_pixel_y-window_size)-coverage_min_y:(first_pixel_y)-coverage_min_y, first_pixel_x:utils.IMG_W] = recv_from_rk_minus_1_part3
 
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
             if last_pixel_x_plus1 == utils.IMG_W:
                 # recv from rank+1
                 image_with_remote_pixels[:, (last_pixel_y_plus1)-coverage_min_y:(last_pixel_y_plus1+window_size)-coverage_min_y, :] = recv_from_rk_plus_1_part1
@@ -609,7 +609,7 @@ def add_remote_pixels_to_image_less_comm(image,
     )
     
 
-def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     # Compare to fast_distributed_loss_computation, this method get more remote pixels during forward and do replicated loss computation for pixels near border. 
     # But it avoids another communication and associated memory movement during backward. 
     # This method works when image resolution is small because we want to reduce the number of kernel launches. 
@@ -636,7 +636,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
     
     timers.start("[loss_distribution]prepare_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             # recv from rank-1
@@ -669,7 +669,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     else:
         last_pixel_y_plus1, last_pixel_x_plus1 = min(last_tile_y * utils.BLOCK_Y+utils.BLOCK_Y, utils.IMG_H), last_tile_x * utils.BLOCK_X
 
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
 
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
@@ -696,21 +696,21 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
-        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        if utils.LOCAL_RANK != 0:
-            recv_list[utils.LOCAL_RANK-1] = recv_from_rk_minus_1_buffer
-            send_list[utils.LOCAL_RANK-1] = send_to_rk_minus_1
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
-            send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
+        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        if utils.MP_GROUP.rank() != 0:
+            recv_list[utils.MP_GROUP.rank()-1] = recv_from_rk_minus_1_buffer
+            send_list[utils.MP_GROUP.rank()-1] = send_to_rk_minus_1
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_list[utils.MP_GROUP.rank()+1] = recv_from_rk_plus_1_buffer
+            send_list[utils.MP_GROUP.rank()+1] = send_to_rk_plus_1
         
         torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
-        if utils.LOCAL_RANK != 0:
-            recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
+        if utils.MP_GROUP.rank() != 0:
+            recv_from_rk_minus_1 = recv_list[utils.MP_GROUP.rank()-1]
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_from_rk_plus_1 = recv_list[utils.MP_GROUP.rank()+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
     timers.stop("[loss_distribution]communication")
@@ -722,7 +722,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
         return n
 
     timers.start("[loss_distribution]extract_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             recv_from_rk_minus_1_part1 = recv_from_rk_minus_1
@@ -742,7 +742,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
         recv_from_rk_minus_1_part2 = None
         recv_from_rk_minus_1_part3 = None
 
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_part1 = recv_from_rk_plus_1
             recv_from_rk_plus_1_part2 = None
@@ -800,7 +800,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -811,7 +811,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     ssim_loss = two_losses[1]
     return Ll1, ssim_loss
 
-def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     # Compare to fast_distributed_loss_computation, this method get more remote pixels during forward and do replicated loss computation for pixels near border. 
     # But it avoids another communication and associated memory movement during backward. 
     # This method works when image resolution is small because we want to reduce the number of kernel launches. 
@@ -838,7 +838,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     first_pixel_y, first_pixel_x = first_tile_y * utils.BLOCK_Y, first_tile_x * utils.BLOCK_X
     
     timers.start("[loss_distribution]prepare_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             # recv from rank-1
@@ -871,7 +871,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     else:
         last_pixel_y_plus1, last_pixel_x_plus1 = min(last_tile_y * utils.BLOCK_Y+utils.BLOCK_Y, utils.IMG_H), last_tile_x * utils.BLOCK_X
 
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
 
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
@@ -898,21 +898,21 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     communication_mode = "all2all"
     if communication_mode == "all2all":
         # a list of empty tensors of size 0
-        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.WORLD_SIZE)]
-        if utils.LOCAL_RANK != 0:
-            recv_list[utils.LOCAL_RANK-1] = recv_from_rk_minus_1_buffer
-            send_list[utils.LOCAL_RANK-1] = send_to_rk_minus_1
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_list[utils.LOCAL_RANK+1] = recv_from_rk_plus_1_buffer
-            send_list[utils.LOCAL_RANK+1] = send_to_rk_plus_1
+        send_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        recv_list = [torch.empty(0, dtype=torch.float32, device="cuda") for _ in range(utils.MP_GROUP.size())]
+        if utils.MP_GROUP.rank() != 0:
+            recv_list[utils.MP_GROUP.rank()-1] = recv_from_rk_minus_1_buffer
+            send_list[utils.MP_GROUP.rank()-1] = send_to_rk_minus_1
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_list[utils.MP_GROUP.rank()+1] = recv_from_rk_plus_1_buffer
+            send_list[utils.MP_GROUP.rank()+1] = send_to_rk_plus_1
         
         torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
 
-        if utils.LOCAL_RANK != 0:
-            recv_from_rk_minus_1 = recv_list[utils.LOCAL_RANK-1]
-        if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
-            recv_from_rk_plus_1 = recv_list[utils.LOCAL_RANK+1]
+        if utils.MP_GROUP.rank() != 0:
+            recv_from_rk_minus_1 = recv_list[utils.MP_GROUP.rank()-1]
+        if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
+            recv_from_rk_plus_1 = recv_list[utils.MP_GROUP.rank()+1]
     else:
         raise NotImplementedError("grouped send/recv is not implemented yet.")
     timers.stop("[loss_distribution]communication")
@@ -924,7 +924,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
         return n
 
     timers.start("[loss_distribution]extract_tensor_for_communication")
-    if utils.LOCAL_RANK != 0:
+    if utils.MP_GROUP.rank() != 0:
 
         if first_pixel_x == 0:
             recv_from_rk_minus_1_part1 = recv_from_rk_minus_1
@@ -944,7 +944,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
         recv_from_rk_minus_1_part2 = None
         recv_from_rk_minus_1_part3 = None
 
-    if utils.LOCAL_RANK != utils.WORLD_SIZE-1:
+    if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
         if last_pixel_x_plus1 == utils.IMG_W:
             recv_from_rk_plus_1_part1 = recv_from_rk_plus_1
             recv_from_rk_plus_1_part2 = None
@@ -1002,7 +1002,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
                                                    local_image_rect_pixels_compute_locally)
     ssim_loss = pixelwise_ssim_loss.sum() / (utils.get_num_pixels()*3)
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
     utils.check_memory_usage_logging("after ssim_loss")
     timers.stop("local_loss_computation")
 
@@ -1013,7 +1013,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
 
 
 
-def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     # functional allreduce all pixels, we will have another allreduce during backward. 
     # calculate the local loss, no replicated loss compute for pixels.
 
@@ -1068,7 +1068,7 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -1079,7 +1079,7 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
     ssim_loss = two_losses[1]
     return Ll1, ssim_loss
 
-def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     # allreduce all pixels;
     # the the locally touched pixels.
     # replicated loss compute to avoid another allreduce during backward.
@@ -1132,7 +1132,7 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
                                                    local_image_rect_pixels_compute_locally)
     pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum()
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time) * 1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time) * 1000
     utils.check_memory_usage_logging("after ssim_loss")
     two_losses = torch.stack([pixelwise_Ll1_sum, pixelwise_ssim_loss_sum]) / (utils.get_num_pixels()*3)
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
@@ -1145,13 +1145,13 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
 
 loss_sum = 0
 loss_cnt = 0
-def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args):
+def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     timers = utils.get_timers()
     args = utils.get_args()
 
     timers.start("prepare_image_rect_and_mask")
     window_size = 11
-    tile_ids_l, tile_ids_r = strategy.division_pos[strategy.rank], strategy.division_pos[strategy.rank+1]
+    tile_ids_l, tile_ids_r = strategy.division_pos[utils.MP_GROUP.rank()], strategy.division_pos[utils.MP_GROUP.rank()+1]
     first_tile_y = tile_ids_l // strategy.tile_x
     first_pixel_y = first_tile_y * utils.BLOCK_Y
     last_tile_y = tile_ids_r // strategy.tile_x
@@ -1187,7 +1187,7 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
     ssim_loss = pixelwise_ssim_loss.sum()/(utils.get_num_pixels()*3)
 
     torch.cuda.synchronize()
-    cuda_args["stats_collector"]["forward_loss_time"] = (time.time() - start_time)*1000
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
     utils.check_memory_usage_logging("after ssim_loss")
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
 
@@ -1224,27 +1224,6 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
 
     return Ll1, ssim_loss
     
-
-def distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy=None, cuda_args={}):
-    args = utils.get_args()
-
-    if args.loss_distribution_mode == "general":
-        return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, cuda_args)
-    elif args.loss_distribution_mode == "fast":
-        return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.loss_distribution_mode == "functional_allreduce":
-        return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.loss_distribution_mode == "allreduce":
-        return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.loss_distribution_mode == "fast_less_comm":
-        return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
-        return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-    elif args.loss_distribution_mode == "avoid_pixel_all2all":
-        return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, cuda_args)
-
-
-
 def replicated_loss_computation(image, viewpoint_cam):
 
     timers = utils.get_timers()
@@ -1276,3 +1255,27 @@ def replicated_loss_computation(image, viewpoint_cam):
     timers.stop("loss")
 
     return Ll1, ssim_loss
+
+def loss_computation(image, viewpoint_cam, compute_locally, strategy=None, statistic_collector={}):
+    args = utils.get_args()
+
+
+    # Replicated Loss Computation
+    if args.loss_distribution_mode == "no_distribution":
+        return replicated_loss_computation(image, viewpoint_cam)
+
+    # Distributed Loss Computation
+    if args.loss_distribution_mode == "general":
+        return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, statistic_collector)
+    elif args.loss_distribution_mode == "fast":
+        return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    elif args.loss_distribution_mode == "functional_allreduce":
+        return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    elif args.loss_distribution_mode == "allreduce":
+        return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    elif args.loss_distribution_mode == "fast_less_comm":
+        return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
+        return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    elif args.loss_distribution_mode == "avoid_pixel_all2all":
+        return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)

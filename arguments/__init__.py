@@ -13,6 +13,7 @@ from argparse import ArgumentParser, Namespace
 import sys
 import os
 import utils.general_utils as utils
+import diff_gaussian_rasterization
 
 class GroupParams:
     pass
@@ -46,6 +47,25 @@ class ParamGroup:
             if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
                 setattr(group, arg[0], arg[1])
         return group
+
+class AuxiliaryParams(ParamGroup): 
+    def __init__(self, parser, sentinel=False):
+        self.ip = "127.0.0.1"
+        self.port = 6009
+        self.debug_from = -1
+        self.detect_anomaly = False
+        self.test_iterations = [7_000, 30_000]
+        self.save_iterations = []
+        self.quiet = False
+        self.checkpoint_iterations = []
+        self.start_checkpoint = ""
+        self.log_folder = "experiments/default_folder"
+        self.log_interval = 50
+        super().__init__(parser, "Loading Parameters", sentinel)
+
+    def extract(self, args):
+        g = super().extract(args)
+        return g
 
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
@@ -95,8 +115,7 @@ class OptimizationParams(ParamGroup):
 class DistributionParams(ParamGroup):
     def __init__(self, parser):
         # Distribution for pixel-wise render computation.
-        self.render_distribution = True # default to be True if world_size > 1.
-        self.render_distribution_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
+        self.render_distribution_adjust_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
         self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
         self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
         self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
@@ -105,24 +124,23 @@ class DistributionParams(ParamGroup):
         self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
 
         # Distribution for 3DGS-wise workloads.
-        self.memory_distribution = True # enable distribution for 3DGS storage memory and preprocess forward and backward compute. 
+        self.memory_distribution_mode = "0" 
+        # "0" no shard 3dgs storage. memory_distribution must be false <==> memory_distribution_mode is 0.
+        # "1" is shard 3dgs storage across MP group and gradient sync. 
+        # "2" is shard 3dgs storage across the global group and use all2all to replace the gradient sync. 
         self.redistribute_gaussians_mode = "no_redistribute" # enable redistribution for 3DGS storage location. "no_redistribute" is no redistribution. 
         self.redistribute_gaussians_frequency = 10 # redistribution frequency for 3DGS storage location.
         self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location: min*self.redistribute_gaussian_threshold < max --> redistribute.
 
         # Distribution for pixel-wise loss computation.
-        self.loss_distribution = True # enable distribution for pixel-wise loss computation.
-        self.loss_distribution_mode = "general" # "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
+        self.loss_distribution_mode = "general" # "no_distribution", "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
         self.get_global_exact_loss = False # if True, we recompute loss without redundant border pixel computation to get exact number. This is for debugging.
 
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
         self.dp_size = 1 # data parallel degree.
         self.mp_size = -1 # model parallel degree.
-        # data parallel mode.
-        # "1" is shard 3dgs storage across MP group and gradient sync. 
-        # "2" is shard 3dgs storage across the global group and use all2all to replace the gradient sync. 
-        self.dp_mode = "1" 
+        self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
 
         # Deprecated Arguments
@@ -137,7 +155,9 @@ class DistributionParams(ParamGroup):
         self.adjust_mode = "1" # Deprecated. 
         self.avoid_pixel_all2all = False # Deprecated. avoid pixel-wise all2all communication by replicated border pixel rendering during forward. 
         self.avoid_pixel_all2all_log_correctloss = False # Deprecated. log correct loss for pixel-wise all2all communication.
-
+        self.memory_distribution = True # enable distribution for 3DGS storage memory and preprocess forward and backward compute. 
+        self.loss_distribution = True # enable distribution for pixel-wise loss computation.
+        self.render_distribution = True # default to be True if world_size > 1.
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -166,7 +186,6 @@ class DebugParams(ParamGroup):
 
         self.save_i2jsend = False # Deprecated. It was used to save i2jsend_size to file for debugging. Now, we save size of communication from gpui to gpuj in strategy_history_ws=4_rk=0.json .
         self.time_image_loading = False # Log image loading time.
-        self.disable_checkpoint_and_save = False # Disable checkpoint and save.
         self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
         super().__init__(parser, "Debug Parameters")
@@ -201,10 +220,24 @@ def print_all_args(args, log_file):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
     log_file.write("-"*30+"\n\n")
 
+    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.LOCAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
+
+    # Make sure block size match between python and cuda code.
+    cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
+    utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
+    log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
+
+
 def check_args(args):
 
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
+
+    # TODO: we temporarily disable checkpoint because we have not implemented it yet.
+    args.checkpoint_iterations = []
+    args.start_checkpoint = None
+    if len(args.save_iterations) > 0:
+        args.save_iterations.append(args.iterations)
 
     if args.benchmark_stats:
         args.zhx_time = True
@@ -212,8 +245,7 @@ def check_args(args):
         args.log_iteration_memory_usage = True
         args.check_memory_usage = True
         args.end2end_time = True
-        args.disable_checkpoint_and_save = True
-        args.checkpoint_iterations = []
+
         args.save_iterations = []
         assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
         assert not args.disable_auto_densification, "benchmark mode needs auto densification."
@@ -229,49 +261,37 @@ def check_args(args):
         args.check_memory_usage = False
         args.save_iterations = [2000, 7000, 15000, 30000]
         args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
-        args.checkpoint_iterations = []
 
         # use the fastest mode.
-        args.adjust_mode = "2"
         args.lazy_load_image = True
-        args.memory_distribution = True
-        args.loss_distribution = True
 
         assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
         assert not args.disable_auto_densification, "performance_stats mode needs auto densification."
         assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
         assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
 
-    if utils.WORLD_SIZE == 1:
-        args.render_distribution = False
-        args.memory_distribution = False
-        args.loss_distribution = False
-
-    assert not (args.memory_distribution and len(args.checkpoint_iterations)>0 ), "memory_distribution does not support checkpoint yet!"
-    assert not (args.save_i2jsend and not args.memory_distribution), "save_i2jsend needs memory_distribution!"
-    assert not (args.loss_distribution and not args.memory_distribution), "loss_distribution needs memory_distribution!"
-
-    if args.render_distribution_mode == "3":
-        assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
-
-    if args.render_distribution_mode == "5":
-        args.loss_distribution_mode = "avoid_pixel_all2all"
-        utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_mode is 5.")
-
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.
         args.disable_auto_densification = True
-
-    if args.redistribute_gaussians_mode != "no_redistribute":
-       utils.print_rank_0(args.memory_distribution)
-       assert args.memory_distribution, "enable_redistribute needs memory_distribution!"
-       args.disable_checkpoint_and_save = True # checkpoint and save are not implemented in mode of enable_redistribute.
-
-    if args.disable_checkpoint_and_save:
-        utils.print_rank_0("Attention! disable_checkpoint_and_save is enabled. disable checkpoint and save.")
-        args.checkpoint_iterations = []
-        args.save_iterations = []
     
     if args.log_iteration_memory_usage:
         args.check_memory_usage = True
  
+
+    # Distribution Mode Check
+    if utils.MP_GROUP.size() == 1:
+        args.loss_distribution_mode = "no_distribution"
+    if utils.DEFAULT_GROUP.size() == 1:
+        args.memory_distribution_mode = "0"
+    if utils.MP_GROUP.size() == 1 and args.memory_distribution_mode == "1":
+        args.memory_distribution_mode = "0"# in such cases, we actually do not shard 3dgs storage at all.
+    # by default, we will distribute the render computation, whenever we are able to do that(MP size > 1)
+
+    assert args.bsz == args.dp_size, "each dp worker should compute for one sample, for now."
+
+    if args.render_distribution_adjust_mode == "3":
+        assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
+
+    if args.render_distribution_adjust_mode == "5":
+        args.loss_distribution_mode = "avoid_pixel_all2all"
+        utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_adjust_mode is 5.")
