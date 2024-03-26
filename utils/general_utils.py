@@ -16,6 +16,7 @@ import numpy as np
 import random
 import os
 import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
 
@@ -24,6 +25,9 @@ LOG_FILE = None
 CUR_ITER = None
 LOCAL_RANK = 0
 WORLD_SIZE = 1
+DP_GROUP = None
+MP_GROUP = None
+DEFAULT_GROUP = None
 TIMERS = None
 DENSIFY_ITER = 0
 
@@ -69,12 +73,6 @@ def set_block_size(x, y, z):
 
 def set_img_size(h, w):
     global IMG_H, IMG_W
-    if IMG_H is None and IMG_W is None:
-        # this is the first time we set the image size, log it into the log file;
-        log_file = get_log_file()
-        if log_file is not None:
-            log_file.write(f"Image size: {h}x{w}\n")
-
     IMG_H, IMG_W = h, w
 
 def get_img_size():
@@ -102,16 +100,78 @@ def print_rank_0(str):
 def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()
-    return args.zhx_python_time and ( iteration % args.log_interval == 1 or iteration in args.force_python_timer_iterations)
+    return args.zhx_python_time and ( iteration % args.log_interval in list(range(1, 1+args.bsz)) or iteration in args.force_python_timer_iterations)
 
-def init_distributed():
+def check_update_at_this_iter(iteration, bsz, update_interval, update_residual):
+    residual_l = iteration % update_interval
+    residual_r = residual_l + bsz
+    # residual_l <= update_residual < residual_r
+    if residual_l <= update_residual and update_residual < residual_r:
+        return True
+    # residual_l <= update_residual+update_interval < residual_r
+    if residual_l <= update_residual+update_interval and update_residual+update_interval < residual_r:
+        return True
+    return False
+
+
+class SingleGPUGroup:
+    def __init__(self):
+        pass
+
+    def rank(self):
+        return 0
+
+    def size(self):
+        return 1
+
+def check_comm_group():
+    tensor = torch.ones(1, device="cuda")
+    if WORLD_SIZE > 1:
+        torch.distributed.all_reduce(tensor, group=DEFAULT_GROUP)
+        print(f"DEFAULT_GROUP.rank() {DEFAULT_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
+    tensor = torch.ones(1, device="cuda")
+    if DP_GROUP.size() > 1:
+        torch.distributed.all_reduce(tensor, group=DP_GROUP)
+        print(f"DP_GROUP.rank() {DP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
+    tensor = torch.ones(1, device="cuda")
+    if MP_GROUP.size() > 1:
+        torch.distributed.all_reduce(tensor, group=MP_GROUP)
+        print(f"MP_GROUP.rank() {MP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
+
+def init_distributed(args):
     global LOCAL_RANK, WORLD_SIZE
     LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
     WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
     if WORLD_SIZE > 1:
-        dist.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
+        torch.distributed.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
         assert torch.cuda.is_available(), "Distributed mode requires CUDA"
         assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
+
+        assert WORLD_SIZE % args.dp_size == 0, "World size should be divisible by dp_size"
+        args.mp_size = WORLD_SIZE // args.dp_size
+
+        global DP_GROUP, MP_GROUP, DEFAULT_GROUP
+
+        mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
+        # Users can access the underlying process group thru `get_group` API.
+        DP_GROUP = mesh_2d.get_group(mesh_dim="dp")
+        MP_GROUP = mesh_2d.get_group(mesh_dim="mp")
+        DEFAULT_GROUP = dist.group.WORLD
+
+        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))
+        # torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))
+        # check_comm_group()
+        # exit()
+    else:
+        DP_GROUP = SingleGPUGroup()
+        MP_GROUP = SingleGPUGroup()
+        DEFAULT_GROUP = SingleGPUGroup()
+
+def get_local_chunk_l_r(array_length, world_size, rank):
+    chunk_size = (array_length + world_size - 1) // world_size
+    l = rank * chunk_size
+    r = min(l + chunk_size, array_length)
+    return l, r
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -225,7 +285,6 @@ def build_scaling_rotation(s, r):
     return L
 
 def safe_state(silent):
-    from utils.general_utils import LOCAL_RANK
     old_f = sys.stdout
     class F:
         def __init__(self, silent):
@@ -246,6 +305,7 @@ def safe_state(silent):
     random.seed(0)
     np.random.seed(0)
     torch.manual_seed(0)
+    global LOCAL_RANK
     torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))
 
 def prepare_output_and_logger(args):    
