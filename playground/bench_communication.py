@@ -4,12 +4,12 @@ import time
 import argparse
 import os
 
-def benchmark_all_reduce(rank, size, tensor_size, num_iterations):
+def benchmark_all_reduce(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the all-reduce operation
     """
     # Create a tensor of the specified size
-    tensor = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -29,12 +29,12 @@ def benchmark_all_reduce(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average all-reduce time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_all_reduce_unbalance(rank, size, tensor_size, num_iterations):
+def benchmark_all_reduce_unbalance(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the all-reduce operation to test unbalance speed among ranks
     """
     # Create a tensor of the specified size
-    tensor = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -54,12 +54,12 @@ def benchmark_all_reduce_unbalance(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average all-reduce time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_broadcast(rank, size, tensor_size, num_iterations, root=0):
+def benchmark_broadcast(rank, local_rank, size, tensor_size, num_iterations, root=0):
     """
     Benchmark the broadcast operation
     """
     # Create a tensor of the specified size
-    tensor = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -79,7 +79,7 @@ def benchmark_broadcast(rank, size, tensor_size, num_iterations, root=0):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average broadcast time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_send_recv(rank, size, tensor_size, num_iterations, sender=0, receiver=1):
+def benchmark_send_recv(rank, local_rank, size, tensor_size, num_iterations, sender=0, receiver=1):
     """
     Benchmark the send/recv operation
     """
@@ -88,7 +88,7 @@ def benchmark_send_recv(rank, size, tensor_size, num_iterations, sender=0, recei
         return
     
     # Create a tensor of the specified size
-    tensor = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -120,13 +120,13 @@ def benchmark_send_recv(rank, size, tensor_size, num_iterations, sender=0, recei
     avg_time = start_event.elapsed_time(end_event) / num_iterations
     print(f"Rank: {rank}, Average send/recv time for {tensor_size} elements: {avg_time:.6f} ms, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 :.6f} GB/s")
 
-def benchmark_parallel_send_recv(rank, size, tensor_size, num_iterations):
+def benchmark_parallel_send_recv(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the parallel send/recv operation
     """
     
     # Create a tensor of the specified size
-    tensor = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -152,14 +152,14 @@ def benchmark_parallel_send_recv(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average parallel send/recv time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_parallel_send_recv_2(rank, size, tensor_size, num_iterations):
+def benchmark_parallel_send_recv_2(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the parallel send/recv operation
     """
     
     # Create a tensor of the specified size
-    tensor1 = torch.rand(tensor_size).cuda(rank) # type: float32
-    tensor2 = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor1 = torch.rand(tensor_size).cuda(local_rank) # type: float32
+    tensor2 = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -192,14 +192,14 @@ def benchmark_parallel_send_recv_2(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average parallel send/recv time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_parallel_send_recv_3(rank, size, tensor_size, num_iterations):
+def benchmark_parallel_send_recv_3(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the parallel send/recv operation
     """
     
     # Create a tensor of the specified size
-    tensor1 = torch.rand(tensor_size).cuda(rank) # type: float32
-    tensor2 = torch.rand(tensor_size).cuda(rank) # type: float32
+    tensor1 = torch.rand(tensor_size).cuda(local_rank) # type: float32
+    tensor2 = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
     for _ in range(10):
@@ -235,13 +235,13 @@ def benchmark_parallel_send_recv_3(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average parallel send/recv time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def benchmark_parallel_send_recv_4(rank, size, tensor_size, num_iterations):
+def benchmark_parallel_send_recv_4(rank, local_rank, size, tensor_size, num_iterations):
     """
     Benchmark the parallel send/recv operation
     """
     
     # Create a tensor of the specified size
-    tensors = [torch.rand(tensor_size).cuda(rank) for _ in range(size)] # type: float32
+    tensors = [torch.rand(tensor_size).cuda(local_rank) for _ in range(size)] # type: float32
 
     # Warm up
     for _ in range(10):
@@ -268,12 +268,12 @@ def benchmark_parallel_send_recv_4(rank, size, tensor_size, num_iterations):
     avg_time = (end_time - start_time) / num_iterations
     print(f"Rank: {rank}, Average parallel send/recv time for {tensor_size} elements: {avg_time:.6f} seconds, bandwidth: {tensor_size * 4 / avg_time / 1024 / 1024 / 1024:.6f} GB/s")
 
-def init_process(rank, size, tensor_size, num_iterations, fn, backend='nccl', **args):
+def init_process(rank, local_rank, size, tensor_size, num_iterations, fn, backend='nccl', **args):
     """
     Initialize the distributed environment and call the benchmark function
     """
     dist.init_process_group(backend, rank=rank, world_size=size)
-    fn(rank, size, tensor_size, num_iterations, **args)
+    fn(rank, local_rank, size, tensor_size, num_iterations, **args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -284,6 +284,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # get environment variables
+    RANK = int(os.environ.get("RANK", 0))
+    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+    # print(WORLD_SIZE, RANK, LOCAL_RANK)
+    print("WORLD_SIZE: ", WORLD_SIZE, "RANK: ", RANK, "LOCAL_RANK: ", LOCAL_RANK)
     print("NCCL_ALGO: ", os.environ.get("NCCL_ALGO", None))
     print("NCCL_DEBUG: ", os.environ.get("NCCL_DEBUG", None))
 
@@ -295,25 +300,39 @@ if __name__ == "__main__":
     num_iterations = args.num_iterations
     backend = args.backend
 
-    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
-    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+
+
     if args.mode == 'allreduce':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_all_reduce, backend)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_all_reduce, backend)
     elif args.mode == 'allreduce_unbalance':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_all_reduce_unbalance, backend)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_all_reduce_unbalance, backend)
     elif args.mode == 'sendrecv':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_send_recv, backend, sender=1, receiver=0)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_send_recv, backend, sender=1, receiver=0)
     elif args.mode == 'broadcast':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_broadcast, backend, root=0)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_broadcast, backend, root=0)
     elif args.mode == 'parallel_sendrecv':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv)
     elif args.mode == 'parallel_sendrecv_2':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_2)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_2)
     elif args.mode == 'parallel_sendrecv_3':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_3)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_3)
     elif args.mode == 'parallel_sendrecv_4':
-        init_process(LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_4)
+        init_process(RANK, LOCAL_RANK, WORLD_SIZE, tensor_size, num_iterations, benchmark_parallel_send_recv_4)
 
 # torchrun --standalone --nnodes=1 --nproc-per-node=4 bench_communication.py --mode sendrecv --tensor-size 1024
 # Rank: 1, Average send/recv time for 268435456 elements: 0.002048 ms, bandwidth: 500000.001262 GB/s
 # Rank: 0, Average send/recv time for 268435456 elements: 93.270180 ms, bandwidth: 10.978857 GB/s
+
+# Multi-node communication bechmarking
+# NODE_COUNT=2
+# NODE_RANK=0
+# IP_ADDR="10.32.35.103"
+# PORT=10233
+
+# torchrun \
+#     --nnodes=$NODE_COUNT --node_rank=$NODE_RANK --nproc-per-node=4 \
+#     --master_addr=$IP_ADDR --master_port=$PORT \
+#     bench_communication.py \
+#     --mode allreduce \
+#     --tensor-size 16 \
+#     --num-iterations 10
