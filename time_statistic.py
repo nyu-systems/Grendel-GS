@@ -308,21 +308,12 @@ def get_suffix_in_folder(folder):
     if not folder.endswith("/"):
         folder += "/"
     
-    suffix_list_candidates = [
-        "ws=1_rk=0",
-        "ws=2_rk=0",
-        "ws=2_rk=1",
-        "ws=4_rk=0",
-        "ws=4_rk=1",
-        "ws=4_rk=2",
-        "ws=4_rk=3",
-    ]
     suffix_list = []
-
-    for suffix in suffix_list_candidates:
-        # python_ws=1_rk=0.log
-        if os.path.exists(folder + "python_" + suffix + ".log"):
-            suffix_list.append(suffix)
+    for ws in [1,2,4,8]:
+        for rk in range(ws):
+            suffix = f"ws={ws}_rk={rk}"
+            if os.path.exists(folder + "python_" + suffix + ".log"):
+                suffix_list.append(suffix)
 
     return suffix_list
 
@@ -3592,47 +3583,59 @@ if __name__ == "__main__":
     #             f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
     #         ])
 
-    dp_system_debug_expes = ["debug_dp_1gpu",
-        "debug_dpsize1_memdis0_1",
-        "debug_dpsize1_memdis1_1",
-        "debug_dpsize2_memdis0_1",
-        "debug_dpsize2_memdis0_adj5_1",
-        "debug_dpsize2_memdis0_ws2_1",
-        "debug_dpsize2_memdis1_1",
-        "debug_dpsize2_memdis1_adj5_1",
-        "debug_dpsize2_memdis2_1",
-        "debug_dpsize2_memdis2_adj5_1",
-        "debug_dpsize4_memdis0_1",
-        "debug_dpsize4_memdis0_adj5_1",
-        "debug_dpsize4_memdis1_1",
-        "debug_dpsize4_memdis1_adj5_1",
-        "debug_dpsize4_memdis2_1",
-        "debug_dpsize4_memdis2_adj5_1"]
-    for folder in dp_system_debug_expes:
-        analyze_time(
-            f"experiments/{folder}/",
-            [i for i in range(51, 7000, 100)],
-            no_gpu_time=True
-        )
-    compare_end2end_stats(
-        save_folder=f"experiments/debug_dp_1gpu/",
-        file_paths=[
-            f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log",
-        ] + [f"experiments/{folder}/python_ws=4_rk=0.log" for folder in dp_system_debug_expes[1:]]
-    )
+    # dp_system_debug_expes = ["debug_dp_1gpu",
+    #     "debug_dpsize1_memdis0_1",
+    #     "debug_dpsize1_memdis1_1",
+    #     "debug_dpsize2_memdis0_1",
+    #     "debug_dpsize2_memdis0_adj5_1",
+    #     "debug_dpsize2_memdis0_ws2_1",
+    #     "debug_dpsize2_memdis1_1",
+    #     "debug_dpsize2_memdis1_adj5_1",
+    #     "debug_dpsize2_memdis2_1",
+    #     "debug_dpsize2_memdis2_adj5_1",
+    #     "debug_dpsize4_memdis0_1",
+    #     "debug_dpsize4_memdis0_adj5_1",
+    #     "debug_dpsize4_memdis1_1",
+    #     "debug_dpsize4_memdis1_adj5_1",
+    #     "debug_dpsize4_memdis2_1",
+    #     "debug_dpsize4_memdis2_adj5_1"]
+    # for folder in dp_system_debug_expes:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(51, 7000, 100)],
+    #         no_gpu_time=True
+    #     )
+    # compare_end2end_stats(
+    #     save_folder=f"experiments/debug_dp_1gpu/",
+    #     file_paths=[
+    #         f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log",
+    #     ] + [f"experiments/{folder}/python_ws=4_rk=0.log" for folder in dp_system_debug_expes[1:]]
+    # )
 
-    sync_grad_mode_expes = ["debug_dpsize2_memdis2_adj5_1",
-        "debug_dpsize2_memdis2_adj5_spg_1",
-        "debug_dpsize2_memdis2_adj5_fude_1"]
-    for folder in sync_grad_mode_expes:
+    # sync_grad_mode_expes = ["debug_dpsize2_memdis2_adj5_1",
+    #     "debug_dpsize2_memdis2_adj5_spg_1",
+    #     "debug_dpsize2_memdis2_adj5_fude_1"]
+    # for folder in sync_grad_mode_expes:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(51, 7000, 100)],
+    #         no_gpu_time=True
+    #     )
+    # compare_end2end_stats(
+    #     save_folder=f"experiments/debug_dpsize2_memdis2_adj5_1/",
+    #     file_paths=[f"experiments/{folder}/python_ws=4_rk=0.log" for folder in sync_grad_mode_expes] +
+    #                [f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log"]
+    # )
+    
+    cross_node_expes = ["cross_node_dpsize8",
+                            "cross_node_dpsize4",
+                            "cross_node_dpsize2"]
+    for folder in cross_node_expes:
         analyze_time(
             f"experiments/{folder}/",
             [i for i in range(51, 7000, 100)],
-            no_gpu_time=True
         )
     compare_end2end_stats(
-        save_folder=f"experiments/debug_dpsize2_memdis2_adj5_1/",
-        file_paths=[f"experiments/{folder}/python_ws=4_rk=0.log" for folder in sync_grad_mode_expes] +
-                   [f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log"]
+        save_folder=f"experiments/cross_node_dpsize8/",
+        file_paths=[f"experiments/{folder}/python_ws=8_rk=0.log" for folder in cross_node_expes]
     )
-        

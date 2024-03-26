@@ -23,7 +23,8 @@ from argparse import Namespace
 ARGS = None
 LOG_FILE = None
 CUR_ITER = None
-LOCAL_RANK = 0
+GLOBAL_RANK = None # rank in all nodes
+LOCAL_RANK = 0 # local rank in the node
 WORLD_SIZE = 1
 DP_GROUP = None
 MP_GROUP = None
@@ -92,15 +93,15 @@ def inc_densify_iter():
     DENSIFY_ITER += 1
 
 def print_rank_0(str):
-    global LOCAL_RANK
-    if LOCAL_RANK == 0:
+    global GLOBAL_RANK
+    if GLOBAL_RANK == 0:
         print(str)
 
 
 def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()
-    return args.zhx_python_time and ( iteration % args.log_interval in list(range(1, 1+args.bsz)) or iteration in args.force_python_timer_iterations)
+    return args.zhx_python_time and ( check_update_at_this_iter(iteration, args.bsz, args.log_interval, 1) or iteration in args.force_python_timer_iterations)
 
 def check_update_at_this_iter(iteration, bsz, update_interval, update_residual):
     residual_l = iteration % update_interval
@@ -139,11 +140,12 @@ def check_comm_group():
         print(f"MP_GROUP.rank() {MP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
 
 def init_distributed(args):
-    global LOCAL_RANK, WORLD_SIZE
+    global GLOBAL_RANK, LOCAL_RANK, WORLD_SIZE
+    GLOBAL_RANK = int(os.environ.get("RANK", 0))
     LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
     WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
     if WORLD_SIZE > 1:
-        torch.distributed.init_process_group("nccl", rank=LOCAL_RANK, world_size=WORLD_SIZE)
+        torch.distributed.init_process_group("nccl", rank=GLOBAL_RANK, world_size=WORLD_SIZE)
         assert torch.cuda.is_available(), "Distributed mode requires CUDA"
         assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
 
@@ -159,9 +161,6 @@ def init_distributed(args):
         DEFAULT_GROUP = dist.group.WORLD
 
         print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))
-        # torch.cuda.set_device(torch.device("cuda", LOCAL_RANK))
-        # check_comm_group()
-        # exit()
     else:
         DP_GROUP = SingleGPUGroup()
         MP_GROUP = SingleGPUGroup()
@@ -316,10 +315,10 @@ def prepare_output_and_logger(args):
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
 
-    global LOCAL_RANK
+    global GLOBAL_RANK
 
     # Set up output folder
-    if LOCAL_RANK != 0:
+    if GLOBAL_RANK != 0:
         return None
     print_rank_0("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)

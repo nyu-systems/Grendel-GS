@@ -223,7 +223,7 @@ def print_all_args(args, log_file):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
     log_file.write("-"*30+"\n\n")
 
-    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.LOCAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
+    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
 
     # Make sure block size match between python and cuda code.
     cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()

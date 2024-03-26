@@ -12,7 +12,7 @@ def benchmark_all_reduce(rank, local_rank, size, tensor_size, num_iterations):
     tensor = torch.rand(tensor_size).cuda(local_rank) # type: float32
 
     # Warm up
-    for _ in range(10):
+    for _ in range(30):# Maybe we need to warm up more than 10 to get the best allreduce bandwidth. <aybe this 
         dist.all_reduce(tensor)
 
     # Benchmark

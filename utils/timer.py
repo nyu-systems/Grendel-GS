@@ -7,7 +7,7 @@ class Timer:
         self.timers = {}
         self.args = args
         if args.zhx_python_time:
-            self.file = open(args.log_folder+"/python_time_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
+            self.file = open(args.log_folder+"/python_time_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".log", 'w')
         else:
             self.file = None
 
@@ -46,13 +46,18 @@ class Timer:
         if not utils.check_enable_python_timer():
             return
 
+        for x in range(self.args.bsz):
+            if (iteration+x) % self.args.log_interval == 1:
+                iteration += x
+                break
+
         for key in self.timers:
             if mode == 'this_iteration':
-                print(f"iter {iteration}, TimeFor '{key}': {self.timers[key]['all_time'][-1]*1000:.6f} ms")
+                # print(f"iter {iteration}, TimeFor '{key}': {self.timers[key]['all_time'][-1]*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, TimeFor '{key}': {self.timers[key]['all_time'][-1]*1000:.6f} ms\n")
             else:
                 average_time = sum(self.timers[key]['all_time']) / self.timers[key]['cnt']
-                print(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms")
+                # print(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms\n")
         self.file.write("\n")
         self.file.flush()

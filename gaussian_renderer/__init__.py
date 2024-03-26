@@ -36,8 +36,11 @@ def get_cuda_args(strategy, mode="train"):# "test"
 
     cuda_args = {
             "mode": mode,
-            "world_size": str(utils.MP_GROUP.size()),
-            "local_rank": str(utils.MP_GROUP.rank()),
+            "world_size": str(utils.WORLD_SIZE),
+            "global_rank": str(utils.GLOBAL_RANK),
+            "local_rank": str(utils.LOCAL_RANK),
+            "mp_world_size": str(utils.MP_GROUP.size()),
+            "mp_rank": str(utils.MP_GROUP.rank()),
             "log_folder": args.log_folder,
             "log_interval": str(args.log_interval),
             "iteration": str(iteration),

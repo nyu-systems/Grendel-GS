@@ -282,7 +282,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         for camera_id, strategy_history in cameraId2StrategyHistory.items():
             data_json[camera_id] = strategy_history.to_json()
         
-        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".json", 'w') as f:
+        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background):
@@ -297,8 +297,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
-                l1_test = 0.0
-                psnr_test = 0.0
+                l1_test = torch.scalar_tensor(0.0, device="cuda")
+                psnr_test = torch.scalar_tensor(0.0, device="cuda")
 
                 num_cameras = len(config['cameras'])
                 eval_dataset = SceneDataset(config['cameras'])
@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
 
     # create log folder
-    if utils.LOCAL_RANK == 0:
+    if utils.GLOBAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
     if utils.WORLD_SIZE > 1:
@@ -367,7 +367,7 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     # Initialize log file and print all args
-    log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.LOCAL_RANK)+".log", 'w')
+    log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".log", 'w')
     print_all_args(args, log_file)
 
     training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)
