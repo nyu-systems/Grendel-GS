@@ -1,10 +1,8 @@
-# This Branch supports both DP and MP for 3DGS
-
-## Cloning the Repository on the dp_system branch
+## Cloning the Repository
 
 ```shell
 # SSH
-git clone git@github.com:TarzanZhao/gaussian-splatting.git -b dp_system --recursive
+git clone -b dist git@github.com:TarzanZhao/gaussian-splatting.git --recursive
 ```
 
 #### Local Setup
@@ -85,8 +83,10 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py \
     --bsz 2 \
     --benchmark_stats
 ```
-`--dp_size` should be the same as `--bsz`. 
-In hz3496's account in greene, the dataset here is `/scratch/hz3496/3dgs_data/tandt_db/tandt/train`
+
+#### NOTE
+1. `--dp_size` should be the same as `--bsz`. 
+2. In hz3496's account in greene, the dataset(`-s`) here is `/scratch/hz3496/3dgs_data/tandt_db/tandt/train` . 
 
 ### Rendering
 
