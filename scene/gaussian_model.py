@@ -176,6 +176,10 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.sum_visible_count_in_one_batch = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+    def all_parameters(self):
+        return [self._xyz, self._features_dc, self._features_rest, self._scaling, self._rotation, self._opacity]
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -202,8 +206,22 @@ class GaussianModel:
 
         utils.check_memory_usage_logging("after training_setup")
 
-    def sync_gradients_for_replicated_3dgs_storage(self):
+    def sync_gradients_for_replicated_3dgs_storage(self, screenspace_pkg):
         args = utils.get_args()
+
+        if args.grad_normalization_mode == "divide_by_visible_count":
+            # allgather visibility filder from all dp workers, so that each worker contains the visibility filter of all data points. 
+            if args.memory_distribution_mode == "2":
+                batched_visible_count = screenspace_pkg["batched_locally_preprocessed_visibility_filter"]
+            elif utils.DP_GROUP.size() > 1:
+                batched_visible_count = [None for _ in range(utils.DP_GROUP.size())]
+                local_visible_count = screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0]
+                torch.distirbuted.all_gather(batched_visible_count, local_visible_count, group=utils.DP_GROUP)
+            else:
+                batched_visible_count = [screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0]]
+
+            for i in range(len(batched_visible_count)):
+                self.sum_visible_count_in_one_batch += batched_visible_count[i].int()
 
         if args.sync_grad_mode == "dense":
             sync_func = sync_gradients_densely
@@ -433,6 +451,7 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+        self.sum_visible_count_in_one_batch = self.sum_visible_count_in_one_batch[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -475,6 +494,8 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.sum_visible_count_in_one_batch = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # TODO: if the densification is inside a grad accumulation loop, this should not be reset to 0.
 
         self.send_to_gpui_cnt = torch.cat((self.send_to_gpui_cnt, new_send_to_gpui_cnt), dim=0)
 
@@ -728,6 +749,7 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.sum_visible_count_in_one_batch = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # NOTE: This function is called right after desify_and_prune. Therefore self.xyz_gradient_accum, self.denom and self.max_radii2D are all zero. 
         # We do not need to all2all them here. 
 

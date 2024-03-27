@@ -142,6 +142,8 @@ class DistributionParams(ParamGroup):
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
         self.dp_size = 1 # data parallel degree.
+        self.grad_accumulation_steps = 1 # gradient accumulation steps. The actual batch size for updating parameters is args.bsz*args.grad_accumulation_steps.
+        self.grad_normalization_mode = "divide_by_batch_size" # "divide_by_visible_count", "divide_by_batch_size" gradient normalization mode. 
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 

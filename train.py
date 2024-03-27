@@ -133,6 +133,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     # Training Loop
     train_start_time = time.time()
     progress_bar = tqdm(range(1, opt_args.iterations + 1), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
+    num_trained_batches = 0
     for iteration in range(1, opt_args.iterations + 1, args.bsz):
 
         # Step Initialization
@@ -141,6 +142,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         timers.clear()
         timers.start("pre_forward")
         gaussians.update_learning_rate(iteration)
+        num_trained_batches += 1
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if utils.check_update_at_this_iter(iteration, args.bsz, 1000, 0):
             gaussians.oneupSHdegree()
@@ -199,7 +201,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         # Sync gradients across replicas, if some 3dgs are stored replicatedly.
         globally_sync_for_timer()
         timers.start("sync_gradients_for_replicated_3dgs_storage")
-        gaussians.sync_gradients_for_replicated_3dgs_storage()
+        with torch.no_grad():
+            gaussians.sync_gradients_for_replicated_3dgs_storage(screenspace_pkg)
         timers.stop("sync_gradients_for_replicated_3dgs_storage")
         if args.memory_distribution_mode == "0" and utils.MP_GROUP.size() > 1:
             local_render_screenspace_mean2D = screenspace_pkg["batched_locally_preprocessed_mean2D"][0]
@@ -256,8 +259,25 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 scene.save(iteration)
 
             # Optimizer step
-            if iteration < opt_args.iterations:
+            if iteration < opt_args.iterations and (num_trained_batches % args.grad_accumulation_steps == 0):
                 timers.start("optimizer_step")
+
+                if args.grad_normalization_mode == "divide_by_visible_count":
+                    # fill the 0 in sum_visible_count_in_one_batch by 1
+                    gaussians.sum_visible_count_in_one_batch = torch.where(gaussians.sum_visible_count_in_one_batch == 0, torch.tensor(1, device="cuda"), gaussians.sum_visible_count_in_one_batch)
+                    print("sum_visible_count_in_one_batch mean: ", gaussians.sum_visible_count_in_one_batch.mean(), "max: ", gaussians.sum_visible_count_in_one_batch.max())
+                    gradient_multiplier = args.bsz / gaussians.sum_visible_count_in_one_batch.unsqueeze(1)
+                    for param in gaussians.all_parameters():
+                        if param.grad is None:
+                            continue
+                        if len(param.shape) == 2:
+                            param.grad *= gradient_multiplier
+                        elif len(param.shape) == 3:
+                            param.grad *= gradient_multiplier.unsqueeze(2)
+                        else:
+                            raise NotImplementedError("Not implemented for this shape of parameter.")
+                    gaussians.sum_visible_count_in_one_batch.zero_()
+
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
