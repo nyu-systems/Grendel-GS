@@ -122,7 +122,7 @@ class DistributionParams(ParamGroup):
         self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
         self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
         self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
-        self.dist_global_strategy = "" # if self.adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
+        self.dist_global_strategy = "" # if self.render_distribution_adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
         self.adjust_strategy_warmp_iterations = 20 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
         self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
 
@@ -145,22 +145,6 @@ class DistributionParams(ParamGroup):
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
-
-        # Deprecated Arguments
-        self.dist_division_mode = "tile_num" # Deprecated
-        self.adjust_div_stra = False # Deprecated. Distribution strategy adjustment during training for pixel-wise render computation.
-        self.enable_redistribute = True # Deprecated. Enable redistribution for 3dgs storage location.
-        self.redistribution_mode = "0" # Deprecated. Redistribution mode for 3dgs storage location.
-        self.redistribute_frequency = 10 # Deprecated. Redistribution frequency for 3dgs storage location.
-        self.stop_adjust2_well_balanced = False # Deprecated. Stop adjustment if workloads are well balanced.
-        self.img_dist_compile_mode = "general" # Deprecated. Distribution mode for pixel-wise loss computation.
-        self.image_distribution = True # Deprecated. Distribution for pixel-wise loss computation.
-        self.adjust_mode = "1" # Deprecated. 
-        self.avoid_pixel_all2all = False # Deprecated. avoid pixel-wise all2all communication by replicated border pixel rendering during forward. 
-        self.avoid_pixel_all2all_log_correctloss = False # Deprecated. log correct loss for pixel-wise all2all communication.
-        self.memory_distribution = True # enable distribution for 3DGS storage memory and preprocess forward and backward compute. 
-        self.loss_distribution = True # enable distribution for pixel-wise loss computation.
-        self.render_distribution = True # default to be True if world_size > 1.
 
         super().__init__(parser, "Distribution Parameters")
 
