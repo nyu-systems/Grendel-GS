@@ -206,22 +206,19 @@ class GaussianModel:
 
         utils.check_memory_usage_logging("after training_setup")
 
-    def sync_gradients_for_replicated_3dgs_storage(self, screenspace_pkg):
+    def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg):
         args = utils.get_args()
 
         if args.grad_normalization_mode == "divide_by_visible_count":
             # allgather visibility filder from all dp workers, so that each worker contains the visibility filter of all data points. 
-            if args.memory_distribution_mode == "2":
-                batched_visible_count = screenspace_pkg["batched_locally_preprocessed_visibility_filter"]
-            elif utils.DP_GROUP.size() > 1:
-                batched_visible_count = [None for _ in range(utils.DP_GROUP.size())]
-                local_visible_count = screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0]
-                torch.distirbuted.all_gather(batched_visible_count, local_visible_count, group=utils.DP_GROUP)
-            else:
-                batched_visible_count = [screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0]]
+            batched_locally_preprocessed_visibility_filter_int = [x.int() for x in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]
+            sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
 
-            for i in range(len(batched_visible_count)):
-                self.sum_visible_count_in_one_batch += batched_visible_count[i].int()
+            if args.memory_distribution_mode == "2":
+                pass
+            elif utils.DP_GROUP.size() > 1:
+                torch.distributed.all_reduce(sum_batched_locally_preprocessed_visibility_filter_int, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
+            batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] = sum_batched_locally_preprocessed_visibility_filter_int
 
         if args.sync_grad_mode == "dense":
             sync_func = sync_gradients_densely

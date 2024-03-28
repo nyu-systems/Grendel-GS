@@ -142,7 +142,6 @@ class DistributionParams(ParamGroup):
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
         self.dp_size = 1 # data parallel degree.
-        self.grad_accumulation_steps = 1 # gradient accumulation steps. The actual batch size for updating parameters is args.bsz*args.grad_accumulation_steps.
         self.grad_normalization_mode = "divide_by_batch_size" # "divide_by_visible_count", "divide_by_batch_size" gradient normalization mode. 
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
@@ -276,7 +275,7 @@ def check_args(args):
         args.memory_distribution_mode = "0"# in such cases, we actually do not shard 3dgs storage at all.
     # by default, we will distribute the render computation, whenever we are able to do that(MP size > 1)
 
-    assert args.bsz == args.dp_size, "each dp worker should compute for one sample, for now."
+    assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
 
     if args.render_distribution_adjust_mode == "3":
         assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."

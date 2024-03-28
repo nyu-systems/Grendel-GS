@@ -45,14 +45,15 @@ def globally_sync_for_timer():
     if utils.check_enable_python_timer() and utils.MP_GROUP.size() > 1:
         torch.distributed.barrier(group=utils.MP_GROUP)
 
-def densification(iteration, scene, gaussians, screenspace_pkg):
+def densification(iteration, scene, gaussians, batched_screenspace_pkg):
     args = utils.get_args()
     timers = utils.get_timers()
     log_file = utils.get_log_file()
 
     # Update Statistics for redistribution
     if args.memory_distribution_mode != "0":
-        gaussians.send_to_gpui_cnt += screenspace_pkg["local2j_ids_bool"]
+        for local2j_ids_bool in batched_screenspace_pkg["batched_local2j_ids_bool"]:
+            gaussians.send_to_gpui_cnt += local2j_ids_bool
 
     # Densification
     if not args.disable_auto_densification and iteration < args.densify_until_iter:
@@ -60,9 +61,9 @@ def densification(iteration, scene, gaussians, screenspace_pkg):
         timers.start("densification")
 
         timers.start("densification_update_stats")
-        for radii, visibility_filter, screenspace_mean2D in zip(screenspace_pkg["batched_locally_preprocessed_radii"],
-                                                                screenspace_pkg["batched_locally_preprocessed_visibility_filter"],
-                                                                screenspace_pkg["batched_locally_preprocessed_mean2D"]):
+        for radii, visibility_filter, screenspace_mean2D in zip(batched_screenspace_pkg["batched_locally_preprocessed_radii"],
+                                                                batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"],
+                                                                batched_screenspace_pkg["batched_locally_preprocessed_mean2D"]):
             gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
             gaussians.add_densification_stats(screenspace_mean2D, visibility_filter)
         timers.stop("densification_update_stats")
@@ -139,8 +140,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         # Step Initialization
         progress_bar.update(args.bsz)
         utils.set_cur_iter(iteration)
-        timers.clear()
-        timers.start("pre_forward")
         gaussians.update_learning_rate(iteration)
         num_trained_batches += 1
         # Every 1000 its we increase the levels of SH up to a maximum degree
@@ -149,8 +148,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         # Prepare data: Pick random Cameras for training
         batched_cameras = train_dataset.get_batched_cameras(args.bsz)
-        local_render_viewpoint_cam = batched_cameras[utils.DP_GROUP.rank()]
-        utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
+        batched_screenspace_pkg = {"batched_locally_preprocessed_radii":[],
+                                   "batched_locally_preprocessed_visibility_filter":[],
+                                   "batched_locally_preprocessed_mean2D":[],
+                                   "batched_local2j_ids_bool":[],
+                                   "statistic_collectors":[],
+                                   "losses": []}
 
         # Prepare Workload division strategy
         batched_strategies = []
@@ -163,120 +166,131 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             strategy = strategy_history.start_strategy()
             batched_strategies.append(strategy)
             batched_strategy_histories.append(strategy_history)
-        local_render_strategy = batched_strategies[utils.DP_GROUP.rank()]
-        timers.stop("pre_forward")
-        # memory_iteration_begin = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
 
+        assert args.bsz % args.dp_size == 0, "dp_size must be a divisor of bsz."
+        micro_bsz_size = args.dp_size
+        num_samples_per_dp_rank = args.bsz // args.dp_size
+        for micro_step in range(args.bsz // args.dp_size):
+            # Micro Step Initialization
+            timers.clear()
 
-        # 3DGS preprocess and all2all communication
-        globally_sync_for_timer()
-        screenspace_pkg = preprocess3dgs_and_all2all(batched_cameras, gaussians, pipe_args, background,
-                                                     batched_strategies,
-                                                     mode="train")
-        statistic_collector = screenspace_pkg["cuda_args"]["stats_collector"]
+            micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_rank]
+            micro_batched_strategies = batched_strategies[micro_step::num_samples_per_dp_rank]
+            local_render_viewpoint_cam = micro_batched_cameras[utils.DP_GROUP.rank()]
+            utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
+            local_render_strategy = micro_batched_strategies[utils.DP_GROUP.rank()]
 
-        # Pixel-wise Render
-        globally_sync_for_timer() # NOTE: this is to make sure: we are measuring time for local work. where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
-        image, compute_locally = render(screenspace_pkg, local_render_strategy)
+            # 3DGS preprocess and all2all communication
+            globally_sync_for_timer()
+            screenspace_pkg = preprocess3dgs_and_all2all(micro_batched_cameras, gaussians, pipe_args, background,
+                                                         micro_batched_strategies,
+                                                         mode="train")
+            statistic_collector = screenspace_pkg["cuda_args"]["stats_collector"]
 
-        # memory_after_forward = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
-        # Pixel-wise Loss Computation
-        globally_sync_for_timer()
-        Ll1, ssim_loss = loss_computation(image,
-                                          local_render_viewpoint_cam,
-                                          compute_locally,
-                                          local_render_strategy,
-                                          statistic_collector)
-        loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
-        utils.check_memory_usage_logging("after loss")
-        # memory_after_loss = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+            # Pixel-wise Render
+            globally_sync_for_timer() # NOTE: this is to make sure: we are measuring time for local work. where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
+            image, compute_locally = render(screenspace_pkg, local_render_strategy)
 
-        # Backward
-        globally_sync_for_timer()
-        timers.start("backward")
-        loss.backward()
-        timers.stop("backward")
-        utils.check_memory_usage_logging("after backward")
+            # Pixel-wise Loss Computation
+            globally_sync_for_timer()
+            Ll1, ssim_loss = loss_computation(image,
+                                              local_render_viewpoint_cam,
+                                              compute_locally,
+                                              local_render_strategy,
+                                              statistic_collector)
+            loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
+            utils.check_memory_usage_logging("after loss")
 
-        # Sync gradients across replicas, if some 3dgs are stored replicatedly.
-        globally_sync_for_timer()
-        timers.start("sync_gradients_for_replicated_3dgs_storage")
+            # Backward
+            globally_sync_for_timer()
+            timers.start("backward")
+            loss.backward()
+            timers.stop("backward")
+            utils.check_memory_usage_logging("after backward")
+
+            batched_screenspace_pkg["batched_locally_preprocessed_radii"].extend(screenspace_pkg["batched_locally_preprocessed_radii"])
+            batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"].extend(screenspace_pkg["batched_locally_preprocessed_visibility_filter"])
+            batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
+            batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
+            batched_screenspace_pkg["losses"].append(loss)
+            if args.memory_distribution_mode != "0":
+                batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
+
         with torch.no_grad():
-            gaussians.sync_gradients_for_replicated_3dgs_storage(screenspace_pkg)
-        timers.stop("sync_gradients_for_replicated_3dgs_storage")
-        if args.memory_distribution_mode == "0" and utils.MP_GROUP.size() > 1:
-            local_render_screenspace_mean2D = screenspace_pkg["batched_locally_preprocessed_mean2D"][0]
-            torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+            # Sync gradients across replicas, if some 3dgs are stored replicatedly.
+            globally_sync_for_timer()
+            timers.start("sync_gradients_for_replicated_3dgs_storage")
+            gaussians.sync_gradients_for_replicated_3dgs_storage(batched_screenspace_pkg)
+            if args.memory_distribution_mode == "0" and utils.MP_GROUP.size() > 1:
+                for local_render_screenspace_mean2D in batched_screenspace_pkg["batched_locally_preprocessed_mean2D"]:
+                    torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+            timers.stop("sync_gradients_for_replicated_3dgs_storage")
+
+            # Adjust workload division strategy. 
+            globally_sync_for_timer()
+            timers.start("strategy.update_stats")
+            if iteration > args.adjust_strategy_warmp_iterations:
+                all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
+                if utils.DP_GROUP.size() > 1:
+                    torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
+                    all_statistic_collector = sum(all_statistic_collector, [])
+                else:
+                    all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
+                for idx in range(args.bsz):
+                    batched_strategies[idx].update_stats(all_statistic_collector[idx])
+                    batched_strategy_histories[idx].finish_strategy()
+            timers.stop("strategy.update_stats")
 
 
-        # Adjust workload division strategy. 
-        globally_sync_for_timer()
-        timers.start("strategy.update_stats")
-        if iteration > args.adjust_strategy_warmp_iterations:
-            all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
+            # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
+            timers.start("allgather_loss_and_log")
             if utils.DP_GROUP.size() > 1:
-                torch.distributed.all_gather_object(all_statistic_collector, statistic_collector, group=utils.DP_GROUP)
+                local_losses = torch.stack(batched_screenspace_pkg["losses"])
+                losses = torch.empty( (args.dp_size, num_samples_per_dp_rank), dtype=torch.float32, device="cuda")
+                torch.distributed.all_gather_into_tensor(losses, local_losses, group=utils.DP_GROUP)
+                losses_cpu = losses.flatten().cpu().tolist()
             else:
-                all_statistic_collector[0] = statistic_collector
-            for rank in range(utils.DP_GROUP.size()):
-                batched_strategies[rank].update_stats(all_statistic_collector[rank])
-                batched_strategy_histories[rank].finish_strategy()
-        timers.stop("strategy.update_stats")
+                losses_cpu = torch.stack(batched_screenspace_pkg["losses"]).cpu().tolist()
+            train_dataset.update_losses(losses_cpu)
+
+            # Logging
+            losses_cpu = [round(loss, 6) for loss in losses_cpu]
+            log_string = "iteration[{},{}) loss: {} image: {}\n".format(iteration, iteration+args.bsz,
+                                                                        losses_cpu,
+                                                                        [viewpoint_cam.image_name for viewpoint_cam in batched_cameras])
+            log_file.write(log_string)
+            timers.stop("allgather_loss_and_log")
 
 
-        # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
-        if utils.DP_GROUP.size() > 1:
-            losses = torch.empty( (utils.DP_GROUP.size(), ), dtype=torch.float32, device="cuda")
-            torch.distributed.all_gather_into_tensor(losses, loss, group=utils.DP_GROUP)
-            losses_cpu = losses.cpu().tolist()
-            loss_cpu = losses[utils.DP_GROUP.rank()]
-        else:
-            loss_cpu = loss.item()
-            losses_cpu = [loss_cpu]
-        train_dataset.update_losses(losses_cpu)
-
-        # Logging
-        losses_cpu = [round(loss, 6) for loss in losses_cpu]
-        log_string = "iteration[{},{}) loss: {} image: {}\n".format(iteration, iteration+args.bsz,
-                                                                    losses_cpu,
-                                                                    [viewpoint_cam.image_name for viewpoint_cam in batched_cameras])
-        log_file.write(log_string)
-        # if args.log_iteration_memory_usage:
-        #     log_string += "memory_iteration_begin: {:.4f} GB. memory_after_forward: {:.4f} GB. memory_after_loss: {:.4f} GB.\n".format(
-        #         memory_iteration_begin, memory_after_forward, memory_after_loss
-        #     )
-
-        with torch.no_grad():
             # Log and save
             training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background)
 
             # Densification
-            densification(iteration, scene, gaussians, screenspace_pkg)
+            densification(iteration, scene, gaussians, batched_screenspace_pkg)
 
+            # Save Gaussians
             if iteration in args.save_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
 
             # Optimizer step
-            if iteration < opt_args.iterations and (num_trained_batches % args.grad_accumulation_steps == 0):
+            if iteration < opt_args.iterations:
                 timers.start("optimizer_step")
 
                 if args.grad_normalization_mode == "divide_by_visible_count":
-                    # fill the 0 in sum_visible_count_in_one_batch by 1
-                    gaussians.sum_visible_count_in_one_batch = torch.where(gaussians.sum_visible_count_in_one_batch == 0, torch.tensor(1, device="cuda"), gaussians.sum_visible_count_in_one_batch)
-                    print("sum_visible_count_in_one_batch mean: ", gaussians.sum_visible_count_in_one_batch.mean(), "max: ", gaussians.sum_visible_count_in_one_batch.max())
-                    gradient_multiplier = args.bsz / gaussians.sum_visible_count_in_one_batch.unsqueeze(1)
+                    gradient_multiplier = args.bsz / batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
+                    gradient_multiplier[gradient_multiplier.isnan()] = 0.0
+
                     for param in gaussians.all_parameters():
                         if param.grad is None:
                             continue
                         if len(param.shape) == 2:
-                            param.grad *= gradient_multiplier
+                            param.grad *= gradient_multiplier.unsqueeze(1)
                         elif len(param.shape) == 3:
-                            param.grad *= gradient_multiplier.unsqueeze(2)
+                            param.grad *= gradient_multiplier.unsqueeze(1).unsqueeze(2)
                         else:
                             raise NotImplementedError("Not implemented for this shape of parameter.")
-                    gaussians.sum_visible_count_in_one_batch.zero_()
 
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -322,8 +336,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
 
                 num_cameras = len(config['cameras'])
                 eval_dataset = SceneDataset(config['cameras'])
-                for idx in range(1, num_cameras+1, args.bsz):
-                    batched_cameras = eval_dataset.get_batched_cameras(args.bsz)
+                for idx in range(1, num_cameras+1, args.dp_size):
+                    batched_cameras = eval_dataset.get_batched_cameras(args.dp_size)
                     local_render_camera = batched_cameras[utils.DP_GROUP.rank()]
                     batched_strategies = []
                     for viewpoint in batched_cameras:
