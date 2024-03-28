@@ -142,20 +142,25 @@ class SceneDataset:
     def cur_iteration_in_epoch(self):
         return len(self.iteration_loss)
 
-    def get_one_camera(self):
+    def get_one_camera(self, batched_cameras_uid):
         if len(self.cur_epoch_cameras) == 0:
             self.cur_epoch_cameras = self.cameras.copy()
         self.cur_iteration += 1
 
         # TODO: fixed_training_image not implemented. 
-        camera_id = randint(0, len(self.cur_epoch_cameras)-1)
+        while True:
+            camera_id = randint(0, len(self.cur_epoch_cameras)-1)
+            if self.cur_epoch_cameras[camera_id].uid not in batched_cameras_uid:
+                break
         viewpoint_cam = self.cur_epoch_cameras.pop(camera_id)
         return viewpoint_cam
 
     def get_batched_cameras(self, batch_size):
         batched_cameras = []
+        batched_cameras_uid = []
         for i in range(batch_size):
-            batched_cameras.append(self.get_one_camera())
+            batched_cameras.append(self.get_one_camera(batched_cameras_uid))
+            batched_cameras_uid.append(batched_cameras[-1].uid)
         return batched_cameras
 
     def update_losses(self, losses):
