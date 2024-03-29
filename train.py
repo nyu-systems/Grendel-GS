@@ -231,14 +231,18 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             timers.start("strategy.update_stats")
             if iteration > args.adjust_strategy_warmp_iterations:
                 all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
+                timers.start("strategy.update_stats.all_statistic_collector")
                 if utils.DP_GROUP.size() > 1:
                     torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
                     all_statistic_collector = sum(all_statistic_collector, [])
                 else:
                     all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
+                timers.stop("strategy.update_stats.all_statistic_collector")
+                timers.start("strategy.update_stats.update_stats")                
                 for idx in range(args.bsz):
                     batched_strategies[idx].update_stats(all_statistic_collector[idx])
                     batched_strategy_histories[idx].finish_strategy()
+                timers.stop("strategy.update_stats.update_stats")
             timers.stop("strategy.update_stats")
 
 
@@ -322,7 +326,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background):
     log_file = utils.get_log_file()
     # Report test and samples of training set
-    if utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
+    if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
