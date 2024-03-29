@@ -166,6 +166,21 @@ def init_distributed(args):
         MP_GROUP = SingleGPUGroup()
         DEFAULT_GROUP = SingleGPUGroup()
 
+def our_allgather_among_cpu_processes_float_list(data, group):
+    ## official implementation: torch.distributed.all_gather_object()
+    # all_data = [None for _ in range(group.size())]
+    # torch.distributed.all_gather_object(all_data, data, group=group)
+
+    ## my hand-written allgather.
+    # data should a list of floats
+    assert isinstance(data, list) and isinstance(data[0], float), "data should be a list of float"
+    data_gpu = torch.tensor(data, dtype=torch.float32, device="cuda")
+    all_data_gpu = torch.empty( (group.size(), len(data_gpu)), dtype=torch.float32, device="cuda")
+    torch.distributed.all_gather_into_tensor(all_data_gpu, data_gpu, group=group)
+
+    all_data = all_data_gpu.cpu().tolist()
+    return all_data
+
 def get_local_chunk_l_r(array_length, world_size, rank):
     chunk_size = (array_length + world_size - 1) // world_size
     l = rank * chunk_size

@@ -41,7 +41,7 @@ class Timer:
             print(f"Time for '{key}': {duration:.6f} seconds")
         return duration
 
-    def printTimers(self, iteration, mode="this_iteration"):# this_iteration, average
+    def printTimers(self, iteration, mode="this_iteration"):# this_iteration, average, sum
         """Get the elapsed time for the given key without stopping the timer"""
         if not utils.check_enable_python_timer():
             return
@@ -55,10 +55,13 @@ class Timer:
             if mode == 'this_iteration':
                 # print(f"iter {iteration}, TimeFor '{key}': {self.timers[key]['all_time'][-1]*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, TimeFor '{key}': {self.timers[key]['all_time'][-1]*1000:.6f} ms\n")
-            else:
+            elif mode == 'average':
                 average_time = sum(self.timers[key]['all_time']) / self.timers[key]['cnt']
                 # print(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms")
                 self.file.write(f"iter {iteration}, AverageTimeFor '{key}': {average_time*1000:.6f} ms\n")
+            elif mode == 'sum':
+                sum_time = sum(self.timers[key]['all_time'])
+                self.file.write(f"iter {iteration}, TimeFor '{key}': {sum_time*1000:.6f} ms\n")
         self.file.write("\n")
         self.file.flush()
     

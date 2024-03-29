@@ -20,7 +20,7 @@ from gaussian_renderer import (
 from gaussian_renderer.loss_distribution import loss_computation
 import sys
 from scene import Scene, GaussianModel, SceneDataset
-from scene.workload_division import create_division_strategy_history
+from scene.workload_division import create_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -142,6 +142,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         utils.set_cur_iter(iteration)
         gaussians.update_learning_rate(iteration)
         num_trained_batches += 1
+        timers.clear()
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if utils.check_update_at_this_iter(iteration, args.bsz, 1000, 0):
             gaussians.oneupSHdegree()
@@ -172,8 +173,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         num_samples_per_dp_rank = args.bsz // args.dp_size
         for micro_step in range(args.bsz // args.dp_size):
             # Micro Step Initialization
-            timers.clear()
-
             micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_rank]
             micro_batched_strategies = batched_strategies[micro_step::num_samples_per_dp_rank]
             local_render_viewpoint_cam = micro_batched_cameras[utils.DP_GROUP.rank()]
@@ -229,20 +228,43 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Adjust workload division strategy. 
             globally_sync_for_timer()
             timers.start("strategy.update_stats")
-            if iteration > args.adjust_strategy_warmp_iterations:
-                all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
-                timers.start("strategy.update_stats.all_statistic_collector")
-                if utils.DP_GROUP.size() > 1:
-                    torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
-                    all_statistic_collector = sum(all_statistic_collector, [])
-                else:
-                    all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
-                timers.stop("strategy.update_stats.all_statistic_collector")
-                timers.start("strategy.update_stats.update_stats")                
-                for idx in range(args.bsz):
-                    batched_strategies[idx].update_stats(all_statistic_collector[idx])
-                    batched_strategy_histories[idx].finish_strategy()
-                timers.stop("strategy.update_stats.update_stats")
+            if iteration > args.adjust_strategy_warmp_iterations and utils.DEFAULT_GROUP.size() > 1:
+                ### orginal implementation. When the new implementation is stable, I will delete the old implementation. 
+                # all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
+                # timers.start("strategy.update_stats.all_statistic_collector")
+                # if utils.DP_GROUP.size() > 1:
+                #     torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
+                #     all_statistic_collector = sum(all_statistic_collector, [])
+                # else:
+                #     all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
+                # timers.stop("strategy.update_stats.all_statistic_collector")
+                # timers.start("strategy.update_stats.update_stats")
+                # for idx in range(args.bsz):
+                #     batched_strategies[idx].update_stats(all_statistic_collector[idx])
+                #     batched_strategy_histories[idx].finish_strategy()
+                # timers.stop("strategy.update_stats.update_stats")
+                pass
+
+                ### new implementation
+                assert args.render_distribution_adjust_mode == "2" or args.render_distribution_adjust_mode == "5", "Only support mode 2 and 5 for now."
+                timers.start("strategy.update_stats.all_gather_running_time")
+                batched_local_running_time = []
+                for statistic_collector in batched_screenspace_pkg["statistic_collectors"]:
+                    batched_local_running_time.append(get_local_running_time_by_modes(statistic_collector))
+
+                all_running_time = utils.our_allgather_among_cpu_processes_float_list(batched_local_running_time, utils.DEFAULT_GROUP)
+
+                timers.stop("strategy.update_stats.all_gather_running_time")
+
+                for dp_rk in range(utils.DP_GROUP.size()):
+                    for accum_idx_in_one_dp_rk in range(num_samples_per_dp_rank):
+                        idx_in_one_batch = dp_rk * num_samples_per_dp_rank + accum_idx_in_one_dp_rk
+                        all_running_time_cross_mp = []
+                        for mp_rk in range(utils.MP_GROUP.size()):
+                            all_running_time_cross_mp.append(all_running_time[ dp_rk * utils.MP_GROUP.size() + mp_rk ][accum_idx_in_one_dp_rk])
+                        batched_strategies[idx_in_one_batch].update_stats(all_running_time_cross_mp)
+                        batched_strategy_histories[idx_in_one_batch].finish_strategy()
+
             timers.stop("strategy.update_stats")
 
 
@@ -304,7 +326,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         # Finish a iteration and clean up
         if utils.check_enable_python_timer():
-            timers.printTimers(iteration)
+            timers.printTimers(iteration, mode="sum")
         log_file.flush()
 
     # Finish training

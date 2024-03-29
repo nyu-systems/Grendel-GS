@@ -180,6 +180,18 @@ class DivisionStrategyNoRenderDistribution(DivisionStrategyWS1):
         data["local_running_time"] = self.local_running_time
         return data
 
+class DivisionStrategyNoRenderDistribution_simplified(DivisionStrategyWS1):
+    # when MP_GROUP.size() == 1, we do not have render distribution. Then, we should use it. 
+
+    def update_stats(self, local_running_time):
+        self.local_running_time = local_running_time
+
+    def to_json(self):
+        # convert to json format
+        data = {}
+        data["local_running_time"] = self.local_running_time
+        return data
+
 class DivisionStrategy_1(DivisionStrategy):
 
     def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, render_distribution_adjust_mode):
@@ -321,6 +333,27 @@ class DivisionStrategy_2_simplified(DivisionStrategy_2):
         # data["i2j_send_size"] = self.i2j_send_size
         return data
 
+class DivisionStrategy_2_most_simplified(DivisionStrategy_2):
+
+    def update_stats(self, global_running_times):
+        self.global_running_times = global_running_times
+        self.local_running_time = global_running_times[self.rank]
+
+        timers = utils.get_timers()
+        timers.start("[strategy.update_stats]update_heuristic")
+        self.update_heuristic()
+        timers.stop("[strategy.update_stats]update_heuristic")
+
+    def to_json(self):
+        # convert to json format
+        data = {}
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
+        data["local_strategy"] = (self.division_pos[self.rank], self.division_pos[self.rank+1])
+        data["global_running_times"] = self.global_running_times
+        data["local_running_time"] = self.local_running_time
+        # data["i2j_send_size"] = self.i2j_send_size
+        return data
+
 class DivisionStrategyFixedByUser(DivisionStrategy):
     def __init__(self, camera, world_size, rank, tile_x, tile_y, global_division_pos_str, render_distribution_adjust_mode):
         division_pos = list(map(int, global_division_pos_str.split(",")))
@@ -427,7 +460,9 @@ class DivisionStrategyHistoryNoRenderDistribution(DivisionStrategyHistoryWS1):
     # when MP_GROUP.size() == 1, we do not have render distribution. Then, we should use it.
 
     def start_strategy(self):
-        self.working_strategy = DivisionStrategyNoRenderDistribution(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y)
+        # DivisionStrategyNoRenderDistribution_simplified
+        self.working_strategy = DivisionStrategyNoRenderDistribution_simplified(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y)
+        # self.working_strategy = DivisionStrategyNoRenderDistribution(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y)
         self.working_iteration = utils.get_cur_iter()
         return self.working_strategy
 
@@ -490,7 +525,9 @@ class DivisionStrategyHistory_2(DivisionStrategyHistory):
             else:
                 division_pos = self.division_pos_heuristic()
 
-            self.working_strategy = DivisionStrategy_2_simplified(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.render_distribution_adjust_mode)
+            # DivisionStrategy_2_most_simplified
+            self.working_strategy = DivisionStrategy_2_most_simplified(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.render_distribution_adjust_mode)
+            # self.working_strategy = DivisionStrategy_2_simplified(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.render_distribution_adjust_mode)
             # self.working_strategy = DivisionStrategy_2(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.render_distribution_adjust_mode)
             self.working_iteration = utils.get_cur_iter()
         return self.working_strategy
