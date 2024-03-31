@@ -1222,8 +1222,59 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
                 loss_sum = 0
                 loss_cnt = 0
 
-    return Ll1, ssim_loss
-    
+    return Ll1, ssim_loss 
+
+def avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
+    timers = utils.get_timers()
+    args = utils.get_args()
+
+    timers.start("prepare_image_rect_and_mask")
+    window_size = 11
+
+    ((local_tile_y_l, local_tile_y_r), (local_tile_x_l, local_tile_x_r) ) = strategy.get_local_strategy()
+
+    first_pixel_y = local_tile_y_l * utils.BLOCK_Y
+    last_pixel_y_plus1 = local_tile_y_r * utils.BLOCK_Y
+    first_pixel_x = local_tile_x_l * utils.BLOCK_X
+    last_pixel_x_plus1 = local_tile_x_r * utils.BLOCK_X
+
+    coverage_min_y = max(first_pixel_y - window_size, 0)
+    coverage_max_y = min(last_pixel_y_plus1 + window_size, utils.IMG_H)
+    coverage_min_x = max(first_pixel_x - window_size, 0)
+    coverage_max_x = min(last_pixel_x_plus1 + window_size, utils.IMG_W)
+
+    local_image_rect = image[:, coverage_min_y:coverage_max_y, coverage_min_x:coverage_max_x].contiguous()
+    local_image_rect_pixels_compute_locally = torch.ones((coverage_max_y-coverage_min_y, coverage_max_x-coverage_min_x), dtype=torch.bool, device="cuda")
+    timers.stop("prepare_image_rect_and_mask")
+
+    # Move partial image_gt which is needed to GPU.
+    timers.start("gt_image_load_to_gpu")
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, coverage_min_x:coverage_max_x].cuda().contiguous()
+    timers.stop("gt_image_load_to_gpu")
+
+    # Loss computation
+    timers.start("local_loss_computation")
+    torch.cuda.synchronize()# TODO: improve the time measurement here.
+    start_time = time.time()
+    pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
+                                           local_image_rect_gt,
+                                           local_image_rect_pixels_compute_locally)
+    Ll1 = pixelwise_Ll1.sum()/(utils.get_num_pixels()*3)
+    utils.check_memory_usage_logging("after l1_loss")
+    pixelwise_ssim_loss = pixelwise_ssim_with_mask(local_image_rect,
+                                                   local_image_rect_gt,
+                                                   local_image_rect_pixels_compute_locally)
+    ssim_loss = pixelwise_ssim_loss.sum()/(utils.get_num_pixels()*3)
+
+    torch.cuda.synchronize()
+    statistic_collector["forward_loss_time"] = (time.time() - start_time)*1000
+    utils.check_memory_usage_logging("after ssim_loss")
+    timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
+
+    return Ll1, ssim_loss 
+
+
+
 def replicated_loss_computation(image, viewpoint_cam):
 
     timers = utils.get_timers()
@@ -1278,4 +1329,8 @@ def loss_computation(image, viewpoint_cam, compute_locally, strategy=None, stati
     elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
         return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
     elif args.loss_distribution_mode == "avoid_pixel_all2all":
-        return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+        if args.render_distribution_adjust_mode == "6":
+            return avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+        else:
+            return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
+    

@@ -160,6 +160,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                    "losses": []}
 
         # Prepare Workload division strategy
+        timers.start("prepare_strategies")
         batched_strategies = []
         batched_strategy_histories = []
         for viewpoint_cam in batched_cameras:
@@ -170,6 +171,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             strategy = strategy_history.start_strategy()
             batched_strategies.append(strategy)
             batched_strategy_histories.append(strategy_history)
+        timers.stop("prepare_strategies")
 
         assert args.bsz % args.dp_size == 0, "dp_size must be a divisor of bsz."
         micro_bsz_size = args.dp_size
@@ -249,7 +251,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 pass
 
                 ### new implementation
-                assert args.render_distribution_adjust_mode == "2" or args.render_distribution_adjust_mode == "5", "Only support mode 2 and 5 for now."
+                assert args.render_distribution_adjust_mode in ["2", "5", "6"], "Only support mode 2, 5 and 6 for now."
                 timers.start("strategy.update_stats.all_gather_running_time")
                 batched_local_running_time = []
                 for statistic_collector in batched_screenspace_pkg["statistic_collectors"]:

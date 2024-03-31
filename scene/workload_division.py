@@ -59,6 +59,7 @@ def check_division_indices_globally_same(division_indices):
             assert recevie[i][j] == division_indices[j], f"check_division_indices_globally_save failed: {i} {j}"
 
 def division_pos_heuristic(cur_heuristic, tile_num, world_size):
+    assert cur_heuristic.shape[0] == tile_num, "the length of heuristics should be the same as the number of tiles."
     heuristic_prefix_sum = torch.cumsum(cur_heuristic, dim=0)
     heuristic_sum = heuristic_prefix_sum[-1]
     heuristic_per_worker = heuristic_sum / world_size
@@ -105,6 +106,13 @@ def get_local_running_time_by_modes(stats_collector):
         )
         # return stats_collector["pixelwise_workloads_time"]
 
+    if args.render_distribution_adjust_mode == "6":
+        return (
+            stats_collector["forward_render_time"]+
+            stats_collector["backward_render_time"]+
+            2*stats_collector["forward_loss_time"]
+        )
+
     raise ValueError(f"Unknown render_distribution_adjust_mode: {args.render_distribution_adjust_mode}")
 
 ########################## DivisionStrategy ##########################
@@ -130,7 +138,7 @@ class DivisionStrategy:
         # by default, each gpu compute it local tiles in forward and use all2all to fetch pixels near border on other GPUs, for later loss computation.
         if self.render_distribution_adjust_mode in  [None, "1", "2", "3", "4", "evaluation"]:
             return False
-        if self.render_distribution_adjust_mode == "5":
+        if self.render_distribution_adjust_mode in ["5", "6"]:
             return True
         raise ValueError(f"Unknown render_distribution_adjust_mode: {self.render_distribution_adjust_mode}")
 
@@ -405,6 +413,142 @@ class DivisionStrategy_4(DivisionStrategy):
 
 
 
+class DivisionStrategy_6(DivisionStrategy):
+
+    def __init__(self, camera, world_size, rank, tile_x, tile_y, division_pos, render_distribution_adjust_mode):
+        super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, render_distribution_adjust_mode)
+        # option 1: I should fisrt divide the x-axis(images are wide) and then divide the y-axis.
+        # division_pos = (division_pos_ys, division_pos_xs)
+        ## division_pos_xs = [0, ..., tile_x], shape is (self.grid_size_x,)
+        ## division_pos_ys = shape is (self.grid_size_x, self.grid_size_y+1)
+        ## example, suppose we have rank=8, [[0, 8, 16], [0, 9, 16], [0, 6, 16], [0, 12, 16]]
+        self.grid_size_y, self.grid_size_x = DivisionStrategy_6.get_grid_size(world_size)
+        self.grid_y_rank = self.rank // self.grid_size_x
+        self.grid_x_rank = self.rank % self.grid_size_x
+
+        # option 2
+        # division_pos = (division_pos_ys, division_pos_xs)
+        ## division_pos_ys = [0, ..., tile_y]
+        ## division_pos_xs = [0, ..., tile_x]
+
+
+    @staticmethod
+    def get_grid_size(world_size):
+        # return (grid_size_y, grid_size_x)
+        if world_size == 2:
+            return 1, 2
+        elif world_size == 4:
+            return 2, 2
+        elif world_size == 8:
+            return 2, 4
+        elif world_size == 16:
+            #  4, 4
+            raise NotImplementedError
+        else:
+            raise NotImplementedError
+
+    @staticmethod
+    def get_default_division_pos(camera, world_size, rank, tile_x, tile_y):
+        grid_size_y, grid_size_x = DivisionStrategy_6.get_grid_size(world_size)
+
+        tile_x = (camera.image_width + utils.BLOCK_X - 1) // utils.BLOCK_X
+        tile_y = (camera.image_height + utils.BLOCK_Y - 1) // utils.BLOCK_Y
+
+        if tile_x % grid_size_x == 0:
+            x_chunk_size = tile_x // grid_size_x
+        else:
+            x_chunk_size = tile_x // grid_size_x + 1
+        division_pos_xs = [x_chunk_size * i for i in range(grid_size_x)] + [tile_x]
+
+        if tile_y % grid_size_y == 0:
+            y_chunk_size = tile_y // grid_size_y
+        else:
+            y_chunk_size = tile_y // grid_size_y + 1
+        one_division_pos_ys = [y_chunk_size * i for i in range(grid_size_y)] + [tile_y]
+        division_pos_ys = [one_division_pos_ys.copy() for i in range(grid_size_x)]
+        assert len(division_pos_ys)*(len(division_pos_ys[0])-1) == world_size, "Each rank should have one rectangle."
+        division_pos = (division_pos_xs, division_pos_ys)
+        return division_pos
+
+    def get_local_strategy(self):
+        division_pos_xs, division_pos_ys = self.division_pos
+
+        local_tile_x_l, local_tile_x_r = division_pos_xs[self.grid_x_rank], division_pos_xs[self.grid_x_rank+1]
+        local_tile_y_l, local_tile_y_r = division_pos_ys[self.grid_x_rank][self.grid_y_rank], division_pos_ys[self.grid_x_rank][self.grid_y_rank+1]
+
+        return ((local_tile_y_l, local_tile_y_r), (local_tile_x_l, local_tile_x_r) )
+
+    def get_compute_locally(self):
+        ((local_tile_y_l, local_tile_y_r), (local_tile_x_l, local_tile_x_r) ) = self.get_local_strategy()
+
+        compute_locally = torch.zeros( (self.tile_y, self.tile_x), dtype=torch.bool, device="cuda")
+        compute_locally[local_tile_y_l:local_tile_y_r, local_tile_x_l:local_tile_x_r] = True
+        return compute_locally
+
+    def update_stats(self, global_running_times):
+        self.global_running_times = global_running_times
+        self.local_running_time = global_running_times[self.rank]
+
+        timers = utils.get_timers()
+        timers.start("[strategy.update_stats]update_heuristic")
+        self.update_heuristic()
+        timers.stop("[strategy.update_stats]update_heuristic")
+
+    def get_global_strategy_str(self):
+        # for adjust_mode == "6", we do not change it into string.
+        return self.division_pos
+        # division_pos_xs, division_pos_ys = self.division_pos
+        # division_pos_xs_str = ",".join(division_pos_xs)
+
+        # one_division_pos_ys_str_list = []
+        # for one_division_pos_ys in division_pos_ys:
+        #     one_division_pos_ys_str = ",".join(one_division_pos_ys)
+        #     one_division_pos_ys_str_list.append(one_division_pos_ys_str)
+        # division_pos_ys_str = "$".join(one_division_pos_ys_str_list)
+
+        # global_strategy_str = division_pos_xs_str+"@"+division_pos_ys_str
+
+        # return global_strategy_str
+
+    def to_json(self):
+        # convert to json format
+        data = {}
+        data["gloabl_strategy_str"] = self.get_global_strategy_str()
+        data["local_strategy"] = self.get_local_strategy()
+        data["global_running_times"] = self.global_running_times
+        data["local_running_time"] = self.local_running_time
+        return data
+
+    def update_heuristic(self):
+        assert self.global_running_times is not None, "You should call update_stats first."
+        assert self.local_running_time is not None, "You should call update_stats first."
+
+        # TODO: maybe write a kernel to do this. 
+        with torch.no_grad():
+            self.heuristic = torch.zeros((self.tile_y, self.tile_x), dtype=torch.float32, device="cuda", requires_grad=False)
+            # self.heuristic = torch.empty((self.tile_y, self.tile_x), dtype=torch.float32, device="cuda", requires_grad=False)
+
+            division_pos_xs, division_pos_ys = self.division_pos
+            rk_i = 0
+            for rk_i_y in range(self.grid_size_y):
+                for rk_i_x in range(self.grid_size_x):
+                    local_tile_x_l, local_tile_x_r = division_pos_xs[rk_i_x], division_pos_xs[rk_i_x+1]
+                    local_tile_y_l, local_tile_y_r = division_pos_ys[rk_i_x][rk_i_y], division_pos_ys[rk_i_x][rk_i_y+1]
+                    running_time = self.global_running_times[rk_i]
+                    self.heuristic[local_tile_y_l: local_tile_y_r, local_tile_x_l: local_tile_x_r] = running_time / ((local_tile_y_r-local_tile_y_l)*(local_tile_x_r-local_tile_x_l))
+                    rk_i += 1
+            assert (self.heuristic > 0).all(), "every element should be touched here."
+    
+    def well_balanced(self, threshold=0.06):
+        max_time = max(self.global_running_times)
+        min_time = min(self.global_running_times)
+        
+        if max_time - min_time > max_time * threshold:
+            return False
+
+        return True
+
+
 
 ########################## DivisionStrategyHistory ##########################
 class DivisionStrategyHistory:
@@ -585,7 +729,71 @@ class DivisionStrategyHistory_4(DivisionStrategyHistory):
             self.add(self.working_iteration, self.working_strategy)
 
 
+class DivisionStrategyHistory_6(DivisionStrategyHistory):
+    def __init__(self, camera, world_size, rank, render_distribution_adjust_mode):
+        super().__init__(camera, world_size, rank, render_distribution_adjust_mode)
 
+        self.cur_heuristic = None
+        self.grid_size_y, self.grid_size_x = DivisionStrategy_6.get_grid_size(world_size)
+        self.grid_y_rank = self.rank // self.grid_size_x
+        self.grid_x_rank = self.rank % self.grid_size_x
+
+    def update_heuristic(self, strategy=None):# XXX: local_running_time is now render backward running time for benchmarking method. 
+        if strategy is None:
+            strategy = self.working_strategy
+
+        new_heuristic = strategy.heuristic
+        if self.cur_heuristic is None:
+            self.cur_heuristic = new_heuristic
+            return
+
+        args = utils.get_args()
+
+        if args.stop_adjust_if_workloads_well_balanced and strategy.well_balanced(args.render_distribution_unbalance_threshold):
+            # if the new strategy has already been well balanced, we do not have to update the heuristic.
+            
+            # FIXME: Maybe we should always update the heuristic, but we do not need to create a new distribution strategy. 
+            # But that will lead to larger scheduling overhead. 
+
+            return
+
+        # update self.cur_heuristic
+        if args.heuristic_decay == 0:
+            self.cur_heuristic = new_heuristic
+        else:
+            self.cur_heuristic = self.cur_heuristic * args.heuristic_decay + new_heuristic * (1-args.heuristic_decay)
+
+    def division_pos_heuristic(self):
+        # division_pos_xs, division_pos_ys = self.division_pos
+        cur_heuristic_along_x = self.cur_heuristic.sum(dim=0)
+        division_pos_xs = division_pos_heuristic(cur_heuristic_along_x, self.tile_x, self.grid_size_x)
+
+        division_pos_ys = []
+        for i in range(self.grid_size_x):
+            sliced_cur_heuristic_along_y = self.cur_heuristic[:, division_pos_xs[i]:division_pos_xs[i+1]].sum(1)
+            one_division_pos_ys = division_pos_heuristic(sliced_cur_heuristic_along_y, self.tile_y, self.grid_size_y)
+            division_pos_ys.append(one_division_pos_ys)
+
+        division_pos = (division_pos_xs, division_pos_ys)
+        return division_pos
+
+    def start_strategy(self):
+        with torch.no_grad():
+            if len(self.history) == 0:
+                division_pos = DivisionStrategy_6.get_default_division_pos(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y)
+            else:
+                division_pos = self.division_pos_heuristic()
+
+            self.working_strategy = DivisionStrategy_6(self.camera, self.world_size, self.rank, self.tile_x, self.tile_y, division_pos, self.render_distribution_adjust_mode)
+            self.working_iteration = utils.get_cur_iter()
+        return self.working_strategy
+
+    def finish_strategy(self):
+        with torch.no_grad():
+            self.update_heuristic()
+            self.working_strategy.heuristic = None
+            # Because the heuristic is of size (# of tiles, ) and takes up lots of memory if we keep it for every iteration.
+            self.add(self.working_iteration, self.working_strategy)
 
 
 ########################## Create DivisionStrategyHistory ##########################
@@ -607,8 +815,14 @@ def create_division_strategy_history(viewpoint_cam, render_distribution_adjust_m
         return DivisionStrategyHistory_4(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), render_distribution_adjust_mode)
     elif render_distribution_adjust_mode == "5":
         return DivisionStrategyHistory_2(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), render_distribution_adjust_mode)
+    elif render_distribution_adjust_mode == "6":
+        return DivisionStrategyHistory_6(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), render_distribution_adjust_mode)
     elif render_distribution_adjust_mode == "evaluation":
-        return DivisionStrategyHistory_1(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), render_distribution_adjust_mode)
+        args = utils.get_args()
+        if args.render_distribution_adjust_mode == "6":
+            return DivisionStrategyHistory_6(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), "evaluation")
+        else:
+            return DivisionStrategyHistory_1(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), render_distribution_adjust_mode)
 
     raise ValueError(f"Unknown render_distribution_adjust_mode: {render_distribution_adjust_mode}")
 

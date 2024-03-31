@@ -282,7 +282,7 @@ def check_args(args):
     if args.render_distribution_adjust_mode == "3":
         assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
 
-    if args.render_distribution_adjust_mode == "5":
+    if args.render_distribution_adjust_mode in ["5", "6"]:
         args.loss_distribution_mode = "avoid_pixel_all2all"
         utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_adjust_mode is 5.")
 
