@@ -17,6 +17,7 @@ from gaussian_renderer import (
         preprocess3dgs_and_all2all,
         render
     )
+from torch.cuda import nvtx
 from gaussian_renderer.loss_distribution import loss_computation
 import sys
 from scene import Scene, GaussianModel, SceneDataset
@@ -143,6 +144,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         gaussians.update_learning_rate(iteration)
         num_trained_batches += 1
         timers.clear()
+        if args.nsys_profile:
+            nvtx.range_push(f"iteration[{iteration},{iteration+args.bsz})")
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if utils.check_update_at_this_iter(iteration, args.bsz, 1000, 0):
             gaussians.oneupSHdegree()
@@ -325,6 +328,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 utils.check_memory_usage_logging("after optimizer step")
 
         # Finish a iteration and clean up
+        if args.nsys_profile:
+            nvtx.range_pop()
         if utils.check_enable_python_timer():
             timers.printTimers(iteration, mode="sum")
         log_file.flush()

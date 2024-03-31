@@ -176,6 +176,8 @@ class DebugParams(ParamGroup):
         self.time_image_loading = False # Log image loading time.
         self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
+        self.nsys_profile = False # profile with nsys.
+
         super().__init__(parser, "Debug Parameters")
 
 def get_combined_args(parser : ArgumentParser):
