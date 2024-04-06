@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 import os
 from matplotlib.ticker import MultipleLocator
+import re
+import ast
+from scipy.signal import savgol_filter
+from scipy.interpolate import interp1d
 
 # TODO: delete them later
 folder = None
@@ -308,12 +312,21 @@ def get_suffix_in_folder(folder):
     if not folder.endswith("/"):
         folder += "/"
     
+    suffix_list_candidates = [
+        "ws=1_rk=0",
+        "ws=2_rk=0",
+        "ws=2_rk=1",
+        "ws=4_rk=0",
+        "ws=4_rk=1",
+        "ws=4_rk=2",
+        "ws=4_rk=3",
+    ]
     suffix_list = []
-    for ws in [1,2,4,8]:
-        for rk in range(ws):
-            suffix = f"ws={ws}_rk={rk}"
-            if os.path.exists(folder + "python_" + suffix + ".log"):
-                suffix_list.append(suffix)
+
+    for suffix in suffix_list_candidates:
+        # python_ws=1_rk=0.log
+        if os.path.exists(folder + "python_" + suffix + ".log"):
+            suffix_list.append(suffix)
 
     return suffix_list
 
@@ -2326,50 +2339,205 @@ def draw_epoch_loss(file_paths):
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
     plt.savefig(folder+"compare_epoch_loss.png")
 
+def draw_iteration_loss(file_paths, window_length=41, polyorder=3):
+    # if file exists
+    iterations = []
+    iteration_losses = []
+    for file_path in file_paths:
+        # parse batch size from file path
+        # ***bsz_{bsz} or bsz{bsz}
+        bsz = int(re.search(r"bsz_?(\d+)", file_path).group(1))
+        iteration = []
+        iteration_loss = []
+        lines = open(file_path, "r").readlines()
+        for line in lines:
+            # iteration 15 image: DSC08048 loss: 0.20663994550704956
+            # iteration[3006,3007) loss: [0.331027, 0.21343, 0.243 xxxxx] image: ['00297']
+            reg_exp1 = re.compile(r"iteration (\d+) image: \w+ loss: (\d+\.\d+)")
+            # or loss is a variable length list of floats
+            reg_exp2 = re.compile(r"iteration\[(\d+),\d+\) loss: \[(.*)\] image: \[('\d+')(, '\d+')*\]")
+            reg_exp_match = reg_exp1.match(line) or reg_exp2.match(line)
+            if reg_exp_match:
+                iteration.append(int(reg_exp_match.group(1)))
+                losses = reg_exp_match.group(2).split(", ")
+                loss = np.mean([float(x) for x in losses])
+                iteration_loss.append(loss)
+                
+        # smooth out the iteration_loss
+        iteration_loss = savgol_filter(iteration_loss, window_length // bsz, min(polyorder, window_length // bsz - 1)) if window_length > 0 and window_length // bsz >= 3 else iteration_loss
+
+        iterations.append(iteration)
+        iteration_losses.append(iteration_loss)
+
+    fig, ax = plt.subplots(figsize=(20, 10))
+    for file_path, iteration, iteration_loss in zip(file_paths, iterations, iteration_losses):
+        ax.plot(iteration, iteration_loss, label=file_path)
+    ax.legend(loc='upper right')
+    folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
+    plt.savefig(folder+"compare_iteration_loss.png")
+
+def parse_metrics(file_path, metric_name):
+    """
+    Parses specified metrics (grad_norm or grad_cosine_similarity) from the log files.
+    """
+    metric_dict = {}
+    metric_dict['iterations'] = []
+    with open(file_path, "r") as f:
+        for line in f:
+            # iteration xxx {metric_name}: {xxx}
+            reg_exp1 = re.compile(f"iteration (\d+) {metric_name}: (\{{.*\}})")
+            reg_exp2 = re.compile(f"iteration\[(\d+),\d+\) {metric_name}: (\{{.*\}})")
+            iter_match = reg_exp1.match(line) or reg_exp2.match(line)
+            if iter_match:
+                iteration = int(iter_match.group(1))
+                metric_dict['iterations'].append(iteration)
+                metric_dict_line = ast.literal_eval(iter_match.group(2))
+                for key, value in metric_dict_line.items():
+                    if key not in metric_dict:
+                        metric_dict[key] = []
+                    metric_dict[key].append(value)
+    return metric_dict
+
+def smooth_metrics(metrics_dict, window_length=41, polyorder=3):
+    """
+    Smooths the metrics using Savitzky-Golay filter.
+    """
+    for key in metrics_dict:
+        if key == 'iterations' or window_length == 0:
+            metrics_dict[key] = np.array(metrics_dict[key])
+        else:
+            metrics_dict[key] = savgol_filter(metrics_dict[key], window_length, polyorder)
+    return metrics_dict
+
+def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
+    """
+    Draws specified metrics (grad_norm or grad_cosine_similarity) from the log files.
+    """
+    metric_dicts = [parse_metrics(file_path, metric_name) for file_path in file_paths]
+    print(metric_dicts)
+    bszs = [int(re.search(r"bsz?_?(\d+)", file_path).group(1)) for file_path in file_paths]
+    window_lengths = [window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0 for bsz in bszs]
+    metric_dicts = [smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1)) for metric_dict, window_length in zip(metric_dicts, window_lengths)]
+
+    for key in metric_dicts[0]:
+        if key == 'iterations':
+            continue
+        fig, ax = plt.subplots(figsize=(20, 10))
+        for file_path, metric_dict in zip(file_paths, metric_dicts):
+            ax.plot(metric_dict['iterations'], metric_dict[key], label=file_path)
+        ax.legend(loc='upper right')
+        ax.set_title(metric_name)
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel(key)
+        folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
+        fig.tight_layout()
+        fig.savefig(folder+"compare_"+key+"_"+metric_name+".png")
+        fig.show()
+
+def group_bins(metric_dict, groups=4):
+    """The metric dict is a dictionary with keys as bin and values as the number of values in that bin.
+    This function groups the bins into specified number of groups, and return the transformed metric dict.
+    The key of the new dict is f"{start} to {end}"
+    """
+    all_bins = list(metric_dict.keys())
+    all_bins.pop(all_bins.index('iterations'))
+    all_bins.sort()
+    group_size = len(all_bins) // groups
+    new_metric_dict = {}
+    for i in range(groups):
+        start = i * group_size
+        end = (i + 1) * group_size if i != groups - 1 else len(all_bins)
+        new_metric_dict[f"{start} to {end - 1}"] = sum([metric_dict[bin] for bin in all_bins[start:end]])
+    new_metric_dict['iterations'] = metric_dict['iterations']
+    return new_metric_dict
+    
+            
+def draw_histogram(file_paths, metric_name, window_length=41, polyorder=3, groups=4):
+    """
+    Draws histogram of specified metrics (grad_norm or grad_cosine_similarity) from the log files.
+    For each file draw one figure, which contains several curves each representing the ratio of a bin.
+    """
+    metric_dicts = [parse_metrics(file_path, metric_name) for file_path in file_paths]
+    bszs = [int(re.search(r"bsz?_?(\d+)", file_path).group(1)) for file_path in file_paths]
+    window_lengths = [window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0 for bsz in bszs]
+    metric_dicts = [smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1)) for metric_dict, window_length in zip(metric_dicts, window_lengths)]
+    
+    metric_dicts = [group_bins(metric_dict, groups) for metric_dict in metric_dicts]
+    
+    for metric_dict, file_path in zip(metric_dicts, file_paths):
+        fig, ax = plt.subplots(figsize=(20, 10))
+        for key in metric_dict:
+            if key == 'iterations':
+                continue
+            ax.plot(metric_dict['iterations'], metric_dict[key], label=key)
+        ax.legend(loc='upper right')
+        ax.set_title(file_path + " " + metric_name)
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Ratio')
+        folder = "/".join(file_path.split("/")[:-1]) + "/"
+        fig.tight_layout()
+        fig.savefig(folder+"compare_histogram_"+metric_name+".png")
+        fig.show()
+ 
 def draw_evaluation_results(file_paths):
     eval_tests_PSNR = []
     eval_trains_PSNR = []
-    iterations = []
+    test_iterations = []
+    train_iterations = []
     # Evaluating test: 
     for file_path in file_paths:
         lines = open(file_path, "r").readlines()
         eval_test_PSNR = []
         eval_train_PSNR = []
+        test_iteration = []
+        train_iteration = []
         for line in lines:
             # [ITER 30000] Evaluating test: L1 0.058287687942777805 PSNR 21.94811627739354
             # [ITER 30000] Evaluating train: L1 0.03144958354532719 PSNR 26.123293685913087
             if "Evaluating test: " in line:
                 eval_test_PSNR.append(float(line.split(" ")[-1]))
-                if len(eval_tests_PSNR) == 0:
-                    iterations.append(int(line.split(" ")[1][:-1]))
+                test_iteration.append(int(line.split(" ")[1][:-1]))
             if "Evaluating train: " in line:
                 eval_train_PSNR.append(float(line.split(" ")[-1]))
+                train_iteration.append(int(line.split(" ")[1][:-1]))
         eval_tests_PSNR.append(eval_test_PSNR)
         eval_trains_PSNR.append(eval_train_PSNR)
+        test_iterations.append(test_iteration)
+        train_iterations.append(train_iteration)
 
     # draw the two figures on the same graph.
-    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    for i, eval_test_PSNR in enumerate(eval_tests_PSNR):
-        # x-axis is iteration
-        # y-axis is PSNR
-        ax[0].plot(iterations, eval_test_PSNR, label=file_paths[i])
+    # fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    # for file_path, eval_test_PSNR, iterations in zip(file_paths, eval_tests_PSNR, test_iterations):
+    #     # x-axis is iteration
+    #     # y-axis is PSNR
+    #     ax[0].plot(iterations, eval_test_PSNR, label=file_path)
     
-    ax[0].set_ylabel('PSNR')
-    secax = ax[0].secondary_yaxis('right')
-    secax.set_ylabel('PSNR')
-    ax[0].legend(loc='lower right')
-    ax[0].set_title("Evaluating test PSNR")
+    # ax[0].set_ylabel('PSNR')
+    # secax = ax[0].secondary_yaxis('right')
+    # secax.set_ylabel('PSNR')
+    # ax[0].legend(loc='lower right')
+    # ax[0].set_title("Evaluating test PSNR")
 
-    for i, eval_train_PSNR in enumerate(eval_trains_PSNR):
-        # x-axis is iteration
-        # y-axis is PSNR
-        ax[1].plot(iterations, eval_train_PSNR, label=file_paths[i])
+    # for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
+    #     # x-axis is iteration
+    #     # y-axis is PSNR
+    #     ax[1].plot(iterations, eval_train_PSNR, label=file_path)
 
-    ax[1].set_ylabel('PSNR')
-    secax = ax[1].secondary_yaxis('right')
+    # ax[1].set_ylabel('PSNR')
+    # secax = ax[1].secondary_yaxis('right')
+    # secax.set_ylabel('PSNR')
+    # ax[1].legend(loc='lower right')
+    # ax[1].set_title("Evaluating train PSNR")
+
+    #only train
+    fig, ax = plt.subplots(figsize=(20, 10))
+    for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
+        ax.plot(iterations, eval_train_PSNR, label=file_path)
+    ax.set_ylabel('PSNR')
+    secax = ax.secondary_yaxis('right')
     secax.set_ylabel('PSNR')
-    ax[1].legend(loc='lower right')
-    ax[1].set_title("Evaluating train PSNR")
+    ax.legend(loc='lower right')
+    ax.set_title("Evaluating train PSNR")
 
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
     plt.savefig(folder+"compare_evaluation_results.png")
@@ -2728,24 +2896,12 @@ def compare_total_communication_volume_and_time(save_folder, folders):
     dict_i2jsend_stats = {
         "all_to_all_ave" : {},
         "all_to_all_max_ave" : {},
-        "all_to_all_volume_sum" : {},
     }
     for folder in folders:
         expe_name = folder.split("/")[-2]
 
         file_path = folder + "strategy_history_ws=4_rk=0.json"
         data = json.load(open(file_path, "r"))
-
-        all_i2jsend_size = 0
-        for image_id in data:
-            cur_strategy_history_rk0 = data[image_id]
-            for epoch_id in range(len(cur_strategy_history_rk0)):
-                for x in range(4):
-                    for y in range(4):
-                        if x == y:
-                            continue
-                        all_i2jsend_size += cur_strategy_history_rk0[epoch_id]["strategy"]["i2j_send_size"][x][y]
-
 
         python_time_csv = folder + "merged_python_time.csv"
         python_time_df = pd.read_csv(python_time_csv)
@@ -2759,7 +2915,6 @@ def compare_total_communication_volume_and_time(save_folder, folders):
         forward_all_to_all_communication_max_ave = sum(forward_all_to_all_communication_max) / len(forward_all_to_all_communication_max)
         dict_i2jsend_stats["all_to_all_ave"][expe_name] = forward_all_to_all_communication_ave
         dict_i2jsend_stats["all_to_all_max_ave"][expe_name] = forward_all_to_all_communication_max_ave
-        dict_i2jsend_stats["all_to_all_volume_sum"][expe_name] = all_i2jsend_size
 
     json.dump(dict_i2jsend_stats, open(save_folder + "compare_communication_stats.json", "w"), indent=4)
 
@@ -2809,7 +2964,7 @@ def average_gpu_python_time_csv(gpu_file_path, python_file_path, save_path):
     json.dump(data, open(save_path, "w"), indent=4)
         
 
-def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)], no_gpu_time=False, no_python_time=False):
+def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
     # suffix_list = [
     #     "ws=1_rk=0",
     #     "ws=4_rk=0",
@@ -2830,22 +2985,20 @@ def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)], 
         python_time_json = extract_json_from_python_time_log(file_path)
         time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
 
-    if not no_gpu_time:
-        file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
-        for iteration in process_iterations:
-            extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
-        file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
-        merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
-        delete_all_file_paths(file_paths)
+    file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
+    file_paths = [folder + f"gpu_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
+    delete_all_file_paths(file_paths)
     # average_csv(folder + f"merged_gpu_time.csv", folder + f"averaged_gpu_time.json")
 
-    if not no_python_time:
-        file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
-        for iteration in process_iterations:
-            extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
-        file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
-        merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
-        delete_all_file_paths(file_paths)
+    file_paths = [folder + f"python_time_{suffix}.json" for suffix in suffix_list]
+    for iteration in process_iterations:
+        extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
+    file_paths = [folder + f"python_time_it={it}.csv" for it in process_iterations]
+    merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
+    delete_all_file_paths(file_paths)
     # average_csv(folder + f"merged_python_time.csv", folder + f"averaged_python_time.json")
     average_gpu_python_time_csv(folder + f"merged_gpu_time.csv", folder + f"merged_python_time.csv", folder + f"averaged_time.json")
 
@@ -3517,125 +3670,17 @@ if __name__ == "__main__":
     # analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
 
 
-    # for folder in ["no_avoid_pixel_all2all_train",
-    #                "avoid_pixel_all2all_train",
-    #                "avoid_pixel_all2all_tr_flc",
-    #                "avoid_pixel_all2all_train_2",
-    #                "avoid_pixel_all2all_train_flcnal"]:
-    #     analyze_time(
-    #         f"experiments/{folder}/",
-    #         [i for i in range(251, 30000, 500)]
-    #     )
-    #     analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
-
-    # for folder in [
-    #                 "bicycle_mode1",
-    #                 "bicycle_mode2",
-    #                 "bicycle_mode4",
-    #                 "garden_mode1",
-    #                 "garden_mode2",
-    #                 "garden_mode4",
-    #                 "train_mode1",
-    #                 "train_mode2",
-    #                 "train_mode4",
-    #                 ]:
-    #     analyze_time(
-    #         f"experiments/{folder}/",
-    #         [i for i in range(251, 30000, 500)]
-    #     )
-    #     # analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
-    #     pass
-    # for scene in ["train", "garden", "bicycle"]:
-    #     compare_end2end_stats(
-    #         save_folder=f"experiments/{scene}_mode1/",
-    #         file_paths=[
-    #             f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
-    #             f"experiments/{scene}_mode1/python_ws=4_rk=1.log",
-    #             f"experiments/{scene}_mode1/python_ws=4_rk=2.log",
-    #             f"experiments/{scene}_mode1/python_ws=4_rk=3.log",
-    #             f"experiments/{scene}_mode2/python_ws=4_rk=0.log",
-    #             f"experiments/{scene}_mode2/python_ws=4_rk=1.log",
-    #             f"experiments/{scene}_mode2/python_ws=4_rk=2.log",
-    #             f"experiments/{scene}_mode2/python_ws=4_rk=3.log",
-    #             f"experiments/{scene}_mode4/python_ws=4_rk=0.log",
-    #             f"experiments/{scene}_mode4/python_ws=4_rk=1.log",
-    #             f"experiments/{scene}_mode4/python_ws=4_rk=2.log",
-    #             f"experiments/{scene}_mode4/python_ws=4_rk=3.log",
-    #         ])
-
-    #     compare_total_communication_volume_and_time(
-    #         save_folder=f"experiments/{scene}_mode1/",
-    #         folders=[f"experiments/{scene}_mode{mode}/" for mode in [1,2,4]]
-    #     )
-
-    # for folder in ["bench_train_1gpu",
-    #                 "bench_bicycle_1gpu",
-    #                 "bench_garden_1gpu"]:
-    #     analyze_time(
-    #         f"experiments/{folder}/",
-    #         [i for i in range(251, 30000, 500)]
-    #     )
-    #     scene = folder.split("_")[1]
-    #     compare_end2end_stats(
-    #         save_folder=f"experiments/bench_{scene}_1gpu/",
-    #         file_paths=[
-    #             f"experiments/bench_{scene}_1gpu/python_ws=1_rk=0.log",
-    #             f"experiments/{scene}_mode1/python_ws=4_rk=0.log",
-    #         ])
-
-    # dp_system_debug_expes = ["debug_dp_1gpu",
-    #     "debug_dpsize1_memdis0_1",
-    #     "debug_dpsize1_memdis1_1",
-    #     "debug_dpsize2_memdis0_1",
-    #     "debug_dpsize2_memdis0_adj5_1",
-    #     "debug_dpsize2_memdis0_ws2_1",
-    #     "debug_dpsize2_memdis1_1",
-    #     "debug_dpsize2_memdis1_adj5_1",
-    #     "debug_dpsize2_memdis2_1",
-    #     "debug_dpsize2_memdis2_adj5_1",
-    #     "debug_dpsize4_memdis0_1",
-    #     "debug_dpsize4_memdis0_adj5_1",
-    #     "debug_dpsize4_memdis1_1",
-    #     "debug_dpsize4_memdis1_adj5_1",
-    #     "debug_dpsize4_memdis2_1",
-    #     "debug_dpsize4_memdis2_adj5_1"]
-    # for folder in dp_system_debug_expes:
-    #     analyze_time(
-    #         f"experiments/{folder}/",
-    #         [i for i in range(51, 7000, 100)],
-    #         no_gpu_time=True
-    #     )
-    # compare_end2end_stats(
-    #     save_folder=f"experiments/debug_dp_1gpu/",
-    #     file_paths=[
-    #         f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log",
-    #     ] + [f"experiments/{folder}/python_ws=4_rk=0.log" for folder in dp_system_debug_expes[1:]]
-    # )
-
-    # sync_grad_mode_expes = ["debug_dpsize2_memdis2_adj5_1",
-    #     "debug_dpsize2_memdis2_adj5_spg_1",
-    #     "debug_dpsize2_memdis2_adj5_fude_1"]
-    # for folder in sync_grad_mode_expes:
-    #     analyze_time(
-    #         f"experiments/{folder}/",
-    #         [i for i in range(51, 7000, 100)],
-    #         no_gpu_time=True
-    #     )
-    # compare_end2end_stats(
-    #     save_folder=f"experiments/debug_dpsize2_memdis2_adj5_1/",
-    #     file_paths=[f"experiments/{folder}/python_ws=4_rk=0.log" for folder in sync_grad_mode_expes] +
-    #                [f"experiments/debug_dp_1gpu/python_ws=1_rk=0.log"]
-    # )
-    
-    cross_node_expes = ["cross_node_dpsize8",
-                            "cross_node_dpsize4",
-                            "cross_node_dpsize2"]
-    for folder in cross_node_expes:
+    for folder in ["no_avoid_pixel_all2all_train",
+                   "avoid_pixel_all2all_train",
+                   "avoid_pixel_all2all_tr_flc",
+                   "avoid_pixel_all2all_train_2",
+                   "avoid_pixel_all2all_train_flcnal"]:
         analyze_time(
             f"experiments/{folder}/",
-            [i for i in range(51, 7000, 100)],
+            [i for i in range(251, 30000, 500)]
         )
-    compare_end2end_stats(
-        save_folder=f"experiments/cross_node_dpsize8/",
-        file_paths=[f"experiments/{folder}/python_ws=8_rk=0.log" for folder in cross_node_expes]
-    )
+        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+
+    pass
+
+

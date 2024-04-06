@@ -113,6 +113,7 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):
@@ -142,7 +143,7 @@ class DistributionParams(ParamGroup):
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
         self.dp_size = 1 # data parallel degree.
-        self.grad_normalization_mode = "divide_by_batch_size" # "divide_by_visible_count", "divide_by_batch_size" gradient normalization mode. 
+        self.grad_normalization_mode = "none" # "divide_by_visible_count", "square_multiply_by_visible_count", "multiply_by_visible_count", "none" gradient normalization mode. 
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
