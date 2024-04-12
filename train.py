@@ -21,7 +21,7 @@ from torch.cuda import nvtx
 from gaussian_renderer.loss_distribution import loss_computation
 import sys
 from scene import Scene, GaussianModel, SceneDataset
-from scene.workload_division import create_division_strategy_history, get_local_running_time_by_modes
+from gaussian_renderer.workload_division import get_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -37,14 +37,14 @@ from arguments import (
     BenchmarkParams, 
     DebugParams, 
     print_all_args, 
-    check_args
+    init_args
 )
 import time
 import torch.distributed as dist
 
 def globally_sync_for_timer():
-    if utils.check_enable_python_timer() and utils.MP_GROUP.size() > 1:
-        torch.distributed.barrier(group=utils.MP_GROUP)
+    if utils.check_enable_python_timer() and utils.DEFAULT_GROUP.size() > 1:
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
 def densification(iteration, scene, gaussians, batched_screenspace_pkg):
     args = utils.get_args()
@@ -52,7 +52,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
     log_file = utils.get_log_file()
 
     # Update Statistics for redistribution
-    if args.memory_distribution_mode != "0":
+    if args.gaussians_distribution:
         for local2j_ids_bool in batched_screenspace_pkg["batched_local2j_ids_bool"]:
             gaussians.send_to_gpui_cnt += local2j_ids_bool
 
@@ -161,25 +161,20 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         # Prepare Workload division strategy
         timers.start("prepare_strategies")
-        batched_strategies = []
-        batched_strategy_histories = []
-        for viewpoint_cam in batched_cameras:
-            if viewpoint_cam.uid not in cameraId2StrategyHistory:
-                cameraId2StrategyHistory[viewpoint_cam.uid] = create_division_strategy_history(viewpoint_cam, 
-                                                                                               args.render_distribution_adjust_mode)
-            strategy_history = cameraId2StrategyHistory[viewpoint_cam.uid]
-            strategy = strategy_history.start_strategy()
-            batched_strategies.append(strategy)
-            batched_strategy_histories.append(strategy_history)
+        batched_strategy_histories = [get_division_strategy_history(cameraId2StrategyHistory,
+                                                                    viewpoint_cam,
+                                                                    args.image_distribution_config.workloads_division_mode)
+                                                    for viewpoint_cam in batched_cameras]
+        batched_strategies = [strategy_history.start_strategy() for strategy_history in batched_strategy_histories]
         timers.stop("prepare_strategies")
 
         assert args.bsz % args.dp_size == 0, "dp_size must be a divisor of bsz."
         micro_bsz_size = args.dp_size
-        num_samples_per_dp_rank = args.bsz // args.dp_size
-        for micro_step in range(args.bsz // args.dp_size):
+        num_samples_per_dp_worker = args.bsz // args.dp_size
+        for micro_step in range(num_samples_per_dp_worker):
             # Micro Step Initialization
-            micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_rank]
-            micro_batched_strategies = batched_strategies[micro_step::num_samples_per_dp_rank]
+            micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_worker]
+            micro_batched_strategies = batched_strategies[micro_step::num_samples_per_dp_worker]
             local_render_viewpoint_cam = micro_batched_cameras[utils.DP_GROUP.rank()]
             utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
             local_render_strategy = micro_batched_strategies[utils.DP_GROUP.rank()]
@@ -201,7 +196,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                               local_render_viewpoint_cam,
                                               compute_locally,
                                               local_render_strategy,
-                                              statistic_collector)
+                                              statistic_collector,
+                                              args.image_distribution_config.loss_distribution_mode)
             loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
             utils.check_memory_usage_logging("after loss")
 
@@ -217,7 +213,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
             batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
             batched_screenspace_pkg["losses"].append(loss)
-            if args.memory_distribution_mode != "0":
+            if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
 
         with torch.no_grad():
@@ -225,7 +221,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             globally_sync_for_timer()
             timers.start("sync_gradients_for_replicated_3dgs_storage")
             gaussians.sync_gradients_for_replicated_3dgs_storage(batched_screenspace_pkg)
-            if args.memory_distribution_mode == "0" and utils.MP_GROUP.size() > 1:
+            if not args.gaussians_distribution and utils.MP_GROUP.size() > 1:
                 for local_render_screenspace_mean2D in batched_screenspace_pkg["batched_locally_preprocessed_mean2D"]:
                     torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
             timers.stop("sync_gradients_for_replicated_3dgs_storage")
@@ -234,36 +230,17 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             globally_sync_for_timer()
             timers.start("strategy.update_stats")
             if iteration > args.adjust_strategy_warmp_iterations and utils.DEFAULT_GROUP.size() > 1:
-                ### orginal implementation. When the new implementation is stable, I will delete the old implementation. 
-                # all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
-                # timers.start("strategy.update_stats.all_statistic_collector")
-                # if utils.DP_GROUP.size() > 1:
-                #     torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
-                #     all_statistic_collector = sum(all_statistic_collector, [])
-                # else:
-                #     all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
-                # timers.stop("strategy.update_stats.all_statistic_collector")
-                # timers.start("strategy.update_stats.update_stats")
-                # for idx in range(args.bsz):
-                #     batched_strategies[idx].update_stats(all_statistic_collector[idx])
-                #     batched_strategy_histories[idx].finish_strategy()
-                # timers.stop("strategy.update_stats.update_stats")
-                pass
-
                 ### new implementation
-                assert args.render_distribution_adjust_mode in ["2", "5", "6"], "Only support mode 2, 5 and 6 for now."
                 timers.start("strategy.update_stats.all_gather_running_time")
                 batched_local_running_time = []
                 for statistic_collector in batched_screenspace_pkg["statistic_collectors"]:
                     batched_local_running_time.append(get_local_running_time_by_modes(statistic_collector))
-
                 all_running_time = utils.our_allgather_among_cpu_processes_float_list(batched_local_running_time, utils.DEFAULT_GROUP)
-
                 timers.stop("strategy.update_stats.all_gather_running_time")
 
                 for dp_rk in range(utils.DP_GROUP.size()):
-                    for accum_idx_in_one_dp_rk in range(num_samples_per_dp_rank):
-                        idx_in_one_batch = dp_rk * num_samples_per_dp_rank + accum_idx_in_one_dp_rk
+                    for accum_idx_in_one_dp_rk in range(num_samples_per_dp_worker):
+                        idx_in_one_batch = dp_rk * num_samples_per_dp_worker + accum_idx_in_one_dp_rk
                         all_running_time_cross_mp = []
                         for mp_rk in range(utils.MP_GROUP.size()):
                             all_running_time_cross_mp.append(all_running_time[ dp_rk * utils.MP_GROUP.size() + mp_rk ][accum_idx_in_one_dp_rk])
@@ -277,7 +254,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             timers.start("allgather_loss_and_log")
             if utils.DP_GROUP.size() > 1:
                 local_losses = torch.stack(batched_screenspace_pkg["losses"])
-                losses = torch.empty( (args.dp_size, num_samples_per_dp_rank), dtype=torch.float32, device="cuda")
+                losses = torch.empty( (args.dp_size, num_samples_per_dp_worker), dtype=torch.float32, device="cuda")
                 torch.distributed.all_gather_into_tensor(losses, local_losses, group=utils.DP_GROUP)
                 losses_cpu = losses.flatten().cpu().tolist()
             else:
@@ -361,7 +338,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                             {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
-
+        # init workload division strategy
+        cameraId2StrategyHistory = {}
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = torch.scalar_tensor(0.0, device="cuda")
@@ -374,7 +352,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                     local_render_camera = batched_cameras[utils.DP_GROUP.rank()]
                     batched_strategies = []
                     for viewpoint in batched_cameras:
-                        hack_history = create_division_strategy_history(viewpoint, "evaluation")
+                        hack_history = get_division_strategy_history(cameraId2StrategyHistory, viewpoint, "evaluation")
                         batched_strategies.append(hack_history.start_strategy())
                     local_render_strategy = batched_strategies[utils.DP_GROUP.rank()]
                     screenspace_pkg = preprocess3dgs_and_all2all(batched_cameras, scene.gaussians, pipe_args, background,
@@ -417,7 +395,7 @@ if __name__ == "__main__":
 
     ## Prepare arguments.
     # Check arguments
-    check_args(args)
+    init_args(args)
     # Set up global args
     utils.set_args(args)
 

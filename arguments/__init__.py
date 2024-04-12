@@ -12,6 +12,7 @@
 from argparse import ArgumentParser, Namespace
 import sys
 import os
+from gaussian_renderer.distribution_config import init_image_distribution_config
 import utils.general_utils as utils
 import diff_gaussian_rasterization
 
@@ -118,25 +119,29 @@ class OptimizationParams(ParamGroup):
 class DistributionParams(ParamGroup):
     def __init__(self, parser):
         # Distribution for pixel-wise render computation.
-        self.render_distribution_adjust_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
+        self.image_distribution = True
+        self.image_distribution_mode = ""
+        # self.render_distribution_adjust_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
         self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
         self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
         self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
         self.dist_global_strategy = "" # if self.render_distribution_adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
         self.adjust_strategy_warmp_iterations = 20 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
-        self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
+        # self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
+        self.image_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
 
         # Distribution for 3DGS-wise workloads.
-        self.memory_distribution_mode = "0" 
+        # self.memory_distribution_mode = "0"
         # "0" no shard 3dgs storage. memory_distribution must be false <==> memory_distribution_mode is 0.
         # "1" is shard 3dgs storage across MP group and gradient sync. 
         # "2" is shard 3dgs storage across the global group and use all2all to replace the gradient sync. 
+        self.gaussians_distribution = False
         self.redistribute_gaussians_mode = "no_redistribute" # enable redistribution for 3DGS storage location. "no_redistribute" is no redistribution. 
         self.redistribute_gaussians_frequency = 10 # redistribution frequency for 3DGS storage location.
         self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location: min*self.redistribute_gaussian_threshold < max --> redistribute.
 
         # Distribution for pixel-wise loss computation.
-        self.loss_distribution_mode = "general" # "no_distribution", "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
+        # self.loss_distribution_mode = "general" # "no_distribution", "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
         self.get_global_exact_loss = False # if True, we recompute loss without redundant border pixel computation to get exact number. This is for debugging.
 
         # Data Parallel
@@ -218,7 +223,7 @@ def print_all_args(args, log_file):
     log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
 
 
-def check_args(args):
+def init_args(args):
 
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
@@ -266,25 +271,15 @@ def check_args(args):
     
     if args.log_iteration_memory_usage:
         args.check_memory_usage = True
- 
 
-    # Distribution Mode Check
-    if utils.MP_GROUP.size() == 1:
-        args.loss_distribution_mode = "no_distribution"
     if utils.DEFAULT_GROUP.size() == 1:
-        args.memory_distribution_mode = "0"
-    if utils.MP_GROUP.size() == 1 and args.memory_distribution_mode == "1":
-        args.memory_distribution_mode = "0"# in such cases, we actually do not shard 3dgs storage at all.
-    # by default, we will distribute the render computation, whenever we are able to do that(MP size > 1)
+        args.gaussians_distribution = False
+        args.image_distribution = False
+        args.image_distribution_mode = "0"
 
     assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
 
-    if args.render_distribution_adjust_mode == "3":
-        assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
-
-    if args.render_distribution_adjust_mode in ["5", "6"]:
-        args.loss_distribution_mode = "avoid_pixel_all2all"
-        utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_adjust_mode is 5.")
-
     # sort test_iterations
     args.test_iterations.sort()
+
+    init_image_distribution_config(args)
