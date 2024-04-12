@@ -20,7 +20,7 @@ from utils.general_utils import safe_state, set_args
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
-from scene.workload_division import DivisionStrategyHistoryWS1
+from gaussian_renderer.workload_division import DivisionStrategyHistoryWS1
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, generate_num):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")

@@ -151,16 +151,10 @@ class GaussianModel:
         # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
         # Split the point cloud across the ranks. 
         args = utils.get_args()
-        shard_world_size = 1 # no sharding
-        shard_rank = 0
-        if args.memory_distribution_mode == "1":# shard 3dgs storage across MP group.
-            shard_world_size = utils.MP_GROUP.size()
-            shard_rank = utils.MP_GROUP.rank()
-        elif args.memory_distribution_mode == "2":# shard 3dgs storage across all GPU including dp and mp groups.
+        if args.gaussians_distribution:# shard 3dgs storage across all GPU including dp and mp groups.
             shard_world_size = utils.DEFAULT_GROUP.size()
             shard_rank = utils.DEFAULT_GROUP.rank()
 
-        if shard_world_size > 1:
             point_ind_l, point_ind_r = utils.get_local_chunk_l_r(fused_point_cloud.shape[0], shard_world_size, shard_rank)
             fused_point_cloud = fused_point_cloud[point_ind_l:point_ind_r].contiguous()
             features = features[point_ind_l:point_ind_r].contiguous()
@@ -213,11 +207,6 @@ class GaussianModel:
             # allgather visibility filder from all dp workers, so that each worker contains the visibility filter of all data points. 
             batched_locally_preprocessed_visibility_filter_int = [x.int() for x in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]
             sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
-
-            if args.memory_distribution_mode == "2":
-                pass
-            elif utils.DP_GROUP.size() > 1:
-                torch.distributed.all_reduce(sum_batched_locally_preprocessed_visibility_filter_int, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
             batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] = sum_batched_locally_preprocessed_visibility_filter_int
 
         if args.sync_grad_mode == "dense":
@@ -231,10 +220,8 @@ class GaussianModel:
         else:
             assert False, f"sync_grad_mode {args.sync_grad_mode} not supported."
 
-        if args.memory_distribution_mode == "0" and utils.DEFAULT_GROUP.size() > 1:
+        if not args.gaussians_distribution and utils.DEFAULT_GROUP.size() > 1:
             sync_func(self, utils.DEFAULT_GROUP)
-        elif args.memory_distribution_mode == "1" and utils.DP_GROUP.size() > 1:
-            sync_func(self, utils.DP_GROUP)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -262,9 +249,7 @@ class GaussianModel:
         args = utils.get_args()
         _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
 
-        # if args.memory_distribution and utils.MP_GROUP.size() > 1:
-        assert False, "DP does not support checkpoint load and save yet."
-        if False:# TODO: DP does not support checkpoint load and save yet.
+        if args.gaussians_distribution:
             # gather at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
@@ -374,9 +359,7 @@ class GaussianModel:
         # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
         # Split the point cloud across the ranks.
 
-        # if args.memory_distribution and utils.MP_GROUP.size() > 1:
-        assert False, "DP does not support checkpoint load and save yet."
-        if False:# TODO: DP does not support checkpoint load and save yet.
+        if args.gaussians_distribution and utils.WORLD_SIZE > 1:
             chunk = xyz.shape[0] // utils.WORLD_SIZE + 1
             point_ind_l = chunk*utils.LOCAL_RANK
             point_ind_r = min(chunk*(utils.LOCAL_RANK+1), xyz.shape[0])
@@ -540,7 +523,7 @@ class GaussianModel:
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         args = utils.get_args()
-        if args.memory_distribution_mode in ["0", "1"] and utils.DEFAULT_GROUP.size() > 1:
+        if not args.gaussians_distribution and utils.DEFAULT_GROUP.size() > 1:
             torch.distributed.all_reduce(self.max_radii2D, op=dist.ReduceOp.MAX, group=utils.DP_GROUP)
             torch.distributed.all_reduce(self.xyz_gradient_accum, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
             torch.distributed.all_reduce(self.denom, op=dist.ReduceOp.SUM, group=utils.DP_GROUP)
@@ -569,12 +552,10 @@ class GaussianModel:
 
     def group_for_redistribution(self):
         args = utils.get_args()
-        if args.memory_distribution_mode == "0":
-            return utils.SingleGPUGroup()
-        elif args.memory_distribution_mode == "1":
-            return utils.MP_GROUP
-        elif args.memory_distribution_mode == "2":
+        if args.gaussians_distribution:
             return utils.DEFAULT_GROUP
+        else:
+            return utils.SingleGPUGroup()
 
     def all2all_gaussian_state(self, state, destination, i2j_send_size):
         comm_group = self.group_for_redistribution()

@@ -13,7 +13,6 @@ import torch
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
-from utils.sh_utils import eval_sh
 import utils.general_utils as utils
 import torch.distributed.nn.functional as dist_func
 
@@ -27,7 +26,7 @@ def get_cuda_args(strategy, mode="train"):# "test"
             if (iteration+x) % args.log_interval == 1:
                 iteration += x
                 break
-        avoid_pixel_all2all = strategy.is_avoid_pixel_all2all()
+        avoid_pixel_all2all = args.global_image_distribution_config.avoid_pixels_all2all
     elif mode == "test":
         iteration = -1
         avoid_pixel_all2all = False
@@ -57,15 +56,13 @@ def get_cuda_args(strategy, mode="train"):# "test"
 
 
 
-def memory_distr_mode0_preprocess3dgs_and_all2all(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0,
-                                                  strategy=None,
-                                                  mode="train"):
+def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0,
+                              strategy=None,
+                              mode="train"):
     """
-    preprocess 3dgs and all2all communication.
-    
-    Mode 0: no memory distribution at all. all 3DGS are stored replicatedly on all GPUs.
+    preprocess 3dgs.
 
-    Background tensor (bg_color) must be on GPU!
+    all 3DGS are stored replicatedly on all GPUs.
     """
     ########## [START] Prepare CUDA Rasterization Settings ##########
     timers = utils.get_timers()
@@ -152,175 +149,7 @@ def memory_distr_mode0_preprocess3dgs_and_all2all(viewpoint_camera, pc : Gaussia
 
 
 
-
-
-
-def all_to_all_communication_mode1(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args):
-    assert utils.get_args().memory_distribution_mode == "1", "this function only support memory_distribution_mode==1."
-    local2j_ids, local2j_ids_bool = rasterizer.get_local2j_ids(means2D, radii, cuda_args)
-    # (world_size,) matrix: local2j_ids[j] is the local 3dgs ids that should be sent to gpu j.
-    # (# of 3dgs, world_size) ubt: local2j_ids_bool[i,j] is True if 3dg i should be sent to gpu j.
-
-    # NOTE: i2j_send_size is an  world_size*world_size integer tensor, containing the number of 3dgs that should be sent from gpu i to gpu j.
-    i2j_send_size = torch.zeros((utils.MP_GROUP.size(), utils.MP_GROUP.size()), dtype=torch.int, device="cuda")
-    local2j_send_size = torch.tensor([len(local2j_ids[i]) for i in range(utils.MP_GROUP.size())], dtype=torch.int, device="cuda")
-    torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size, group=utils.MP_GROUP)
-    i2j_send_size = i2j_send_size.cpu().numpy().tolist()
-
-    def one_all_to_all(tensor, use_function_version=False):
-        tensor_to_rki = []
-        tensor_from_rki = []
-        for i in range(utils.MP_GROUP.size()):
-            tensor_to_rki.append(tensor[local2j_ids[i]].contiguous())# NCCL communication requires contiguous memory.
-            tensor_from_rki.append(torch.zeros((i2j_send_size[i][utils.MP_GROUP.rank()], ) + tensor.shape[1:], dtype=tensor.dtype, device="cuda"))
-
-        if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
-            dist_func.all_to_all(
-                output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki,
-                group=utils.MP_GROUP
-            )# The function version could naturally enable communication during backward. 
-        else:
-            torch.distributed.all_to_all(
-                output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki,
-                group=utils.MP_GROUP
-            )
-        return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
-
-    # Merge means2D, rgb, conic_opacity into one functional all-to-all communication call.
-    params = [means2D, rgb, conic_opacity]
-    params_cancatenated = torch.cat(params, dim=1).contiguous()
-    params_redistributed = one_all_to_all(params_cancatenated, use_function_version=True)
-    means2D_redistributed, rgb_redistributed, conic_opacity_redistributed = torch.split(
-        params_redistributed,
-        [means2D.shape[1], rgb.shape[1], conic_opacity.shape[1]],
-        dim=1
-    )
-
-    # Merge radii and depths into one all-to-all communication call. 
-    radii = radii.float() # XXX: I am not sure whether it will affect accuracy. 
-    radii_depth_float = torch.cat([radii.float().unsqueeze(1), depths.unsqueeze(1)], dim=1).contiguous()
-    radii_depth_redistributed = one_all_to_all(radii_depth_float, use_function_version=False)
-    radii_redistributed, depths_redistributed = torch.split(
-        radii_depth_redistributed,
-        [1, 1],
-        dim=1
-    )
-    radii_redistributed = radii_redistributed.squeeze(1).int()
-    depths_redistributed = depths_redistributed.squeeze(1)
-
-    return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool
-
-def memory_distr_mode1_preprocess3dgs_and_all2all(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, 
-                                                  strategy=None,
-                                                  mode="train"):
-    """
-    preprocess 3dgs and all2all communication.
-    
-    Mode 1: memory distribution across Model Parallel Group.
-
-    Background tensor (bg_color) must be on GPU!
-    """
-    assert utils.MP_GROUP.size() > 1, "This function is only for distributed training. "
-
-    ########## [START] Prepare CUDA Rasterization Settings ##########
-    timers = utils.get_timers()
-    if timers is not None:
-        timers.start("forward_prepare_args_and_settings")
-    # only locally render one camera in a batched cameras
-    cuda_args = get_cuda_args(strategy, mode)
-
-    # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-
-    raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
-        prefiltered=False,
-        debug=pipe.debug
-    )
-
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-    if timers is not None:
-        timers.stop("forward_prepare_args_and_settings")
-    ########## [END] Prepare CUDA Rasterization Settings ##########
-
-
-
-    ########## [START] Prepare Gaussians for rendering ##########
-    if timers is not None:
-        timers.start("forward_prepare_gaussians")
-    means3D = pc.get_xyz
-    opacity = pc.get_opacity
-    scales = pc.get_scaling
-    rotations = pc.get_rotation
-    shs = pc.get_features
-    if timers is not None:
-        timers.stop("forward_prepare_gaussians")
-
-    utils.check_memory_usage_logging("after forward_prepare_gaussians")
-    ########## [END] Prepare Gaussians for rendering ##########
-
-
-
-    ########## [START] CUDA Rasterization Call ##########
-    # Rasterize visible Gaussians to image, obtain their screen-space intermedia parameters. 
-
-    if timers is not None:
-        timers.start("forward_preprocess_gaussians")
-    #[3DGS-wise preprocess]
-    means2D, rgb, conic_opacity, radii, depths = rasterizer.preprocess_gaussians(
-        means3D=means3D,
-        scales=scales,
-        rotations=rotations,
-        shs=shs,
-        opacities=opacity,
-        cuda_args=cuda_args
-    )
-    if timers is not None:
-        timers.stop("forward_preprocess_gaussians")
-    utils.check_memory_usage_logging("after forward_preprocess_gaussians")
-
-    if mode == "train":
-        means2D.retain_grad()
-        # NOTE: means2D is (P, 2) tensor. This is different from means2D in not sep_rendering mode i.e. (P, 3). TODO: double check. 
-
-    #[3DGS all2all]: all to all communication for means2D, rgb, conic_opacity, radii, depths
-    if timers is not None:
-        timers.start("forward_all_to_all_communication")
-    means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
-        all_to_all_communication_mode1(rasterizer, means2D, rgb, conic_opacity, radii, depths, cuda_args)
-    if timers is not None:
-        timers.stop("forward_all_to_all_communication")
-    utils.check_memory_usage_logging("after forward_all_to_all_communication")
-    
-    screenspace_pkg = {
-                "rasterizer": rasterizer,
-                "cuda_args": cuda_args,
-                "locally_preprocessed_mean2D": means2D,
-                "locally_preprocessed_radii": radii,
-                "means2D_for_render": means2D_redistributed,
-                "rgb_for_render": rgb_redistributed,
-                "conic_opacity_for_render": conic_opacity_redistributed,
-                "radii_for_render": radii_redistributed,
-                "depths_for_render": depths_redistributed,
-                "i2j_send_size": i2j_send_size,
-                "local2j_ids_bool": local2j_ids_bool}
-
-    return screenspace_pkg
-
-
-def all_to_all_communication_mode2(batched_rasterizers, batched_screenspace_params, batched_cuda_args):
+def all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args):
     # TODO: fix this. 
     batched_local2j_ids = []
     batched_local2j_ids_bool = []
@@ -397,15 +226,13 @@ def all_to_all_communication_mode2(batched_rasterizers, batched_screenspace_para
     return means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, catted_batched_local2j_ids_bool
 
 
-def memory_distr_mode2_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0,
-                                                  batched_strategies=None,
-                                                  mode="train"):
+def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0,
+                                           batched_strategies=None,
+                                           mode="train"):
     """
     Render the scene. 
 
-    Mode 2: memory distribution across all GPUs(DEFAUL_GROUP).
-    
-    Background tensor (bg_color) must be on GPU!
+    distribute gaussians parameters across all GPUs.
     """
     assert utils.DEFAULT_GROUP.size() > 1, "This function is only for distributed training. "
 
@@ -482,7 +309,7 @@ def memory_distr_mode2_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc 
     if timers is not None:
         timers.start("forward_all_to_all_communication")
     means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
-        all_to_all_communication_mode2(batched_rasterizers, batched_screenspace_params, batched_cuda_args)
+        all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args)
     utils.check_memory_usage_logging("after forward_all_to_all_communication")
     if timers is not None:
         timers.stop("forward_all_to_all_communication")
@@ -509,37 +336,25 @@ def preprocess3dgs_and_all2all(batched_cameras, gaussians, pipe_args, background
     local_render_viewpoint_cam = batched_cameras[utils.DP_GROUP.rank()]
     local_render_strategy = batched_strategies[utils.DP_GROUP.rank()]
 
-    if args.memory_distribution_mode == "0":
-        screenspace_pkg = memory_distr_mode0_preprocess3dgs_and_all2all(local_render_viewpoint_cam, gaussians, pipe_args, background,
-                                                                        strategy=local_render_strategy,
-                                                                        mode=mode)
+    if args.gaussians_distribution:
+        screenspace_pkg = distributed_preprocess3dgs_and_all2all(batched_cameras, gaussians, pipe_args, background,
+                                                                 batched_strategies=batched_strategies,
+                                                                 mode=mode)
         if mode == "test":
             return screenspace_pkg
 
-        screenspace_pkg["batched_locally_preprocessed_radii"] = [screenspace_pkg["locally_preprocessed_radii"]]
-        screenspace_pkg["batched_locally_preprocessed_visibility_filter"] = [screenspace_pkg["locally_preprocessed_radii"]>0]
-        screenspace_pkg["batched_locally_preprocessed_mean2D"] = [screenspace_pkg["locally_preprocessed_mean2D"]]
-    elif args.memory_distribution_mode == "1":
-        screenspace_pkg = memory_distr_mode1_preprocess3dgs_and_all2all(local_render_viewpoint_cam, gaussians, pipe_args, background,
-                                                                        strategy=local_render_strategy,
-                                                                        mode=mode)
-        if mode == "test":
-            return screenspace_pkg
-
-        screenspace_pkg["batched_locally_preprocessed_radii"] = [screenspace_pkg["locally_preprocessed_radii"]]
-        screenspace_pkg["batched_locally_preprocessed_visibility_filter"] = [screenspace_pkg["locally_preprocessed_radii"]>0]
-        screenspace_pkg["batched_locally_preprocessed_mean2D"] = [screenspace_pkg["locally_preprocessed_mean2D"]]
-    elif args.memory_distribution_mode == "2":
-        screenspace_pkg = memory_distr_mode2_preprocess3dgs_and_all2all(batched_cameras, gaussians, pipe_args, background,
-                                                                        batched_strategies=batched_strategies,
-                                                                        mode=mode)
-        if mode == "test":
-            return screenspace_pkg
-
-        # screenspace_pkg["batched_locally_preprocessed_radii"] and screenspace_pkg["batched_locally_preprocessed_mean2D"] had been computed.
         screenspace_pkg["batched_locally_preprocessed_visibility_filter"] = [radii > 0 for radii in screenspace_pkg["batched_locally_preprocessed_radii"]]
     else:
-        raise NotImplementedError
+        screenspace_pkg = replicated_preprocess3dgs(local_render_viewpoint_cam, gaussians, pipe_args, background,
+                                                    strategy=local_render_strategy,
+                                                    mode=mode)
+        if mode == "test":
+            return screenspace_pkg
+
+        screenspace_pkg["batched_locally_preprocessed_radii"] = [screenspace_pkg["locally_preprocessed_radii"]]
+        screenspace_pkg["batched_locally_preprocessed_visibility_filter"] = [screenspace_pkg["locally_preprocessed_radii"]>0]
+        screenspace_pkg["batched_locally_preprocessed_mean2D"] = [screenspace_pkg["locally_preprocessed_mean2D"]]
+
     return screenspace_pkg
 
 

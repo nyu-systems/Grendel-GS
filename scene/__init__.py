@@ -64,12 +64,6 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
-        # if args.dp_size > 1:# If dp size is greater than 1, we need to split the cameras between the different processes before the training starts.
-        #     local_chunk_l, local_chunk_r = utils.get_local_chunk_l_r(len(scene_info.train_cameras), utils.DP_GROUP.size(), utils.DP_GROUP.rank())
-        #     scene_info.train_cameras = scene_info.train_cameras[local_chunk_l:local_chunk_r]
-        #     local_chunk_l, local_chunk_r = utils.get_local_chunk_l_r(len(scene_info.test_cameras), utils.DP_GROUP.size(), utils.DP_GROUP.rank())
-        #     scene_info.test_cameras = scene_info.test_cameras[local_chunk_l:local_chunk_r]
-
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling

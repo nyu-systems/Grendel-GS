@@ -95,7 +95,7 @@ def get_remote_tiles(send_to_j_size, recv_from_i_size, all_tiles_send_to_j):
     return all_tiles_recv_from_i
 
 
-def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, statistic_collector):
+def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
     timers = utils.get_timers()
 
 
@@ -1275,7 +1275,7 @@ def avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, comp
 
 
 
-def replicated_loss_computation(image, viewpoint_cam):
+def replicated_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector):
 
     timers = utils.get_timers()
 
@@ -1307,30 +1307,15 @@ def replicated_loss_computation(image, viewpoint_cam):
 
     return Ll1, ssim_loss
 
-def loss_computation(image, viewpoint_cam, compute_locally, strategy=None, statistic_collector={}):
-    args = utils.get_args()
+########################## Create loss implementation ##########################
 
+name2loss_implementation = {
+    "replicated_loss_computation": replicated_loss_computation,
+    "fast_distributed_loss_computation": fast_distributed_loss_computation,
+    "general_distributed_loss_computation": general_distributed_loss_computation,
+    "avoid_pixel_all2all_loss_computation": avoid_pixel_all2all_loss_computation,
+    "avoid_pixel_all2all_loss_computation_adjust_mode6": avoid_pixel_all2all_loss_computation_adjust_mode6,
+}
 
-    # Replicated Loss Computation
-    if args.loss_distribution_mode == "no_distribution":
-        return replicated_loss_computation(image, viewpoint_cam)
-
-    # Distributed Loss Computation
-    if args.loss_distribution_mode == "general":
-        return general_distributed_loss_computation(image, viewpoint_cam, compute_locally, statistic_collector)
-    elif args.loss_distribution_mode == "fast":
-        return fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    elif args.loss_distribution_mode == "functional_allreduce":
-        return functional_allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    elif args.loss_distribution_mode == "allreduce":
-        return allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    elif args.loss_distribution_mode == "fast_less_comm":
-        return fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    elif args.loss_distribution_mode == "fast_less_comm_noallreduceloss":
-        return fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    elif args.loss_distribution_mode == "avoid_pixel_all2all":
-        if args.render_distribution_adjust_mode == "6":
-            return avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-        else:
-            return avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector)
-    
+def loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector, image_distribution_mode):
+    return name2loss_implementation[image_distribution_mode](image, viewpoint_cam, compute_locally, strategy, statistic_collector)
