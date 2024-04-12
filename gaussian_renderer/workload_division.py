@@ -3,6 +3,7 @@ import torch.distributed as dist
 import torch
 import time
 import utils.general_utils as utils
+import diff_gaussian_rasterization
 
 ########################## Utility Functions ##########################
 
@@ -113,6 +114,28 @@ class DivisionStrategy:
         extended_compute_locally[tile_l:tile_r] = True
         extended_compute_locally = extended_compute_locally.view(self.tile_y, self.tile_x)
         return extended_compute_locally
+
+    def get_local2j_ids(self, means2D, radii, raster_settings, cuda_args):
+        dist_global_strategy_tensor = torch.tensor(self.division_pos, dtype=torch.int, device=means2D.device)
+
+        args = (
+            raster_settings.image_height,
+            raster_settings.image_width,
+            self.rank,
+            self.world_size,
+            means2D,
+            radii,
+            dist_global_strategy_tensor,
+            cuda_args
+        )
+
+        local2j_ids_bool = diff_gaussian_rasterization._C.get_local2j_ids_bool(*args)
+
+        local2j_ids = []
+        for rk in range(self.world_size):
+            local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
+
+        return local2j_ids, local2j_ids_bool
 
     def update_stats(self, stats_collector, n_render, n_consider, n_contrib, i2j_send_size):
         pass
@@ -300,6 +323,36 @@ class DivisionStrategyAsGrid:
                                  max(local_tile_x_l-1,0):min(local_tile_x_r+1, self.tile_x)] = True
 
         return extended_compute_locally
+
+    def get_local2j_ids(self, means2D, radii, raster_settings, cuda_args):
+        division_pos_xs, division_pos_ys = self.division_pos
+
+        rectangles = []
+        for y_rank in range(len(division_pos_ys[0])-1):
+            for x_rank in range(len(division_pos_ys)):
+                local_tile_x_l, local_tile_x_r = division_pos_xs[x_rank], division_pos_xs[x_rank+1]
+                local_tile_y_l, local_tile_y_r = division_pos_ys[x_rank][y_rank], division_pos_ys[x_rank][y_rank+1]
+                rectangles.append([local_tile_y_l, local_tile_y_r, local_tile_x_l, local_tile_x_r])
+        rectangles = torch.tensor(rectangles, dtype=torch.int, device=means2D.device)# (mp_world_size, 4)
+
+        args = (
+            raster_settings.image_height,
+            raster_settings.image_width,
+            self.rank,
+            self.world_size,
+            means2D,
+            radii,
+            rectangles,
+            cuda_args
+        )
+
+        local2j_ids_bool = diff_gaussian_rasterization._C.get_local2j_ids_bool_adjust_mode6(*args) # local2j_ids_bool is (P, world_size) bool tensor
+
+        local2j_ids = []
+        for rk in range(self.world_size):
+            local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
+
+        return local2j_ids, local2j_ids_bool
 
     def update_stats(self, global_running_times):
         self.global_running_times = global_running_times

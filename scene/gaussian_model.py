@@ -161,7 +161,7 @@ class GaussianModel:
             scales = scales[point_ind_l:point_ind_r].contiguous()
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
-            print("rank", utils.GLOBAL_RANK, "Number of initialized points after memory_distribution : ", fused_point_cloud.shape[0])
+            print("rank", utils.GLOBAL_RANK, "Number of initialized points after gaussians_distribution : ", fused_point_cloud.shape[0])
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))

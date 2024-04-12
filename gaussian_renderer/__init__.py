@@ -149,15 +149,13 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
 
 
 
-def all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args):
+def all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies):
     # TODO: fix this. 
     batched_local2j_ids = []
     batched_local2j_ids_bool = []
     for i in range(utils.DP_GROUP.size()):
         means2D, rgb, conic_opacity, radii, depths = batched_screenspace_params[i]
-        cuda_args = batched_cuda_args[i]
-
-        local2j_ids, local2j_ids_bool = batched_rasterizers[i].get_local2j_ids(means2D, radii, cuda_args)
+        local2j_ids, local2j_ids_bool = batched_strategies[i].get_local2j_ids(means2D, radii, batched_rasterizers[i].raster_settings, batched_cuda_args[i])
         batched_local2j_ids.append(local2j_ids)
         batched_local2j_ids_bool.append(local2j_ids_bool)
 
@@ -309,7 +307,7 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
     if timers is not None:
         timers.start("forward_all_to_all_communication")
     means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
-        all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args)
+        all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies)
     utils.check_memory_usage_logging("after forward_all_to_all_communication")
     if timers is not None:
         timers.stop("forward_all_to_all_communication")
