@@ -37,14 +37,14 @@ from arguments import (
     BenchmarkParams, 
     DebugParams, 
     print_all_args, 
-    check_args
+    init_args
 )
 import time
 import torch.distributed as dist
 
 def globally_sync_for_timer():
-    if utils.check_enable_python_timer() and utils.MP_GROUP.size() > 1:
-        torch.distributed.barrier(group=utils.MP_GROUP)
+    if utils.check_enable_python_timer() and utils.DEFAULT_GROUP.size() > 1:
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
 def densification(iteration, scene, gaussians, batched_screenspace_pkg):
     args = utils.get_args()
@@ -163,7 +163,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         timers.start("prepare_strategies")
         batched_strategy_histories = [get_division_strategy_history(cameraId2StrategyHistory,
                                                                     viewpoint_cam,
-                                                                    args.global_image_distribution_config.workloads_division_mode)
+                                                                    args.image_distribution_config.workloads_division_mode)
                                                     for viewpoint_cam in batched_cameras]
         batched_strategies = [strategy_history.start_strategy() for strategy_history in batched_strategy_histories]
         timers.stop("prepare_strategies")
@@ -197,7 +197,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                               compute_locally,
                                               local_render_strategy,
                                               statistic_collector,
-                                              args.global_image_distribution_config.loss_distribution_mode)
+                                              args.image_distribution_config.loss_distribution_mode)
             loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
             utils.check_memory_usage_logging("after loss")
 
@@ -395,7 +395,7 @@ if __name__ == "__main__":
 
     ## Prepare arguments.
     # Check arguments
-    check_args(args)
+    init_args(args)
     # Set up global args
     utils.set_args(args)
 

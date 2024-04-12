@@ -26,7 +26,7 @@ def get_cuda_args(strategy, mode="train"):# "test"
             if (iteration+x) % args.log_interval == 1:
                 iteration += x
                 break
-        avoid_pixel_all2all = args.global_image_distribution_config.avoid_pixels_all2all
+        avoid_pixel_all2all = args.image_distribution_config.avoid_pixels_all2all
     elif mode == "test":
         iteration = -1
         avoid_pixel_all2all = False

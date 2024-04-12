@@ -12,7 +12,7 @@ ImageDistributionConfig = namedtuple('ImageDistributionConfig', [
 def init_image_distribution_config(args):
 
     if args.image_distribution_mode == "0":
-        args.global_image_distribution_config = ImageDistributionConfig(
+        args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="replicated_loss_computation",
             workloads_division_mode="DivisionStrategyUniform",
             avoid_pixels_all2all=False,
@@ -20,7 +20,7 @@ def init_image_distribution_config(args):
         )
 
     elif args.image_distribution_mode == "1":
-        args.global_image_distribution_config = ImageDistributionConfig(
+        args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="general_distributed_loss_computation",
             workloads_division_mode="DivisionStrategyUniform",
             avoid_pixels_all2all=False,
@@ -28,7 +28,7 @@ def init_image_distribution_config(args):
         )
 
     elif args.image_distribution_mode == "2":
-        args.global_image_distribution_config = ImageDistributionConfig(
+        args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="general_distributed_loss_computation",
             workloads_division_mode="DivisionStrategyDynamicAdjustment",
             avoid_pixels_all2all=False,
@@ -36,7 +36,7 @@ def init_image_distribution_config(args):
         )
 
     elif args.image_distribution_mode == "3":
-        args.global_image_distribution_config = ImageDistributionConfig(
+        args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="avoid_pixel_all2all_loss_computation",
             workloads_division_mode="DivisionStrategyDynamicAdjustment",
             avoid_pixels_all2all=True,
@@ -44,7 +44,7 @@ def init_image_distribution_config(args):
         )
 
     elif args.image_distribution_mode == "4":
-        args.global_image_distribution_config = ImageDistributionConfig(
+        args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="avoid_pixel_all2all_loss_computation_adjust_mode6",
             workloads_division_mode="DivisionStrategyDynamicAdjustment",
             avoid_pixels_all2all=True,

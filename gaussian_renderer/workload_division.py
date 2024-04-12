@@ -80,7 +80,7 @@ def division_pos_heuristic(heuristic, tile_num, world_size):
 def get_local_running_time_by_modes(stats_collector):
     args = utils.get_args()
     local_running_time = 0
-    for mode in args.global_image_distribution_config.local_running_time_mode:
+    for mode in args.image_distribution_config.local_running_time_mode:
         local_running_time += stats_collector[mode]
     return local_running_time
 
@@ -369,8 +369,17 @@ class DivisionStrategyHistory:
             self.accum_heuristic = self.working_strategy.heuristic
             return
 
+        # TODO: Does gradually increasing heuristic_decay work?  Quick results show it does not. 
+        # if self.working_iteration < 1500:
+        #     heuristic_decay = 0
+        # elif self.working_iteration < 3000:
+        #     heuristic_decay = 0.2
+        # else:
+        #     heuristic_decay = 0.5
+        heuristic_decay = args.heuristic_decay
+
         # update accummulated heuristic
-        self.accum_heuristic = self.accum_heuristic * args.heuristic_decay + self.working_strategy.heuristic * (1-args.heuristic_decay)
+        self.accum_heuristic = self.accum_heuristic * heuristic_decay + self.working_strategy.heuristic.view((self.tile_y, self.tile_x)) * (1-heuristic_decay)
 
     def start_strategy(self):
         args = utils.get_args()

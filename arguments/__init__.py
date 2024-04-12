@@ -223,7 +223,7 @@ def print_all_args(args, log_file):
     log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
 
 
-def check_args(args):
+def init_args(args):
 
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
