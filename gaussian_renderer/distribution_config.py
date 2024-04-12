@@ -46,7 +46,7 @@ def init_image_distribution_config(args):
     elif args.image_distribution_mode == "4":
         args.image_distribution_config = ImageDistributionConfig(
             loss_distribution_mode="avoid_pixel_all2all_loss_computation_adjust_mode6",
-            workloads_division_mode="DivisionStrategyDynamicAdjustment",
+            workloads_division_mode="DivisionStrategyAsGrid",
             avoid_pixels_all2all=True,
             local_running_time_mode=["backward_render_time", "forward_render_time", "forward_loss_time", "forward_loss_time"]
         )

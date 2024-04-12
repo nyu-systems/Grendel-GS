@@ -104,6 +104,15 @@ class DivisionStrategy:
         compute_locally[tile_ids_l:tile_ids_r] = True
         compute_locally = compute_locally.view(self.tile_y, self.tile_x)
         return compute_locally
+    
+    def get_extended_compute_locally(self):
+        tile_ids_l, tile_ids_r = self.division_pos[self.rank], self.division_pos[self.rank+1]
+        tile_l = max(tile_ids_l-self.tile_x-1, 0)
+        tile_r = min(tile_ids_r+self.tile_x+1, self.tile_y*self.tile_x)
+        extended_compute_locally = torch.zeros(self.tile_y*self.tile_x, dtype=torch.bool, device="cuda")
+        extended_compute_locally[tile_l:tile_r] = True
+        extended_compute_locally = extended_compute_locally.view(self.tile_y, self.tile_x)
+        return extended_compute_locally
 
     def update_stats(self, stats_collector, n_render, n_consider, n_contrib, i2j_send_size):
         pass
@@ -282,6 +291,15 @@ class DivisionStrategyAsGrid:
         compute_locally = torch.zeros( (self.tile_y, self.tile_x), dtype=torch.bool, device="cuda")
         compute_locally[local_tile_y_l:local_tile_y_r, local_tile_x_l:local_tile_x_r] = True
         return compute_locally
+
+    def get_extended_compute_locally(self):
+        ((local_tile_y_l, local_tile_y_r), (local_tile_x_l, local_tile_x_r) ) = self.get_local_strategy()
+
+        extended_compute_locally = torch.zeros((self.tile_y, self.tile_x), dtype=torch.bool, device="cuda")
+        extended_compute_locally[max(local_tile_y_l-1,0):min(local_tile_y_r+1, self.tile_y),
+                                 max(local_tile_x_l-1,0):min(local_tile_x_r+1, self.tile_x)] = True
+
+        return extended_compute_locally
 
     def update_stats(self, global_running_times):
         self.global_running_times = global_running_times

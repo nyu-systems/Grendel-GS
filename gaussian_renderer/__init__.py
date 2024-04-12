@@ -368,6 +368,7 @@ def render(screenspace_pkg, strategy=None):
     if timers is not None:
         timers.start("forward_compute_locally")    
     compute_locally = strategy.get_compute_locally()
+    extended_compute_locally = strategy.get_extended_compute_locally()
     if timers is not None:
         timers.stop("forward_compute_locally")
     utils.check_memory_usage_logging("after forward_compute_locally")
@@ -382,6 +383,7 @@ def render(screenspace_pkg, strategy=None):
         depths=screenspace_pkg["depths_for_render"],
         radii=screenspace_pkg["radii_for_render"],
         compute_locally=compute_locally,
+        extended_compute_locally=extended_compute_locally,
         cuda_args=screenspace_pkg["cuda_args"]
     )
     if timers is not None:
