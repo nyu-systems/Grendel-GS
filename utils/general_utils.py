@@ -16,7 +16,7 @@ import numpy as np
 import random
 import os
 import torch.distributed as dist
-from torch.distributed.device_mesh import init_device_mesh
+# from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
 
@@ -154,10 +154,27 @@ def init_distributed(args):
 
         global DP_GROUP, MP_GROUP, DEFAULT_GROUP
 
-        mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
-        # Users can access the underlying process group thru `get_group` API.
-        DP_GROUP = mesh_2d.get_group(mesh_dim="dp")
-        MP_GROUP = mesh_2d.get_group(mesh_dim="mp")
+        # mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
+        # # Users can access the underlying process group thru `get_group` API.
+        # DP_GROUP = mesh_2d.get_group(mesh_dim="dp")
+        # MP_GROUP = mesh_2d.get_group(mesh_dim="mp")
+        # DEFAULT_GROUP = dist.group.WORLD
+
+        dp_rank = GLOBAL_RANK // args.mp_size
+        mp_rank = GLOBAL_RANK % args.mp_size
+
+        all_DP_GROUP = []
+        for rank in range(args.mp_size):
+            dp_group_ranks = list(range(rank, WORLD_SIZE, args.mp_size))
+            all_DP_GROUP.append(dist.new_group(dp_group_ranks))
+        DP_GROUP = all_DP_GROUP[mp_rank]
+
+        all_MP_GROUP = []
+        for rank in range(args.dp_size):
+            mp_group_ranks = list(range(rank*args.mp_size, (rank+1)*args.mp_size))
+            all_MP_GROUP.append(dist.new_group(mp_group_ranks))
+        MP_GROUP = all_MP_GROUP[dp_rank]
+
         DEFAULT_GROUP = dist.group.WORLD
 
         print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))

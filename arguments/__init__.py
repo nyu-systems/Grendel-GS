@@ -275,6 +275,10 @@ def init_args(args):
         args.image_distribution = False
         args.image_distribution_mode = "0"
 
+    if utils.MP_GROUP.size() == 1:
+        args.image_distribution_mode = "0"
+
+
     assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
 
     # sort test_iterations
