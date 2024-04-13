@@ -42,10 +42,9 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py \
     --log_interval 50 \
     --log_folder experiments/test_dp \
     --model_path experiments/test_dp \
-    --render_distribution_adjust_mode "2" \
-    --memory_distribution_mode "2" \
     --redistribute_gaussians_mode "1" \
-    --loss_distribution_mode "general" \
+    --gaussians_distribution \
+    --image_distribution_mode "2" \
     --test_iterations 1000 7000 \
     --dp_size 4 \
     --bsz 4 \
@@ -58,10 +57,9 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py \
     --log_interval 50 \
     --log_folder experiments/test_mp \
     --model_path experiments/test_mp \
-    --render_distribution_adjust_mode "2" \
-    --memory_distribution_mode "1" \
     --redistribute_gaussians_mode "1" \
-    --loss_distribution_mode "general" \
+    --gaussians_distribution \
+    --image_distribution_mode "2" \
     --test_iterations 1000 7000 \
     --dp_size 1 \
     --bsz 1 \
@@ -74,10 +72,9 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py \
     --log_interval 50 \
     --log_folder experiments/test_dp_and_mp \
     --model_path experiments/test_dp_and_mp \
-    --render_distribution_adjust_mode "2" \
-    --memory_distribution_mode "2" \
     --redistribute_gaussians_mode "1" \
-    --loss_distribution_mode "general" \
+    --gaussians_distribution \
+    --image_distribution_mode "2" \
     --test_iterations 1000 7000 \
     --dp_size 2 \
     --bsz 2 \
