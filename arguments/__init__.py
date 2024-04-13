@@ -254,10 +254,8 @@ def init_args(args):
         args.end2end_time = True
         args.log_iteration_memory_usage = False
         args.check_memory_usage = False
-        args.save_iterations = [2000, 7000, 15000, 30000]
         args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
 
-        # use the fastest mode.
         args.lazy_load_image = True
 
         assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
