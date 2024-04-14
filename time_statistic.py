@@ -2346,7 +2346,10 @@ def draw_iteration_loss(file_paths, window_length=41, polyorder=3):
     for file_path in file_paths:
         # parse batch size from file path
         # ***bsz_{bsz} or bsz{bsz}
-        bsz = int(re.search(r"bsz_?(\d+)", file_path).group(1))
+        try:
+            bsz = int(re.search(r"bsz_?(\d+)", file_path).group(1))
+        except:
+            bsz = 1
         iteration = []
         iteration_loss = []
         lines = open(file_path, "r").readlines()
@@ -2355,7 +2358,7 @@ def draw_iteration_loss(file_paths, window_length=41, polyorder=3):
             # iteration[3006,3007) loss: [0.331027, 0.21343, 0.243 xxxxx] image: ['00297']
             reg_exp1 = re.compile(r"iteration (\d+) image: \w+ loss: (\d+\.\d+)")
             # or loss is a variable length list of floats
-            reg_exp2 = re.compile(r"iteration\[(\d+),\d+\) loss: \[(.*)\] image: \[('\d+')(, '\d+')*\]")
+            reg_exp2 = re.compile(r"iteration\[(\d+),\d+\) loss: \[(.*)\] image: \[('\w+')(, '\w+')*\]")
             reg_exp_match = reg_exp1.match(line) or reg_exp2.match(line)
             if reg_exp_match:
                 iteration.append(int(reg_exp_match.group(1)))
@@ -2414,8 +2417,14 @@ def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
     Draws specified metrics (grad_norm or grad_cosine_similarity) from the log files.
     """
     metric_dicts = [parse_metrics(file_path, metric_name) for file_path in file_paths]
-    print(metric_dicts)
-    bszs = [int(re.search(r"bsz?_?(\d+)", file_path).group(1)) for file_path in file_paths]
+    print([metric_dict.keys() for metric_dict in metric_dicts])
+    bszs = []
+    for file_path in file_paths:
+        try:
+            bsz = int(re.search(r"bsz_?(\d+)", file_path).group(1))
+        except:
+            bsz = 1
+        bszs.append(bsz)
     window_lengths = [window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0 for bsz in bszs]
     metric_dicts = [smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1)) for metric_dict, window_length in zip(metric_dicts, window_lengths)]
 
@@ -2506,38 +2515,38 @@ def draw_evaluation_results(file_paths):
         train_iterations.append(train_iteration)
 
     # draw the two figures on the same graph.
-    # fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    # for file_path, eval_test_PSNR, iterations in zip(file_paths, eval_tests_PSNR, test_iterations):
-    #     # x-axis is iteration
-    #     # y-axis is PSNR
-    #     ax[0].plot(iterations, eval_test_PSNR, label=file_path)
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
+    for file_path, eval_test_PSNR, iterations in zip(file_paths, eval_tests_PSNR, test_iterations):
+        # x-axis is iteration
+        # y-axis is PSNR
+        ax[0].plot(iterations, eval_test_PSNR, label=file_path)
     
-    # ax[0].set_ylabel('PSNR')
-    # secax = ax[0].secondary_yaxis('right')
-    # secax.set_ylabel('PSNR')
-    # ax[0].legend(loc='lower right')
-    # ax[0].set_title("Evaluating test PSNR")
-
-    # for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
-    #     # x-axis is iteration
-    #     # y-axis is PSNR
-    #     ax[1].plot(iterations, eval_train_PSNR, label=file_path)
-
-    # ax[1].set_ylabel('PSNR')
-    # secax = ax[1].secondary_yaxis('right')
-    # secax.set_ylabel('PSNR')
-    # ax[1].legend(loc='lower right')
-    # ax[1].set_title("Evaluating train PSNR")
-
-    #only train
-    fig, ax = plt.subplots(figsize=(20, 10))
-    for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
-        ax.plot(iterations, eval_train_PSNR, label=file_path)
-    ax.set_ylabel('PSNR')
-    secax = ax.secondary_yaxis('right')
+    ax[0].set_ylabel('PSNR')
+    secax = ax[0].secondary_yaxis('right')
     secax.set_ylabel('PSNR')
-    ax.legend(loc='lower right')
-    ax.set_title("Evaluating train PSNR")
+    ax[0].legend(loc='lower right')
+    ax[0].set_title("Evaluating test PSNR")
+
+    for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
+        # x-axis is iteration
+        # y-axis is PSNR
+        ax[1].plot(iterations, eval_train_PSNR, label=file_path)
+
+    ax[1].set_ylabel('PSNR')
+    secax = ax[1].secondary_yaxis('right')
+    secax.set_ylabel('PSNR')
+    ax[1].legend(loc='lower right')
+    ax[1].set_title("Evaluating train PSNR")
+
+    # #only train
+    # fig, ax = plt.subplots(figsize=(20, 10))
+    # for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
+    #     ax.plot(iterations, eval_train_PSNR, label=file_path)
+    # ax.set_ylabel('PSNR')
+    # secax = ax.secondary_yaxis('right')
+    # secax.set_ylabel('PSNR')
+    # ax.legend(loc='lower right')
+    # ax.set_title("Evaluating train PSNR")
 
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
     plt.savefig(folder+"compare_evaluation_results.png")

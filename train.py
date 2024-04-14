@@ -17,10 +17,11 @@ from gaussian_renderer import (
         preprocess3dgs_and_all2all,
         render
     )
+from torch.cuda import nvtx
 from gaussian_renderer.loss_distribution import loss_computation
 import sys
 from scene import Scene, GaussianModel, SceneDataset
-from scene.workload_division import create_division_strategy_history
+from scene.workload_division import create_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
 from utils.timer import Timer
@@ -56,7 +57,10 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             gaussians.send_to_gpui_cnt += local2j_ids_bool
 
     # Densification
-    if not args.disable_auto_densification and iteration < args.densify_until_iter:
+    if not args.disable_auto_densification and iteration <= args.densify_until_iter:
+        # TODO: more check on this: originally the code is < args.densify_until_iter, but for bsz=1 it does not update at densify_until_iter iteration but other bsz>1 updates at densify_until_iter - (bsz - 1) iteration, thus there is different number of densifications for different bsz, which is not fair. 
+        # the same issue for opacity reset, which has more severe implications.
+
         # Keep track of max radii in image-space for pruning
         timers.start("densification")
 
@@ -72,10 +76,6 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             assert args.stop_update_param == False, "stop_update_param must be false for densification; because it is a flag for debugging."
             # utils.print_rank_0("iteration: {}, bsz: {}, update_interval: {}, update_residual: {}".format(iteration, args.bsz, args.densification_interval, 0))
 
-            stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
-            log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
-            log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
-            log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
             timers.start("densify_and_prune")
             size_threshold = 20 if iteration > args.opacity_reset_interval else None
             gaussians.densify_and_prune(args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
@@ -128,7 +128,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset
-    train_dataset = SceneDataset(scene.getTrainCameras())
+    train_dataset = SceneDataset(scene.getTrainCameras(dataset_args.train_resolution_scale))
     # init workload division strategy
     cameraId2StrategyHistory = {}
     # init background
@@ -146,6 +146,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         utils.set_cur_iter(iteration)
         gaussians.update_learning_rate(iteration)
         num_trained_batches += 1
+        timers.clear()
+        if args.nsys_profile:
+            nvtx.range_push(f"iteration[{iteration},{iteration+args.bsz})")
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if utils.check_update_at_this_iter(iteration, args.bsz, 1000, 0):
             gaussians.oneupSHdegree()
@@ -158,8 +161,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                    "batched_local2j_ids_bool":[],
                                    "statistic_collectors":[],
                                    "losses": []}
+        batched_parameter_gradients_pkg = {}
 
         # Prepare Workload division strategy
+        timers.start("prepare_strategies")
         batched_strategies = []
         batched_strategy_histories = []
         for viewpoint_cam in batched_cameras:
@@ -170,14 +175,13 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             strategy = strategy_history.start_strategy()
             batched_strategies.append(strategy)
             batched_strategy_histories.append(strategy_history)
+        timers.stop("prepare_strategies")
 
         assert args.bsz % args.dp_size == 0, "dp_size must be a divisor of bsz."
         micro_bsz_size = args.dp_size
         num_samples_per_dp_rank = args.bsz // args.dp_size
         for micro_step in range(args.bsz // args.dp_size):
             # Micro Step Initialization
-            timers.clear()
-
             micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_rank]
             micro_batched_strategies = batched_strategies[micro_step::num_samples_per_dp_rank]
             local_render_viewpoint_cam = micro_batched_cameras[utils.DP_GROUP.rank()]
@@ -217,6 +221,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
             batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
             batched_screenspace_pkg["losses"].append(loss)
+            
+            # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
             if args.memory_distribution_mode != "0":
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
 
@@ -233,16 +239,43 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Adjust workload division strategy. 
             globally_sync_for_timer()
             timers.start("strategy.update_stats")
-            if iteration > args.adjust_strategy_warmp_iterations:
-                all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
-                if utils.DP_GROUP.size() > 1:
-                    torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
-                    all_statistic_collector = sum(all_statistic_collector, [])
-                else:
-                    all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
-                for idx in range(args.bsz):
-                    batched_strategies[idx].update_stats(all_statistic_collector[idx])
-                    batched_strategy_histories[idx].finish_strategy()
+            if iteration > args.adjust_strategy_warmp_iterations and utils.DEFAULT_GROUP.size() > 1:
+                ### orginal implementation. When the new implementation is stable, I will delete the old implementation. 
+                # all_statistic_collector = [None for _ in range(utils.DP_GROUP.size())]
+                # timers.start("strategy.update_stats.all_statistic_collector")
+                # if utils.DP_GROUP.size() > 1:
+                #     torch.distributed.all_gather_object(all_statistic_collector, batched_screenspace_pkg["statistic_collectors"], group=utils.DP_GROUP)
+                #     all_statistic_collector = sum(all_statistic_collector, [])
+                # else:
+                #     all_statistic_collector = batched_screenspace_pkg["statistic_collectors"]
+                # timers.stop("strategy.update_stats.all_statistic_collector")
+                # timers.start("strategy.update_stats.update_stats")
+                # for idx in range(args.bsz):
+                #     batched_strategies[idx].update_stats(all_statistic_collector[idx])
+                #     batched_strategy_histories[idx].finish_strategy()
+                # timers.stop("strategy.update_stats.update_stats")
+                pass
+
+                ### new implementation
+                assert args.render_distribution_adjust_mode in ["2", "5", "6"], "Only support mode 2, 5 and 6 for now."
+                timers.start("strategy.update_stats.all_gather_running_time")
+                batched_local_running_time = []
+                for statistic_collector in batched_screenspace_pkg["statistic_collectors"]:
+                    batched_local_running_time.append(get_local_running_time_by_modes(statistic_collector))
+
+                all_running_time = utils.our_allgather_among_cpu_processes_float_list(batched_local_running_time, utils.DEFAULT_GROUP)
+
+                timers.stop("strategy.update_stats.all_gather_running_time")
+
+                for dp_rk in range(utils.DP_GROUP.size()):
+                    for accum_idx_in_one_dp_rk in range(num_samples_per_dp_rank):
+                        idx_in_one_batch = dp_rk * num_samples_per_dp_rank + accum_idx_in_one_dp_rk
+                        all_running_time_cross_mp = []
+                        for mp_rk in range(utils.MP_GROUP.size()):
+                            all_running_time_cross_mp.append(all_running_time[ dp_rk * utils.MP_GROUP.size() + mp_rk ][accum_idx_in_one_dp_rk])
+                        batched_strategies[idx_in_one_batch].update_stats(all_running_time_cross_mp)
+                        batched_strategy_histories[idx_in_one_batch].finish_strategy()
+
             timers.stop("strategy.update_stats")
 
 
@@ -265,15 +298,23 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             log_file.write(log_string)
             timers.stop("allgather_loss_and_log")
 
+            if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
+                if args.debug_why and iteration > args.densify_until_iter:
+                    breakpoint()
+                stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
+                log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
+                log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
+                log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
 
             # Log and save
-            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background)
+            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.test_resolution_scale)
 
             # Densification
             densification(iteration, scene, gaussians, batched_screenspace_pkg)
 
             # Save Gaussians
-            if iteration in args.save_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
+            # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
+            if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
@@ -328,8 +369,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 utils.check_memory_usage_logging("after optimizer step")
 
         # Finish a iteration and clean up
+        if args.nsys_profile:
+            nvtx.range_pop()
         if utils.check_enable_python_timer():
-            timers.printTimers(iteration)
+            timers.printTimers(iteration, mode="sum")
         log_file.flush()
 
     # Finish training
@@ -348,16 +391,14 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
-def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background):
+def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
     log_file = utils.get_log_file()
     # Report test and samples of training set
-    if len(testing_iterations) == 0:
-        return
-    if utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
+    if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
                             {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         for config in validation_configs:

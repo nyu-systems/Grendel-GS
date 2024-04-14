@@ -64,6 +64,7 @@ class AuxiliaryParams(ParamGroup):
         self.start_checkpoint = ""
         self.log_folder = "experiments/default_folder"
         self.log_interval = 50
+        self.debug_why = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -77,6 +78,8 @@ class ModelParams(ParamGroup):
         self._model_path = "/scratch/hz3496/gs_tmp"
         self._images = "images"
         self._resolution = 1 # set it to 1 to disable resizing. In current project, we do not resize images because we want to support larger resolution image. 
+        self.train_resolution_scale = 1.0
+        self.test_resolution_scale = 1.0
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
@@ -177,6 +180,8 @@ class DebugParams(ParamGroup):
         self.time_image_loading = False # Log image loading time.
         self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
+        self.nsys_profile = False # profile with nsys.
+
         super().__init__(parser, "Debug Parameters")
 
 def get_combined_args(parser : ArgumentParser):
@@ -225,7 +230,7 @@ def check_args(args):
     # TODO: we temporarily disable checkpoint because we have not implemented it yet.
     args.checkpoint_iterations = []
     args.start_checkpoint = None
-    if len(args.save_iterations) > 0:
+    if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
         args.save_iterations.append(args.iterations)
 
     if args.benchmark_stats:
@@ -281,7 +286,7 @@ def check_args(args):
     if args.render_distribution_adjust_mode == "3":
         assert not args.dist_global_strategy == "", "dist_global_strategy must be set if adjust_mode is 3."
 
-    if args.render_distribution_adjust_mode == "5":
+    if args.render_distribution_adjust_mode in ["5", "6"]:
         args.loss_distribution_mode = "avoid_pixel_all2all"
         utils.print_rank_0("NOTE! set loss_distribution_mode to `avoid_pixel_all2all` because render_distribution_adjust_mode is 5.")
 

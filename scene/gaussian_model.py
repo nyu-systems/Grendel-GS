@@ -217,7 +217,7 @@ class GaussianModel:
                 if "eps" in param_group: # Adam
                     param_group["eps"] /= lr_scale
                     param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
-                    utils.print_rank_0("betas" + str(param_group["betas"]))
+                    utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
             elif training_args.lr_scale_mode == "accumu":
                 lr_scale = 1
             else:
@@ -234,14 +234,16 @@ class GaussianModel:
         # log the statistics of the gaussian model
         # number of total 3dgs on this rank
         num_3dgs = self._xyz.shape[0]
-        # the average of grad norm
-        grads = self.xyz_gradient_accum / self.denom
-        grads[grads.isnan()] = 0.0
-        avg_grad_norm = torch.mean(grads).item()
         # average size of 3dgs
         avg_size = torch.mean(torch.max(self.get_scaling, dim=1).values).item()
         # average opacity
         avg_opacity = torch.mean(self.get_opacity).item()
+        stats = {
+            "num_3dgs": num_3dgs,
+            "avg_size": avg_size,
+            "avg_opacity": avg_opacity,
+        }
+
         # get the exp_avg, exp_avg_sq state for all parameters
         exp_avg_dict = {}
         exp_avg_sq_dict = {}
@@ -251,12 +253,6 @@ class GaussianModel:
                 if 'exp_avg' in stored_state:
                     exp_avg_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg"], dim=-1)).item()
                     exp_avg_sq_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg_sq"], dim=-1)).item()
-        stats = {
-            "num_3dgs": num_3dgs,
-            "avg_view_space_grad_norm": avg_grad_norm,
-            "avg_size": avg_size,
-            "avg_opacity": avg_opacity,
-        }
         return stats, exp_avg_dict, exp_avg_sq_dict
         
 
@@ -282,9 +278,6 @@ class GaussianModel:
             sync_func = sync_gradients_fused_densely
         elif args.sync_grad_mode == "fused_sparse":
             sync_func = sync_gradients_fused_sparsely
-        elif args.sync_grad_mode == "with_stats":
-            from functools import partial
-            sync_func = partial(sync_gradients_with_stats, batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"])
         else:
             assert False, f"sync_grad_mode {args.sync_grad_mode} not supported."
 
@@ -318,15 +311,24 @@ class GaussianModel:
     def save_ply(self, path):# here, we should be in torch.no_grad() context. train.py ensures that. 
         args = utils.get_args()
         _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
+        
+        if args.memory_distribution_mode == "0" and utils.DEFAULT_GROUP.rank() != 0:
+            return
 
-        # if args.memory_distribution and utils.MP_GROUP.size() > 1:
-        assert False, "DP does not support checkpoint load and save yet."
-        if False:# TODO: DP does not support checkpoint load and save yet.
+        if args.memory_distribution_mode == "1" and utils.DP_GROUP.rank() != 0:
+            return
+        
+        if args.memory_distribution_mode == "2":
+            group = utils.DEFAULT_GROUP
+        if args.memory_distribution_mode == "1":
+            group = utils.MP_GROUP
+
+        if args.memory_distribution_mode != "0" and group.size() > 1:
             # gather at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
-                tensor_sizes = torch.zeros((utils.WORLD_SIZE), dtype=torch.int, device="cuda")
-                tensor_sizes[utils.LOCAL_RANK] = tensor.shape[0]
+                tensor_sizes = torch.zeros((group.size()), dtype=torch.int, device="cuda")
+                tensor_sizes[group.rank()] = tensor.shape[0]
                 dist.all_reduce(tensor_sizes, op=dist.ReduceOp.SUM)
                 # move tensor_sizes to CPU and convert to int list
                 tensor_sizes = tensor_sizes.cpu().numpy().tolist()
@@ -336,9 +338,9 @@ class GaussianModel:
 
                 # gather tensors on different ranks using grouped send/recv
                 gathered_tensors = []
-                if utils.LOCAL_RANK == 0:
-                    for i in range(utils.WORLD_SIZE):
-                        if i == utils.LOCAL_RANK:
+                if group.rank() == 0:
+                    for i in range(group.size()):
+                        if i == group.rank():
                             gathered_tensors.append(tensor)
                         else:
                             tensor_from_rk_i = torch.zeros((tensor_sizes[i], )+tensor.shape[1:], dtype=tensor.dtype, device="cuda")
@@ -349,7 +351,7 @@ class GaussianModel:
                     dist.send(tensor, dst=0)
                 # concatenate gathered tensors
 
-                return gathered_tensors if utils.LOCAL_RANK == 0 else None # only return gather tensors at rank 0
+                return gathered_tensors if group.rank() == 0 else None # only return gather tensors at rank 0
 
             _xyz = gather_uneven_tensors(self._xyz)
             _features_dc = gather_uneven_tensors(self._features_dc)
@@ -357,6 +359,9 @@ class GaussianModel:
             _opacity = gather_uneven_tensors(self._opacity)
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
+
+            if group.rank() != 0:
+                return
         else:
             _xyz = self._xyz
             _features_dc = self._features_dc
@@ -364,10 +369,6 @@ class GaussianModel:
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
-
-        # only save at rank 0
-        if utils.LOCAL_RANK != 0:
-            return
 
         mkdir_p(os.path.dirname(path))
 
@@ -431,12 +432,10 @@ class GaussianModel:
         # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
         # Split the point cloud across the ranks.
 
-        # if args.memory_distribution and utils.MP_GROUP.size() > 1:
-        assert False, "DP does not support checkpoint load and save yet."
-        if False:# TODO: DP does not support checkpoint load and save yet.
-            chunk = xyz.shape[0] // utils.WORLD_SIZE + 1
-            point_ind_l = chunk*utils.LOCAL_RANK
-            point_ind_r = min(chunk*(utils.LOCAL_RANK+1), xyz.shape[0])
+        if args.memory_distribution and utils.MP_GROUP.size() > 1:
+            chunk = xyz.shape[0] // utils.MP_GROUP.size() + 1
+            point_ind_l = chunk*utils.MP_GROUP.rank()
+            point_ind_r = min(chunk*(utils.MP_GROUP.rank()+1), xyz.shape[0])
             xyz = xyz[point_ind_l:point_ind_r].contiguous()
             features_dc = features_dc[point_ind_l:point_ind_r].contiguous()
             features_extra = features_extra[point_ind_l:point_ind_r].contiguous()
@@ -573,6 +572,9 @@ class GaussianModel:
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
+        # [N * number of selected points, 3]
+        # TODO: log number of densified gaussian
+        utils.get_log_file().write("Number of split gaussians: {}\n".format(selected_pts_mask.sum().item()))
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
@@ -593,6 +595,7 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
+        utils.get_log_file().write("Number of cloned gaussians: {}\n".format(selected_pts_mask.sum().item()))
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
@@ -612,6 +615,11 @@ class GaussianModel:
 
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
+
+        densification_stats = {}
+        densification_stats["view_space_grad"] = grads.mean().item()
+        densification_stats["view_space_grad_max"] = grads.max().item()
+        
 
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
