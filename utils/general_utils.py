@@ -219,9 +219,9 @@ def check_memory_usage_logging(prefix):
         )
 
 def PILtoTorch(pil_image, resolution, args, log_file):
-    assert pil_image.size == resolution, f"Should not resize. image size {pil_image.size} and {resolution} mismatch should not happen in this current project!"
-    # resized_image_PIL = pil_image.resize(resolution)
-    resized_image_PIL = pil_image
+    # assert pil_image.size == resolution, f"Should not resize. image size {pil_image.size} and {resolution} mismatch should not happen in this current project!"
+    resized_image_PIL = pil_image.resize(resolution)
+    # resized_image_PIL = pil_image
     if args.time_image_loading:
         start_time = time.time()
     resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0

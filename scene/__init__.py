@@ -24,7 +24,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args, gaussians : GaussianModel, load_iteration=None, shuffle=True):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -71,16 +71,21 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         log_file = utils.get_log_file()
-        for resolution_scale in resolution_scales:
+        for resolution_scale in [args.train_resolution_scale]:
             utils.print_rank_0("Decoding Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            # output the number of cameras in the training set and image size to the log file
+            log_file.write("Train Resolution Scale: {}\n".format(resolution_scale))
+            log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
+            log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
+
+        for resolution_scale in [args.test_resolution_scale]:
             utils.print_rank_0("Decoding Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
             # output the number of cameras in the training set and image size to the log file
-            log_file.write("Resolution: {}\n".format(resolution_scale))
-            log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
+            log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
             log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
-            log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
+            log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
 
         utils.check_memory_usage_logging("after Loading all images")
 

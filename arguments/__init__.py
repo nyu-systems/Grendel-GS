@@ -65,6 +65,7 @@ class AuxiliaryParams(ParamGroup):
         self.start_checkpoint = ""
         self.log_folder = "experiments/default_folder"
         self.log_interval = 50
+        self.debug_why = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -78,6 +79,8 @@ class ModelParams(ParamGroup):
         self._model_path = "/scratch/hz3496/gs_tmp"
         self._images = "images"
         self._resolution = 1 # set it to 1 to disable resizing. In current project, we do not resize images because we want to support larger resolution image. 
+        self.train_resolution_scale = 1.0
+        self.test_resolution_scale = 1.0
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
@@ -114,6 +117,7 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):
@@ -147,7 +151,7 @@ class DistributionParams(ParamGroup):
         # Data Parallel
         self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
         self.dp_size = 1 # data parallel degree.
-        self.grad_normalization_mode = "divide_by_batch_size" # "divide_by_visible_count", "divide_by_batch_size" gradient normalization mode. 
+        self.grad_normalization_mode = "none" # "divide_by_visible_count", "square_multiply_by_visible_count", "multiply_by_visible_count", "none" gradient normalization mode. 
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
@@ -231,7 +235,7 @@ def init_args(args):
     # TODO: we temporarily disable checkpoint because we have not implemented it yet.
     args.checkpoint_iterations = []
     args.start_checkpoint = None
-    if len(args.save_iterations) > 0:
+    if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
         args.save_iterations.append(args.iterations)
 
     if args.benchmark_stats:

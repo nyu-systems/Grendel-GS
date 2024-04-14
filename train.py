@@ -57,7 +57,10 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             gaussians.send_to_gpui_cnt += local2j_ids_bool
 
     # Densification
-    if not args.disable_auto_densification and iteration < args.densify_until_iter:
+    if not args.disable_auto_densification and iteration <= args.densify_until_iter:
+        # TODO: more check on this: originally the code is < args.densify_until_iter, but for bsz=1 it does not update at densify_until_iter iteration but other bsz>1 updates at densify_until_iter - (bsz - 1) iteration, thus there is different number of densifications for different bsz, which is not fair. 
+        # the same issue for opacity reset, which has more severe implications.
+
         # Keep track of max radii in image-space for pruning
         timers.start("densification")
 
@@ -125,7 +128,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset
-    train_dataset = SceneDataset(scene.getTrainCameras())
+    train_dataset = SceneDataset(scene.getTrainCameras(dataset_args.train_resolution_scale))
     # init workload division strategy
     cameraId2StrategyHistory = {}
     # init background
@@ -158,6 +161,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                    "batched_local2j_ids_bool":[],
                                    "statistic_collectors":[],
                                    "losses": []}
+        batched_parameter_gradients_pkg = {}
 
         # Prepare Workload division strategy
         timers.start("prepare_strategies")
@@ -213,6 +217,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
             batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
             batched_screenspace_pkg["losses"].append(loss)
+            
+            # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
             if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
 
@@ -269,15 +275,23 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             log_file.write(log_string)
             timers.stop("allgather_loss_and_log")
 
+            if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
+                if args.debug_why and iteration > args.densify_until_iter:
+                    breakpoint()
+                stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
+                log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
+                log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
+                log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
 
             # Log and save
-            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background)
+            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.test_resolution_scale)
 
             # Densification
             densification(iteration, scene, gaussians, batched_screenspace_pkg)
 
             # Save Gaussians
-            if iteration in args.save_iterations: # Do not check rk here. Because internal implementation maybe distributed save.
+            # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
+            if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
@@ -286,19 +300,44 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             if iteration < opt_args.iterations:
                 timers.start("optimizer_step")
 
-                if args.grad_normalization_mode == "divide_by_visible_count":
-                    gradient_multiplier = args.bsz / batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
-                    gradient_multiplier[gradient_multiplier.isnan()] = 0.0
+                # if "visible_count" in args.grad_normalization_mode:
+                #     # sum_visibility_filter_int = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
+                #     # # compute histogram of visible count
+                #     # max_count = torch.max(sum_visibility_filter_int)
+                #     # visibility_hist = torch.histc(sum_visibility_filter_int, bins=max_count+1, min=0, max=max_count+1)
+                #     # # normalize to ratio
+                #     # visibility_hist = visibility_hist / torch.sum(visibility_hist)
+                #     # log_file.write("iteration[{},{}) visibility_hist: {}\n".format(iteration, iteration+args.bsz, visibility_hist.cpu().tolist()))
+                    
+                #     if args.grad_normalization_mode == "divide_by_visible_count":
+                #         gradient_multiplier = 1 / batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
+                #         gradient_multiplier[gradient_multiplier.isnan()] = 0.0
+                #     elif args.grad_normalization_mode == "multiply_by_visible_count":
+                #         gradient_multiplier = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
+                #     elif args.grad_normalization_mode == "square_multiply_by_visible_count":
+                #         gradient_multiplier = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] ** 2
+                    
+                #     try:
+                #         for param in gaussians.all_parameters():
+                #             if param.grad is None:
+                #                 continue
+                #             if len(param.shape) == 2:
+                #                 param.grad *= gradient_multiplier.unsqueeze(1)
+                #             elif len(param.shape) == 3:
+                #                 param.grad *= gradient_multiplier.unsqueeze(1).unsqueeze(2)
+                #             else:
+                #                 raise NotImplementedError("Not implemented for this shape of parameter.")
+                #     except Exception as e:
+                #         if utils.LOCAL_RANK == 0:
+                #             print("Error in grad normalization: ", e)
+                #             breakpoint()
+                #         else:
+                #             time.sleep(1000)
 
+                if args.lr_scale_mode != "accumu": # we scale the learning rate rather than accumulate the gradients.
                     for param in gaussians.all_parameters():
-                        if param.grad is None:
-                            continue
-                        if len(param.shape) == 2:
-                            param.grad *= gradient_multiplier.unsqueeze(1)
-                        elif len(param.shape) == 3:
-                            param.grad *= gradient_multiplier.unsqueeze(1).unsqueeze(2)
-                        else:
-                            raise NotImplementedError("Not implemented for this shape of parameter.")
+                        if param.grad is not None:
+                            param.grad /= args.bsz
 
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -329,14 +368,14 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
-def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background):
+def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
                             {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
         # init workload division strategy
         cameraId2StrategyHistory = {}
@@ -406,6 +445,10 @@ if __name__ == "__main__":
         os.makedirs(args.model_path, exist_ok = True)
     if utils.WORLD_SIZE > 1:
         torch.distributed.barrier(group=utils.DEFAULT_GROUP)# make sure log_folder is created before other ranks start writing log.
+
+    if utils.LOCAL_RANK == 0:
+        with open(args.log_folder+"/args.json", 'w') as f:
+            json.dump(vars(args), f)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)

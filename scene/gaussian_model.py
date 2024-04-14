@@ -23,6 +23,11 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 import utils.general_utils as utils
 import torch.distributed as dist
 
+lr_scale_fns = {
+    "linear": lambda x: x,
+    "sqrt": lambda x: np.sqrt(x),
+}
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -193,17 +198,62 @@ class GaussianModel:
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+        # self.optimizer = torch.optim.SGD(l, lr=0.0, momentum=0.1)
+
+        bsz = utils.get_args().bsz
+        for param_group in self.optimizer.param_groups:
+            if training_args.lr_scale_mode == "linear":
+                lr_scale = bsz
+                param_group["lr"] *= lr_scale
+            elif training_args.lr_scale_mode == "sqrt":
+                lr_scale = np.sqrt(bsz)
+                param_group["lr"] *= lr_scale
+                if "eps" in param_group: # Adam
+                    param_group["eps"] /= lr_scale
+                    param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
+                    utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
+            elif training_args.lr_scale_mode == "accumu":
+                lr_scale = 1
+            else:
+                assert False, f"lr_scale_mode {training_args.lr_scale_mode} not supported."
+
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale*lr_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale*lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
         utils.check_memory_usage_logging("after training_setup")
+    
+    def log_gaussian_stats(self):
+        # log the statistics of the gaussian model
+        # number of total 3dgs on this rank
+        num_3dgs = self._xyz.shape[0]
+        # average size of 3dgs
+        avg_size = torch.mean(torch.max(self.get_scaling, dim=1).values).item()
+        # average opacity
+        avg_opacity = torch.mean(self.get_opacity).item()
+        stats = {
+            "num_3dgs": num_3dgs,
+            "avg_size": avg_size,
+            "avg_opacity": avg_opacity,
+        }
+
+        # get the exp_avg, exp_avg_sq state for all parameters
+        exp_avg_dict = {}
+        exp_avg_sq_dict = {}
+        for group in self.optimizer.param_groups:
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                if 'exp_avg' in stored_state:
+                    exp_avg_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg"], dim=-1)).item()
+                    exp_avg_sq_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg_sq"], dim=-1)).item()
+        return stats, exp_avg_dict, exp_avg_sq_dict
+        
 
     def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg):
         args = utils.get_args()
 
-        if args.grad_normalization_mode == "divide_by_visible_count":
+        if "visible_count" in args.grad_normalization_mode:
             # allgather visibility filder from all dp workers, so that each worker contains the visibility filter of all data points. 
             batched_locally_preprocessed_visibility_filter_int = [x.int() for x in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]
             sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
@@ -253,8 +303,8 @@ class GaussianModel:
             # gather at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
-                tensor_sizes = torch.zeros((utils.WORLD_SIZE), dtype=torch.int, device="cuda")
-                tensor_sizes[utils.LOCAL_RANK] = tensor.shape[0]
+                tensor_sizes = torch.zeros((group.size()), dtype=torch.int, device="cuda")
+                tensor_sizes[group.rank()] = tensor.shape[0]
                 dist.all_reduce(tensor_sizes, op=dist.ReduceOp.SUM)
                 # move tensor_sizes to CPU and convert to int list
                 tensor_sizes = tensor_sizes.cpu().numpy().tolist()
@@ -264,9 +314,9 @@ class GaussianModel:
 
                 # gather tensors on different ranks using grouped send/recv
                 gathered_tensors = []
-                if utils.LOCAL_RANK == 0:
-                    for i in range(utils.WORLD_SIZE):
-                        if i == utils.LOCAL_RANK:
+                if group.rank() == 0:
+                    for i in range(group.size()):
+                        if i == group.rank():
                             gathered_tensors.append(tensor)
                         else:
                             tensor_from_rk_i = torch.zeros((tensor_sizes[i], )+tensor.shape[1:], dtype=tensor.dtype, device="cuda")
@@ -277,7 +327,7 @@ class GaussianModel:
                     dist.send(tensor, dst=0)
                 # concatenate gathered tensors
 
-                return gathered_tensors if utils.LOCAL_RANK == 0 else None # only return gather tensors at rank 0
+                return gathered_tensors if group.rank() == 0 else None # only return gather tensors at rank 0
 
             _xyz = gather_uneven_tensors(self._xyz)
             _features_dc = gather_uneven_tensors(self._features_dc)
@@ -285,6 +335,9 @@ class GaussianModel:
             _opacity = gather_uneven_tensors(self._opacity)
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
+
+            if group.rank() != 0:
+                return
         else:
             _xyz = self._xyz
             _features_dc = self._features_dc
@@ -292,10 +345,6 @@ class GaussianModel:
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
-
-        # only save at rank 0
-        if utils.LOCAL_RANK != 0:
-            return
 
         mkdir_p(os.path.dirname(path))
 
@@ -386,8 +435,11 @@ class GaussianModel:
         for group in self.optimizer.param_groups:
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
-                stored_state["exp_avg"] = torch.zeros_like(tensor)
-                stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
+                if 'exp_avg' not in stored_state:
+                    stored_state['momentum_buffer'] = torch.zeros_like(tensor)
+                else:
+                    stored_state["exp_avg"] = torch.zeros_like(tensor)
+                    stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
@@ -401,8 +453,11 @@ class GaussianModel:
         for group in self.optimizer.param_groups:
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
-                stored_state["exp_avg"] = stored_state["exp_avg"][mask]
-                stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
+                if 'exp_avg' not in stored_state:
+                    stored_state['momentum_buffer'] = stored_state['momentum_buffer'][mask]
+                else:
+                    stored_state["exp_avg"] = stored_state["exp_avg"][mask]
+                    stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter((group["params"][0][mask].requires_grad_(True)))
@@ -440,9 +495,11 @@ class GaussianModel:
             extension_tensor = tensors_dict[group["name"]]
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
-
-                stored_state["exp_avg"] = torch.cat((stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
-                stored_state["exp_avg_sq"] = torch.cat((stored_state["exp_avg_sq"], torch.zeros_like(extension_tensor)), dim=0)
+                if 'exp_avg' not in stored_state:
+                    stored_state['momentum_buffer'] = torch.cat((stored_state['momentum_buffer'], torch.zeros_like(extension_tensor)), dim=0)
+                else:
+                    stored_state["exp_avg"] = torch.cat((stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
+                    stored_state["exp_avg_sq"] = torch.cat((stored_state["exp_avg_sq"], torch.zeros_like(extension_tensor)), dim=0)
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(torch.cat((group["params"][0], extension_tensor), dim=0).requires_grad_(True))
@@ -491,6 +548,9 @@ class GaussianModel:
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
+        # [N * number of selected points, 3]
+        # TODO: log number of densified gaussian
+        utils.get_log_file().write("Number of split gaussians: {}\n".format(selected_pts_mask.sum().item()))
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
@@ -511,6 +571,7 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
+        utils.get_log_file().write("Number of cloned gaussians: {}\n".format(selected_pts_mask.sum().item()))
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
@@ -530,6 +591,11 @@ class GaussianModel:
 
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
+
+        densification_stats = {}
+        densification_stats["view_space_grad"] = grads.mean().item()
+        densification_stats["view_space_grad_max"] = grads.max().item()
+        
 
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
@@ -557,6 +623,7 @@ class GaussianModel:
         else:
             return utils.SingleGPUGroup()
 
+
     def all2all_gaussian_state(self, state, destination, i2j_send_size):
         comm_group = self.group_for_redistribution()
         
@@ -580,8 +647,11 @@ class GaussianModel:
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
 
-                stored_state["exp_avg"] = self.all2all_gaussian_state(stored_state["exp_avg"], destination, i2j_send_size)
-                stored_state["exp_avg_sq"] = self.all2all_gaussian_state(stored_state["exp_avg_sq"], destination, i2j_send_size)
+                if 'exp_avg' not in stored_state:
+                    stored_state['momentum_buffer'] = self.all2all_gaussian_state(stored_state['momentum_buffer'], destination, i2j_send_size)
+                else:
+                    stored_state["exp_avg"] = self.all2all_gaussian_state(stored_state["exp_avg"], destination, i2j_send_size)
+                    stored_state["exp_avg_sq"] = self.all2all_gaussian_state(stored_state["exp_avg_sq"], destination, i2j_send_size)
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(self.all2all_gaussian_state(group["params"][0], destination, i2j_send_size), requires_grad=True)
@@ -600,11 +670,15 @@ class GaussianModel:
             assert len(group["params"]) == 1
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
-                all_tensors.append(stored_state["exp_avg"])
-                all_shapes.append(stored_state["exp_avg"].shape)
+                if 'exp_avg' not in stored_state:
+                    all_tensors.append(stored_state['momentum_buffer'])
+                    all_shapes.append(stored_state['momentum_buffer'].shape)
+                else:
+                    all_tensors.append(stored_state["exp_avg"])
+                    all_shapes.append(stored_state["exp_avg"].shape)
 
-                all_tensors.append(stored_state["exp_avg_sq"])
-                all_shapes.append(stored_state["exp_avg_sq"].shape)
+                    all_tensors.append(stored_state["exp_avg_sq"])
+                    all_shapes.append(stored_state["exp_avg_sq"].shape)
 
                 all_tensors.append(group["params"][0])
                 all_shapes.append(group["params"][0].shape)
@@ -628,8 +702,11 @@ class GaussianModel:
             assert len(group["params"]) == 1
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
-                stored_state["exp_avg"] = updated_tensors.pop(0).contiguous()
-                stored_state["exp_avg_sq"] = updated_tensors.pop(0).contiguous()
+                if 'exp_avg' not in stored_state:
+                    stored_state['momentum_buffer'] = updated_tensors.pop(0).contiguous()
+                else:
+                    stored_state["exp_avg"] = updated_tensors.pop(0).contiguous()
+                    stored_state["exp_avg_sq"] = updated_tensors.pop(0).contiguous()
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(updated_tensors.pop(0).contiguous(), requires_grad=True)
