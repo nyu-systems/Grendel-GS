@@ -65,7 +65,6 @@ class AuxiliaryParams(ParamGroup):
         self.start_checkpoint = ""
         self.log_folder = "experiments/default_folder"
         self.log_interval = 50
-        self.debug_why = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -170,6 +169,7 @@ class BenchmarkParams(ParamGroup):
         self.performance_stats = False # Performance mode: to know its generation quality, it will evaluate/save models at some iterations and use them for render.py and metrics.py .
 
         self.analyze_3dgs_change = False # log some 3dgs parameters change to analyze 3dgs change.
+        self.batch_grad_stats = False # log intra-batch gradient statistics, e.g. noise to signal ratio, cosine similarity, etc.
 
         super().__init__(parser, "Benchmark Parameters")
 
@@ -231,6 +231,7 @@ def init_args(args):
 
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
+    assert not (args.gaussians_distribution and args.batch_grad_stats), "cannot analyze batch_grad_stats when gaussians_distribution is enabled."
 
     # TODO: we temporarily disable checkpoint because we have not implemented it yet.
     args.checkpoint_iterations = []

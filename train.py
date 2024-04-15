@@ -161,7 +161,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                    "batched_local2j_ids_bool":[],
                                    "statistic_collectors":[],
                                    "losses": []}
-        batched_parameter_gradients_pkg = {}
+        batched_parameter_gradients_pkg = {} if args.batch_grad_stats else None
+        grad_prev = {} if args.batch_grad_stats else None
 
         # Prepare Workload division strategy
         timers.start("prepare_strategies")
@@ -208,6 +209,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Backward
             globally_sync_for_timer()
             timers.start("backward")
+            # if args.lr_scale_mode == "sqrt":
+            #     loss = loss / args.bsz
             loss.backward()
             timers.stop("backward")
             utils.check_memory_usage_logging("after backward")
@@ -217,8 +220,20 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
             batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
             batched_screenspace_pkg["losses"].append(loss)
-            
+
             # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
+            if args.batch_grad_stats:
+                with torch.no_grad():
+                    for param_group in gaussians.optimizer.param_groups:
+                        name = param_group["name"]
+                        grad = param_group["params"][0].grad.clone().detach()
+                        if name not in batched_parameter_gradients_pkg:
+                            batched_parameter_gradients_pkg[name] = []
+                            grad_prev[name] = grad
+                        else:
+                            grad -= grad_prev[name]
+                        batched_parameter_gradients_pkg[name].append(grad)
+                    
             if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
 
@@ -226,11 +241,16 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Sync gradients across replicas, if some 3dgs are stored replicatedly.
             globally_sync_for_timer()
             timers.start("sync_gradients_for_replicated_3dgs_storage")
-            gaussians.sync_gradients_for_replicated_3dgs_storage(batched_screenspace_pkg)
+            gaussians.sync_gradients_for_replicated_3dgs_storage(batched_screenspace_pkg, batched_parameter_gradients_pkg)
             if not args.gaussians_distribution and utils.MP_GROUP.size() > 1:
                 for local_render_screenspace_mean2D in batched_screenspace_pkg["batched_locally_preprocessed_mean2D"]:
                     torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
             timers.stop("sync_gradients_for_replicated_3dgs_storage")
+
+            # if args.batch_grad_stats and utils.LOCAL_RANK == 0:
+            #     batch_grad_stats = utils.compute_batch_grad_stats(batched_parameter_gradients_pkg)
+            #     for key, value in batch_grad_stats.items():
+            #         log_file.write("iteration[{},{}) batch_grad_stats-{}: {}\n".format(iteration, iteration+args.bsz, key, value))
 
             # Adjust workload division strategy. 
             globally_sync_for_timer()
@@ -276,8 +296,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             timers.stop("allgather_loss_and_log")
 
             if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
-                if args.debug_why and iteration > args.densify_until_iter:
-                    breakpoint()
                 stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
                 log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
                 log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
@@ -300,44 +318,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             if iteration < opt_args.iterations:
                 timers.start("optimizer_step")
 
-                # if "visible_count" in args.grad_normalization_mode:
-                #     # sum_visibility_filter_int = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
-                #     # # compute histogram of visible count
-                #     # max_count = torch.max(sum_visibility_filter_int)
-                #     # visibility_hist = torch.histc(sum_visibility_filter_int, bins=max_count+1, min=0, max=max_count+1)
-                #     # # normalize to ratio
-                #     # visibility_hist = visibility_hist / torch.sum(visibility_hist)
-                #     # log_file.write("iteration[{},{}) visibility_hist: {}\n".format(iteration, iteration+args.bsz, visibility_hist.cpu().tolist()))
-                    
-                #     if args.grad_normalization_mode == "divide_by_visible_count":
-                #         gradient_multiplier = 1 / batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
-                #         gradient_multiplier[gradient_multiplier.isnan()] = 0.0
-                #     elif args.grad_normalization_mode == "multiply_by_visible_count":
-                #         gradient_multiplier = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"]
-                #     elif args.grad_normalization_mode == "square_multiply_by_visible_count":
-                #         gradient_multiplier = batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] ** 2
-                    
-                #     try:
-                #         for param in gaussians.all_parameters():
-                #             if param.grad is None:
-                #                 continue
-                #             if len(param.shape) == 2:
-                #                 param.grad *= gradient_multiplier.unsqueeze(1)
-                #             elif len(param.shape) == 3:
-                #                 param.grad *= gradient_multiplier.unsqueeze(1).unsqueeze(2)
-                #             else:
-                #                 raise NotImplementedError("Not implemented for this shape of parameter.")
-                #     except Exception as e:
-                #         if utils.LOCAL_RANK == 0:
-                #             print("Error in grad normalization: ", e)
-                #             breakpoint()
-                #         else:
-                #             time.sleep(1000)
-
                 if args.lr_scale_mode != "accumu": # we scale the learning rate rather than accumulate the gradients.
-                    for param in gaussians.all_parameters():
-                        if param.grad is not None:
-                            param.grad /= args.bsz
+                    pass
+                    # gaussians.update_all_parameters(1.0/args.bsz)
+                    # for param in gaussians.all_parameters():
+                    #     if param.grad is not None:
+                    #         param.grad.data.div_(args.bsz)
 
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -377,6 +363,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
                             {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+        # validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, )
         # init workload division strategy
         cameraId2StrategyHistory = {}
         for config in validation_configs:

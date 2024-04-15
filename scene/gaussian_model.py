@@ -225,6 +225,7 @@ class GaussianModel:
         utils.check_memory_usage_logging("after training_setup")
     
     def log_gaussian_stats(self):
+        # TODO: gather the stats from all ranks and log them at rank 0.
         # log the statistics of the gaussian model
         # number of total 3dgs on this rank
         num_3dgs = self._xyz.shape[0]
@@ -250,7 +251,7 @@ class GaussianModel:
         return stats, exp_avg_dict, exp_avg_sq_dict
         
 
-    def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg):
+    def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg, batched_parameter_gradients_pkg):
         args = utils.get_args()
 
         if "visible_count" in args.grad_normalization_mode:
@@ -258,6 +259,20 @@ class GaussianModel:
             batched_locally_preprocessed_visibility_filter_int = [x.int() for x in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]
             sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
             batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] = sum_batched_locally_preprocessed_visibility_filter_int
+
+        # if batched_parameter_gradients_pkg is not None:
+        #     # this is a dict[parameter_name: List[parameter_gradients]]
+        #     # first reduce within each MP group (which are computing the same view)
+        #     for parameter_name, parameter_gradients in batched_parameter_gradients_pkg.items():
+        #         parameter_gradients = torch.stack(parameter_gradients)
+        #         # [bsz/dp_size, n_3dgs, ...]
+        #         if utils.MP_GROUP.size() > 1:
+        #             dist.reduce(parameter_gradients, dst=0, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+        #         if utils.MP_GROUP.rank() == 0:
+        #             parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
+        #             # [bsz, n_3dgs, ...]
+        #             dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
+        #             batched_parameter_gradients_pkg[parameter_name] = parameter_gradients_gathered 
 
         if args.sync_grad_mode == "dense":
             sync_func = sync_gradients_densely
@@ -303,8 +318,8 @@ class GaussianModel:
             # gather at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
-                tensor_sizes = torch.zeros((group.size()), dtype=torch.int, device="cuda")
-                tensor_sizes[group.rank()] = tensor.shape[0]
+                tensor_sizes = torch.zeros((utils.WORLD_SIZE), dtype=torch.int, device="cuda")
+                tensor_sizes[utils.LOCAL_RANK] = tensor.shape[0]
                 dist.all_reduce(tensor_sizes, op=dist.ReduceOp.SUM)
                 # move tensor_sizes to CPU and convert to int list
                 tensor_sizes = tensor_sizes.cpu().numpy().tolist()
@@ -314,9 +329,9 @@ class GaussianModel:
 
                 # gather tensors on different ranks using grouped send/recv
                 gathered_tensors = []
-                if group.rank() == 0:
-                    for i in range(group.size()):
-                        if i == group.rank():
+                if utils.LOCAL_RANK == 0:
+                    for i in range(utils.WORLD_SIZE):
+                        if i == utils.LOCAL_RANK:
                             gathered_tensors.append(tensor)
                         else:
                             tensor_from_rk_i = torch.zeros((tensor_sizes[i], )+tensor.shape[1:], dtype=tensor.dtype, device="cuda")
@@ -327,7 +342,7 @@ class GaussianModel:
                     dist.send(tensor, dst=0)
                 # concatenate gathered tensors
 
-                return gathered_tensors if group.rank() == 0 else None # only return gather tensors at rank 0
+                return gathered_tensors if utils.LOCAL_RANK == 0 else None # only return gather tensors at rank 0
 
             _xyz = gather_uneven_tensors(self._xyz)
             _features_dc = gather_uneven_tensors(self._features_dc)
@@ -335,9 +350,6 @@ class GaussianModel:
             _opacity = gather_uneven_tensors(self._opacity)
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
-
-            if group.rank() != 0:
-                return
         else:
             _xyz = self._xyz
             _features_dc = self._features_dc
@@ -345,6 +357,10 @@ class GaussianModel:
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
+
+        # only save at rank 0
+        if utils.LOCAL_RANK != 0:
+            return
 
         mkdir_p(os.path.dirname(path))
 
@@ -447,6 +463,17 @@ class GaussianModel:
 
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
+
+    def update_all_parameters(self, scaler):
+        if self._xyz.grad is None:
+            return
+
+        self._xyz.grad.mul_(scaler)
+        self._features_dc.grad.mul_(scaler)
+        self._features_rest.grad.mul_(scaler)
+        self._opacity.grad.mul_(scaler)
+        self._scaling.grad.mul_(scaler)
+        self._rotation.grad.mul_(scaler)
 
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}

@@ -360,3 +360,28 @@ def prepare_output_and_logger(args):
     # Create Tensorboard writer. Disable for now. 
     tb_writer = None
     return tb_writer
+
+def compute_batch_grad_stats(batched_parameter_gradients_pkg):
+    # Compute intra-batch gradient stats: e.g. noise to signal ratio, cosine similarity, etc.
+    # this is a dict[parameter_name: parameter_gradients], of shape [bsz, n_3dgs, ...]
+    batch_grad_stats = {
+        "norm": {},
+        "nsr": {},
+        "cosine": {},
+    }
+    for parameter_name, parameter_gradients in batched_parameter_gradients_pkg.items():
+        mean_gradients = torch.mean(parameter_gradients, dim=0)
+        var_gradients = torch.var(parameter_gradients, dim=0)
+        norm = torch.norm(mean_gradients)
+        norm_var = torch.norm(var_gradients)
+        nsr = norm_var / norm
+        cosines = []
+        for i in range(parameter_gradients.size(0)):
+            for j in range(i+1, parameter_gradients.size(0)):
+                cosines.append(torch.nn.functional.cosine_similarity(parameter_gradients[i], parameter_gradients[j], dim=0))
+        cosine = torch.mean(torch.stack(cosines))
+        batch_grad_stats["norm"][parameter_name] = norm.item()
+        batch_grad_stats["nsr"][parameter_name] = nsr.item()
+        batch_grad_stats["cosine"][parameter_name] = cosine.item()
+    return batch_grad_stats
+        
