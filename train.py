@@ -161,8 +161,13 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                    "batched_local2j_ids_bool":[],
                                    "statistic_collectors":[],
                                    "losses": []}
-        batched_parameter_gradients_pkg = {} if args.batch_grad_stats else None
-        grad_prev = {} if args.batch_grad_stats else None
+
+        if args.batch_grad_stats and utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
+            batched_parameter_gradients_pkg = {}
+            grad_prev = {}
+        else:
+            batched_parameter_gradients_pkg = None
+            grad_prev = None
 
         # Prepare Workload division strategy
         timers.start("prepare_strategies")
@@ -209,8 +214,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Backward
             globally_sync_for_timer()
             timers.start("backward")
-            # if args.lr_scale_mode == "sqrt":
-            #     loss = loss / args.bsz
             loss.backward()
             timers.stop("backward")
             utils.check_memory_usage_logging("after backward")
@@ -222,7 +225,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["losses"].append(loss)
 
             # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
-            if args.batch_grad_stats:
+            if batched_parameter_gradients_pkg is not None:
                 with torch.no_grad():
                     for param_group in gaussians.optimizer.param_groups:
                         name = param_group["name"]
@@ -247,10 +250,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                     torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
             timers.stop("sync_gradients_for_replicated_3dgs_storage")
 
-            # if args.batch_grad_stats and utils.LOCAL_RANK == 0:
-            #     batch_grad_stats = utils.compute_batch_grad_stats(batched_parameter_gradients_pkg)
-            #     for key, value in batch_grad_stats.items():
-            #         log_file.write("iteration[{},{}) batch_grad_stats-{}: {}\n".format(iteration, iteration+args.bsz, key, value))
+            if batched_parameter_gradients_pkg is not None and utils.LOCAL_RANK == 0:
+                batch_grad_stats = utils.compute_batch_grad_stats(batched_parameter_gradients_pkg)
+                for key, value in batch_grad_stats.items():
+                    log_file.write("iteration[{},{}) batch_grad_stats-{}: {}\n".format(iteration, iteration+args.bsz, key, value))
 
             # Adjust workload division strategy. 
             globally_sync_for_timer()
@@ -302,7 +305,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
 
             # Log and save
-            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.test_resolution_scale)
+            training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.train_resolution_scale, dataset_args.test_resolution_scale)
 
             # Densification
             densification(iteration, scene, gaussians, batched_screenspace_pkg)
@@ -319,11 +322,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 timers.start("optimizer_step")
 
                 if args.lr_scale_mode != "accumu": # we scale the learning rate rather than accumulate the gradients.
-                    pass
-                    # gaussians.update_all_parameters(1.0/args.bsz)
-                    # for param in gaussians.all_parameters():
-                    #     if param.grad is not None:
-                    #         param.grad.data.div_(args.bsz)
+                    for param in gaussians.all_parameters():
+                        if param.grad is not None:
+                            param.grad.data.div_(args.bsz)
 
                 if not args.stop_update_param:
                     gaussians.optimizer.step()
@@ -354,18 +355,19 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
-def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
+def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, train_resolution_scale=1.0, test_resolution_scale=1.0):
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
-                            {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
-        # validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, )
+        # print(test_resolution_scale, train_resolution_scale)
+        validation_configs = ({'name': 'test_on_test_res', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
+                              {'name': 'test_on_train_res', 'cameras' : scene.getTestCameras(train_resolution_scale)}, 
+                            {'name': 'train_on_test_res', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras(test_resolution_scale))] for idx in range(5, 30, 5)]},
+                            {'name': 'train_on_train_res', 'cameras' : [scene.getTrainCameras(train_resolution_scale)[idx % len(scene.getTrainCameras(train_resolution_scale))] for idx in range(5, 30, 5)]})
         # init workload division strategy
-        cameraId2StrategyHistory = {}
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = torch.scalar_tensor(0.0, device="cuda")
@@ -373,9 +375,11 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
 
                 num_cameras = len(config['cameras'])
                 eval_dataset = SceneDataset(config['cameras'])
+                cameraId2StrategyHistory = {}
                 for idx in range(1, num_cameras+1, args.dp_size):
                     batched_cameras = eval_dataset.get_batched_cameras(args.dp_size)
-                    local_render_camera = batched_cameras[utils.DP_GROUP.rank()]
+                    local_render_camera_gt = batched_cameras[utils.DP_GROUP.rank()]
+                    utils.set_img_size(batched_cameras[0].image_height, batched_cameras[0].image_width)
                     batched_strategies = []
                     for viewpoint in batched_cameras:
                         hack_history = get_division_strategy_history(cameraId2StrategyHistory, viewpoint, "evaluation")
@@ -385,11 +389,10 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                                                                  batched_strategies,
                                                                  mode="test")
                     image, _ = render(screenspace_pkg, local_render_strategy)
-
                     if utils.MP_GROUP.size() > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     image = torch.clamp(image, 0.0, 1.0)
-                    gt_image = torch.clamp(local_render_camera.original_image.to("cuda"), 0.0, 1.0)
+                    gt_image = torch.clamp(local_render_camera_gt.original_image.to("cuda"), 0.0, 1.0)
 
                     if idx + utils.DP_GROUP.rank() < num_cameras + 1:
                         l1_test += l1_loss(image, gt_image).mean().double()

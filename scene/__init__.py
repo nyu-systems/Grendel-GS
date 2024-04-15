@@ -71,21 +71,28 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         log_file = utils.get_log_file()
-        for resolution_scale in [args.train_resolution_scale]:
-            utils.print_rank_0("Decoding Training Cameras")
+        train_resolution_scales = [args.train_resolution_scale]
+        if args.train_resolution_scale != args.test_resolution_scale:
+            train_resolution_scales.append(args.test_resolution_scale)
+        for resolution_scale in train_resolution_scales:
+            utils.print_rank_0("Decoding Training Cameras for resolution scale {}".format(resolution_scale))
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
             # output the number of cameras in the training set and image size to the log file
             log_file.write("Train Resolution Scale: {}\n".format(resolution_scale))
             log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
             log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
 
-        for resolution_scale in [args.test_resolution_scale]:
-            utils.print_rank_0("Decoding Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
-            # output the number of cameras in the training set and image size to the log file
-            log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
-            log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
-            log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
+        if args.eval:
+            test_resolution_scales = [args.test_resolution_scale]
+            if args.train_resolution_scale != args.test_resolution_scale:
+                test_resolution_scales.append(args.train_resolution_scale)
+            for resolution_scale in test_resolution_scales:
+                utils.print_rank_0("Decoding Test Cameras for resolution scale {}".format(resolution_scale))
+                self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+                # output the number of cameras in the training set and image size to the log file
+                log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
+                log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
+                log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
 
         utils.check_memory_usage_logging("after Loading all images")
 

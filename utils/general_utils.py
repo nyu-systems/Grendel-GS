@@ -366,6 +366,7 @@ def compute_batch_grad_stats(batched_parameter_gradients_pkg):
     # this is a dict[parameter_name: parameter_gradients], of shape [bsz, n_3dgs, ...]
     batch_grad_stats = {
         "norm": {},
+        "var": {},
         "nsr": {},
         "cosine": {},
     }
@@ -381,7 +382,8 @@ def compute_batch_grad_stats(batched_parameter_gradients_pkg):
                 cosines.append(torch.nn.functional.cosine_similarity(parameter_gradients[i], parameter_gradients[j], dim=0))
         cosine = torch.mean(torch.stack(cosines))
         batch_grad_stats["norm"][parameter_name] = norm.item()
-        batch_grad_stats["nsr"][parameter_name] = nsr.item()
+        batch_grad_stats["var"][parameter_name] = norm_var.item()
+        batch_grad_stats["nsr"][parameter_name] = nsr.item() if not nsr.isnan() else 0.0
         batch_grad_stats["cosine"][parameter_name] = cosine.item()
     return batch_grad_stats
         

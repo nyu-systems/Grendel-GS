@@ -210,7 +210,7 @@ class GaussianModel:
                 param_group["lr"] *= lr_scale
                 if "eps" in param_group: # Adam
                     param_group["eps"] /= lr_scale
-                    param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
+                    param_group["betas"] = [beta ** bsz for beta in param_group["betas"]]
                     utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
             elif training_args.lr_scale_mode == "accumu":
                 lr_scale = 1
@@ -260,19 +260,23 @@ class GaussianModel:
             sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
             batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] = sum_batched_locally_preprocessed_visibility_filter_int
 
-        # if batched_parameter_gradients_pkg is not None:
-        #     # this is a dict[parameter_name: List[parameter_gradients]]
-        #     # first reduce within each MP group (which are computing the same view)
-        #     for parameter_name, parameter_gradients in batched_parameter_gradients_pkg.items():
-        #         parameter_gradients = torch.stack(parameter_gradients)
-        #         # [bsz/dp_size, n_3dgs, ...]
-        #         if utils.MP_GROUP.size() > 1:
-        #             dist.reduce(parameter_gradients, dst=0, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
-        #         if utils.MP_GROUP.rank() == 0:
-        #             parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
-        #             # [bsz, n_3dgs, ...]
-        #             dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
-        #             batched_parameter_gradients_pkg[parameter_name] = parameter_gradients_gathered 
+        if batched_parameter_gradients_pkg is not None:
+            # this is a dict[parameter_name: List[parameter_gradients]]
+            # first reduce within each MP group (which are computing the same view)
+            for parameter_name, parameter_gradients in batched_parameter_gradients_pkg.items():
+                parameter_gradients = torch.stack(parameter_gradients)
+                # [bsz/dp_size, n_3dgs, ...]
+                if utils.MP_GROUP.size() > 1:
+                    # TODO: now resolved by using all_reduce
+                    # the line below reduce the gradients to the global rank 0
+                    # dist.reduce(parameter_gradients, dst=0, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+                    # i want to reduce the gradients to the rank 0 of the dp group
+                    dist.all_reduce(parameter_gradients, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+                if utils.MP_GROUP.rank() == 0:
+                    parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
+                    # [bsz, n_3dgs, ...]
+                    dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
+                    batched_parameter_gradients_pkg[parameter_name] = parameter_gradients_gathered 
 
         if args.sync_grad_mode == "dense":
             sync_func = sync_gradients_densely
