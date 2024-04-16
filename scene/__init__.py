@@ -85,7 +85,7 @@ class Scene:
             # output the number of cameras in the training set and image size to the log file
             log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
             log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
-            log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
+            log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
 
         utils.check_memory_usage_logging("after Loading all images")
 
