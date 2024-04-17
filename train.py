@@ -376,9 +376,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
-                            {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
         # init workload division strategy
-        cameraId2StrategyHistory = {}
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = torch.scalar_tensor(0.0, device="cuda")
@@ -386,6 +385,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
 
                 num_cameras = len(config['cameras'])
                 eval_dataset = SceneDataset(config['cameras'])
+                cameraId2StrategyHistory = {}
                 for idx in range(1, num_cameras+1, args.dp_size):
                     batched_cameras = eval_dataset.get_batched_cameras(args.dp_size)
                     local_render_camera = batched_cameras[utils.DP_GROUP.rank()]
