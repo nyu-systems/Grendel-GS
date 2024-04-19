@@ -24,7 +24,7 @@ from scene import Scene, GaussianModel, SceneDataset
 from gaussian_renderer.workload_division import get_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
-from utils.timer import Timer
+from utils.timer import Timer, End2endTimer
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
@@ -136,7 +136,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     # Training Loop
-    train_start_time = time.time()
+    end2end_timers = End2endTimer(args)
+    end2end_timers.start()
     progress_bar = tqdm(range(1, opt_args.iterations + 1), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
     num_trained_batches = 0
     for iteration in range(1, opt_args.iterations + 1, args.bsz):
@@ -292,9 +293,11 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Save Gaussians
             # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
             if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
+                end2end_timers.stop()
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
+                end2end_timers.start()
 
             # Optimizer step
             if iteration < opt_args.iterations:
@@ -353,10 +356,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         log_file.flush()
 
     # Finish training
-    if args.end2end_time:
-        torch.cuda.synchronize()
-        log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt_args.iterations, opt_args.iterations/(time.time() - train_start_time)))
-    
+    end2end_timers.print_time(log_file, opt_args.iterations)
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
     # Save some running statistics to file.

@@ -67,3 +67,25 @@ class Timer:
     
     def clear(self):
         self.timers = {}
+
+class End2endTimer:
+    def __init__(self, args, file=None):
+        self.total_time = 0
+        self.last_time_point = None
+        self.args = args
+
+    def start(self):
+        torch.cuda.synchronize()
+        self.last_time_point = time.time()
+
+    def stop(self):
+        torch.cuda.synchronize()
+        new_time_point = time.time()
+        duration = new_time_point - self.last_time_point
+        self.total_time += duration
+        self.last_time_point = None
+    
+    def print_time(self, log_file, n_iterations):
+        if self.last_time_point is not None:
+            self.stop()
+        log_file.write("end2end total_time: {:.3f} s, iterations: {}, throughput {:.2f} it/s\n".format(self.total_time, n_iterations, n_iterations/self.total_time))
