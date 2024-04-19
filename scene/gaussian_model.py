@@ -144,7 +144,7 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         if utils.GLOBAL_RANK == 0:
-            print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+            print("Number of points before initialization : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -167,6 +167,16 @@ class GaussianModel:
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
             print("rank", utils.GLOBAL_RANK, "Number of initialized points after gaussians_distribution : ", fused_point_cloud.shape[0])
+
+        if args.drop_initial_3dgs_p > 0.0:
+            # drop each point with probability args.drop_initial_3dgs_p
+            drop_mask = np.random.rand(fused_point_cloud.shape[0]) > args.drop_initial_3dgs_p
+            fused_point_cloud = fused_point_cloud[drop_mask]
+            features = features[drop_mask]
+            scales = scales[drop_mask]
+            rots = rots[drop_mask]
+            opacities = opacities[drop_mask]
+            print("rank", utils.GLOBAL_RANK, "Number of initialized points after random drop : ", fused_point_cloud.shape[0])
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -299,6 +309,7 @@ class GaussianModel:
         args = utils.get_args()
         _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
 
+        group = utils.DEFAULT_GROUP
         if args.gaussians_distribution:
             # gather at rank 0
             def gather_uneven_tensors(tensor):
@@ -336,8 +347,6 @@ class GaussianModel:
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
 
-            if group.rank() != 0:
-                return
         else:
             _xyz = self._xyz
             _features_dc = self._features_dc
@@ -345,6 +354,9 @@ class GaussianModel:
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
+
+        if group.rank() != 0:
+            return
 
         mkdir_p(os.path.dirname(path))
 
@@ -419,6 +431,16 @@ class GaussianModel:
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
             # TODO: will memory of non-local points be released after finishing this function.
+
+        if args.drop_initial_3dgs_p > 0.0:
+            # drop each point with probability args.drop_initial_3dgs_p
+            drop_mask = np.random.rand(xyz.shape[0]) > args.drop_initial_3dgs_p
+            xyz = xyz[drop_mask]
+            features_dc = features_dc[drop_mask]
+            features_extra = features_extra[drop_mask]
+            scales = scales[drop_mask]
+            rots = rots[drop_mask]
+            opacities = opacities[drop_mask]
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))

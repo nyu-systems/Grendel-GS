@@ -186,6 +186,7 @@ class DebugParams(ParamGroup):
         self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
         self.nsys_profile = False # profile with nsys.
+        self.drop_initial_3dgs_p = 0.0 # profile with nsys.
 
         super().__init__(parser, "Debug Parameters")
 

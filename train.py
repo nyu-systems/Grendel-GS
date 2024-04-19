@@ -275,9 +275,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             log_file.write(log_string)
             timers.stop("allgather_loss_and_log")
 
-            if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
-                if args.debug_why and iteration > args.densify_until_iter:
-                    breakpoint()
+            if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0) and args.debug_why:
+                # if args.debug_why and iteration > args.densify_until_iter:
+                #     breakpoint()
                 stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
                 log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
                 log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
