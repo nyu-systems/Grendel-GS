@@ -16,3 +16,4 @@ old_files
 __pycache__
 *.npy
 scripts/
+output_origin

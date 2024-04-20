@@ -3546,11 +3546,11 @@ if __name__ == "__main__":
                     "train_mode2",
                     "train_mode4"
                     ]:
-        # analyze_time(
-        #     f"experiments/{folder}/",
-        #     [i for i in range(251, 30000, 500)]
-        # )
-        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+        analyze_time(
+            f"experiments/{folder}/",
+            [i for i in range(251, 30000, 500)]
+        )
+        # analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
         pass
     for scene in ["train", "garden", "bicycle"]:
         compare_end2end_stats(
