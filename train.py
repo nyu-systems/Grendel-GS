@@ -20,7 +20,7 @@ from gaussian_renderer import (
 from torch.cuda import nvtx
 from gaussian_renderer.loss_distribution import loss_computation
 import sys
-from scene import Scene, GaussianModel, SceneDataset
+from scene import Scene, GaussianModel, SceneDataset, SceneDatasetMultiProcesses
 from gaussian_renderer.workload_division import get_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
@@ -122,13 +122,16 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)
     with torch.no_grad():
-        scene = Scene(dataset_args, gaussians)
+        scene = Scene(args, gaussians)
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
         gaussians.training_setup(opt_args)
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset
-    train_dataset = SceneDataset(scene.getTrainCameras(dataset_args.train_resolution_scale))
+    if args.multiprocesses_dataloader:
+        train_dataset = SceneDatasetMultiProcesses(scene.scene_info.train_cameras, args.bsz, args.num_workers)
+    else:
+        train_dataset = SceneDataset(scene.getTrainCameras(dataset_args.train_resolution_scale))
     # init workload division strategy
     cameraId2StrategyHistory = {}
     # init background
@@ -369,6 +372,11 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             json.dump(data_json, f)
 
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
+    args = utils.get_args()
+    if args.multiprocesses_dataloader:
+        print("Warning: test is disabled for multiprocesses_dataloader for now.")
+        return 
+    # return # disable test for now, because we have not handle the multiprocesses_dataloader drop_last for now. 
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
@@ -384,6 +392,10 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                 psnr_test = torch.scalar_tensor(0.0, device="cuda")
 
                 num_cameras = len(config['cameras'])
+                # if args.multiprocesses_dataloader:
+                #     # TODO: because we have drop last, this may lead to error or inaccurate evaluation.
+                #     eval_dataset = SceneDatasetMultiProcesses(scene, args.dp_size, 8, "test")
+                # else:
                 eval_dataset = SceneDataset(config['cameras'])
                 cameraId2StrategyHistory = {}
                 for idx in range(1, num_cameras+1, args.dp_size):

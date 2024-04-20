@@ -19,6 +19,12 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import utils.general_utils as utils
+from torch.utils.data import Dataset, DataLoader
+from scene.cameras import Camera
+import numpy as np
+from utils.general_utils import PILtoTorch, get_args, get_log_file
+from PIL import Image
+import torch
 
 class Scene:
 
@@ -69,24 +75,28 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
+        self.scene_info = scene_info
 
-        log_file = utils.get_log_file()
-        for resolution_scale in [args.train_resolution_scale]:
-            utils.print_rank_0("Decoding Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            # output the number of cameras in the training set and image size to the log file
-            log_file.write("Train Resolution Scale: {}\n".format(resolution_scale))
-            log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
-            log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
-
-        if args.eval:
-            for resolution_scale in [args.test_resolution_scale]:
-                utils.print_rank_0("Decoding Test Cameras")
-                self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+        if args.multiprocesses_dataloader:
+            pass
+        else:
+            log_file = utils.get_log_file()
+            for resolution_scale in [args.train_resolution_scale]:
+                utils.print_rank_0("Decoding Training Cameras")
+                self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
                 # output the number of cameras in the training set and image size to the log file
-                log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
-                log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
-                log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
+                log_file.write("Train Resolution Scale: {}\n".format(resolution_scale))
+                log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
+                log_file.write("Image size: {}x{}\n".format(self.train_cameras[resolution_scale][0].image_height, self.train_cameras[resolution_scale][0].image_width))
+
+            if args.eval:
+                for resolution_scale in [args.test_resolution_scale]:
+                    utils.print_rank_0("Decoding Test Cameras")
+                    self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+                    # output the number of cameras in the training set and image size to the log file
+                    log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
+                    log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
+                    log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
 
         utils.check_memory_usage_logging("after Loading all images")
 
@@ -176,3 +186,96 @@ class SceneDataset:
                 )
                 self.log_file.write("epoch {} loss: {}\n".format(len(self.epoch_loss), self.epoch_loss[-1]))
                 self.iteration_loss = []
+
+
+
+
+def caminfo2Camera(id, cam_info):
+    args = get_args()
+
+    pil_image = Image.open(cam_info.image_io_bytes)
+    pil_image.load() # load immediately after open file. 
+    resolution = pil_image.size
+    resized_image_PIL = pil_image.resize(resolution)
+    resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
+    if len(resized_image.shape) == 3:
+        resized_image = resized_image.permute(2, 0, 1)
+    else:
+        resized_image = resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
+
+    gt_image = resized_image[:3, ...]
+    loaded_mask = None
+
+    if resized_image.shape[1] == 4:
+        loaded_mask = resized_image[3:4, ...]
+
+    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
+                  FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
+                  image=gt_image, gt_alpha_mask=loaded_mask,
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+
+class SceneTorchDataset(Dataset):
+    def __init__(self, camera_infos):
+        self.camera_infos = camera_infos
+    
+    def __len__(self):
+        return len(self.camera_infos)
+
+    def __getitem__(self, idx):
+        return caminfo2Camera(idx, self.camera_infos[idx])
+
+def uncatted_collate_fn(batch):
+    return batch
+
+class SceneDatasetMultiProcesses:
+    def __init__(self, scene_camera_infos, batch_size, num_workers):
+        self.camera_infos = scene_camera_infos
+        self.batch_size = batch_size
+        self.torch_dataset = SceneTorchDataset(self.camera_infos)
+        self.dataloader = DataLoader(self.torch_dataset,
+                                     batch_size=batch_size,
+                                     num_workers=num_workers,
+                                     collate_fn=uncatted_collate_fn,
+                                     shuffle=True,
+                                     drop_last=True)
+        self.data_iter = iter(self.dataloader)
+
+        self.cur_epoch_cameras = []
+        self.cur_iteration = 0
+        self.iteration_loss = []
+        self.epoch_loss = []
+        
+        self.log_file = utils.get_log_file()
+        self.args = utils.get_args()
+
+    @property
+    def cur_epoch(self):
+        return len(self.epoch_loss)
+    
+    @property
+    def cur_iteration_in_epoch(self):
+        return len(self.iteration_loss)
+
+    def get_batched_cameras(self, batch_size):
+        try:
+            batched_cameras = next(self.data_iter)
+        except StopIteration:
+            # start a new epoch
+            self.epoch_loss.append(
+                sum(self.iteration_loss) / len(self.iteration_loss)
+            )
+            self.log_file.write("epoch {} loss: {}\n".format(len(self.epoch_loss), self.epoch_loss[-1]))
+            self.iteration_loss = []
+
+            self.data_iter = iter(self.dataloader)
+            batched_cameras = next(self.data_iter)
+        assert len(batched_cameras) == batch_size, f"batch size mismatch: {len(batched_cameras)} != {batch_size}"
+        for camera in batched_cameras:
+            camera.world_view_transform = camera.world_view_transform.cuda()
+            camera.projection_matrix = camera.projection_matrix.cuda()
+            camera.full_proj_transform = camera.full_proj_transform.cuda()
+            camera.camera_center = camera.camera_center.cuda()
+        return batched_cameras
+
+    def update_losses(self, losses):
+        self.iteration_loss.extend(losses)

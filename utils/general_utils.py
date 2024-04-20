@@ -17,6 +17,7 @@ import random
 import os
 import torch.distributed as dist
 # from torch.distributed.device_mesh import init_device_mesh
+from PIL import Image
 import time
 from argparse import Namespace
 
@@ -218,15 +219,37 @@ def check_memory_usage_logging(prefix):
             torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024)
         )
 
-def PILtoTorch(pil_image, resolution, args, log_file):
-    # assert pil_image.size == resolution, f"Should not resize. image size {pil_image.size} and {resolution} mismatch should not happen in this current project!"
-    resized_image_PIL = pil_image.resize(resolution)
-    # resized_image_PIL = pil_image
+def PILtoTorch(cam_info, resolution, args, log_file):
     if args.time_image_loading:
+        torch.cuda.synchronize()
         start_time = time.time()
+    if cam_info.image is not None:
+        pil_image = cam_info.image
+    else:
+        pil_image = Image.open(cam_info.image_io_bytes)
+    if args.time_image_loading:
+        torch.cuda.synchronize()
+        log_file.write(f"Image.open() in {time.time() - start_time} seconds\n")
+
+    if args.time_image_loading:
+        torch.cuda.synchronize()
+        start_time = time.time()
+    pil_image.load() # load immediately after open file. 
+    if args.time_image_loading:
+        torch.cuda.synchronize()
+        log_file.write(f"image.load() in {time.time() - start_time} seconds\n")
+
+    if args.time_image_loading:
+        torch.cuda.synchronize()
+        start_time = time.time()
+    if resolution == -1:
+        resolution = pil_image.size
+    resized_image_PIL = pil_image.resize(resolution)
     resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
     if args.time_image_loading:
+        torch.cuda.synchronize()
         log_file.write(f"pil->numpy->torch in {time.time() - start_time} seconds\n")
+
     if len(resized_image.shape) == 3:
         return resized_image.permute(2, 0, 1)
     else:

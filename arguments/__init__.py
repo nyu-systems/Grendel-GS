@@ -155,6 +155,8 @@ class DistributionParams(ParamGroup):
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
+        self.multiprocesses_dataloader = False # use multiprocesses dataloader.
+        self.num_workers = 1
 
         super().__init__(parser, "Distribution Parameters")
 

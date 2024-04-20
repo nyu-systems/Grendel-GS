@@ -9,43 +9,49 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from scene.cameras import Camera
+from scene.cameras import Camera, CameraWithoutImage
 import numpy as np
 from utils.general_utils import PILtoTorch, get_args, get_log_file
 import utils.general_utils as utils
 from tqdm import tqdm
 from utils.graphics_utils import fov2focal
 import time
+import torch
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
-    orig_w, orig_h = cam_info.image.size
-    args = get_args()
     log_file = get_log_file()
-    if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
-    else:  # should be a type that converts to float
-        if args.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
+    args = get_args()
+    if cam_info.image is not None:# TODO: we disable the resolution rescaling for now. 
+        orig_w, orig_h = cam_info.image.size
+        # For our experiments, we currently set the args.resolution to 1 so that there is no any rescaling.
+        if args.resolution in [1, 2, 4, 8]:
+            resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+        else:  # should be a type that converts to float
+            if args.resolution == -1:
+                if orig_w > 1600:
+                    global WARNED
+                    if not WARNED:
+                        print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+                            "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+                        WARNED = True
+                    global_down = orig_w / 1600
+                else:
+                    global_down = 1
             else:
-                global_down = 1
-        else:
-            global_down = orig_w / args.resolution
+                global_down = orig_w / args.resolution
 
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
+            scale = float(global_down) * float(resolution_scale)
+            resolution = (int(orig_w / scale), int(orig_h / scale))
+    else:
+        resolution = -1
 
     if args.time_image_loading:
         start_time = time.time()
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution, args, log_file)
+    resized_image_rgb = PILtoTorch(cam_info, resolution, args, log_file)
     if args.time_image_loading:
+        torch.cuda.synchronize()
         log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
 
     gt_image = resized_image_rgb[:3, ...]
