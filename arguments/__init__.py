@@ -155,6 +155,7 @@ class DistributionParams(ParamGroup):
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
+        self.distributed_dataset_storage = False # if True, we store dataset only on rank 0 and broadcast to other ranks.
 
         super().__init__(parser, "Distribution Parameters")
 

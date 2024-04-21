@@ -184,6 +184,38 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
             local_render_strategy = micro_batched_strategies[utils.DP_GROUP.rank()]
 
+            timers.start("load_gt_image")
+            if args.distributed_dataset_storage:
+                if utils.IN_NODE_GROUP.rank() == 0:
+                    all_original_image_to_send = []
+                    dp_rank_2_image = {}
+                    for gpu_id in range(0, utils.IN_NODE_GROUP.size()):
+                        its_global_rank = utils.GLOBAL_RANK + gpu_id
+                        its_dp_rank = its_global_rank // args.mp_size
+
+                        if its_dp_rank not in dp_rank_2_image:
+                            dp_rank_2_image[its_dp_rank] = micro_batched_cameras[its_dp_rank].original_image_cpu.cuda().contiguous()
+                        all_original_image_to_send.append(dp_rank_2_image[its_dp_rank])
+
+                    recv_buffer = all_original_image_to_send[0]
+                    torch.distributed.scatter(recv_buffer,
+                                              scatter_list=all_original_image_to_send,
+                                              src=0,
+                                              group=utils.IN_NODE_GROUP)
+                else:
+                    recv_buffer = torch.zeros((3, local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width), dtype=torch.uint8, device="cuda")
+                    torch.distributed.scatter(recv_buffer,
+                                              scatter_list=None,
+                                              src=0,
+                                              group=utils.IN_NODE_GROUP)
+
+                local_render_viewpoint_cam.original_image = recv_buffer.contiguous()
+            else:
+                local_render_viewpoint_cam.original_image = local_render_viewpoint_cam.original_image_cpu.cuda()
+            local_render_viewpoint_cam.original_image = local_render_viewpoint_cam.original_image / 255.0
+            local_render_viewpoint_cam.original_image = torch.clamp(local_render_viewpoint_cam.original_image, 0.0, 1.0)
+            timers.stop("load_gt_image")
+
             # 3DGS preprocess and all2all communication
             globally_sync_for_timer()
             screenspace_pkg = preprocess3dgs_and_all2all(micro_batched_cameras, gaussians, pipe_args, background,
@@ -256,6 +288,21 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
             timers.stop("strategy.update_stats")
 
+            # Release memory of locally rendered original_image
+            torch.cuda.synchronize()
+            # if args.distributed_dataset_storage:
+            #     if utils.IN_NODE_GROUP.rank() == 0:
+            #         for gpu_id in range(utils.IN_NODE_GROUP.size()):
+            #             its_global_rank = utils.GLOBAL_RANK + gpu_id
+            #             its_dp_rank = its_global_rank // args.mp_size
+            #             if "original_image" in micro_batched_cameras[its_dp_rank].__dict__:
+            #                 del micro_batched_cameras[its_dp_rank].original_image
+            #     else:
+            #         del local_render_viewpoint_cam.original_image
+            # else:
+            #     del local_render_viewpoint_cam.original_image
+            dp_rank_2_image = None # delete the dict to release memory.
+            del local_render_viewpoint_cam.original_image
 
             # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
             timers.start("allgather_loss_and_log")
@@ -372,6 +419,13 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
+
+        args = utils.get_args()
+        if args.distributed_dataset_storage:
+            print("distributed_dataset_storage is not supported for evaluation.")
+            return
+
+
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
@@ -402,7 +456,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                     if utils.MP_GROUP.size() > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     image = torch.clamp(image, 0.0, 1.0)
-                    gt_image = torch.clamp(local_render_camera.original_image.to("cuda"), 0.0, 1.0)
+                    gt_image = torch.clamp(local_render_camera.original_image_cpu.to("cuda"), 0.0, 1.0)
 
                     if idx + utils.DP_GROUP.rank() < num_cameras + 1:
                         l1_test += l1_loss(image, gt_image).mean().double()

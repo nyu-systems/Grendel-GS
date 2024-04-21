@@ -21,6 +21,8 @@ WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
+    if id == 0:
+        utils.set_img_size(orig_h, orig_w)
     args = get_args()
     log_file = get_log_file()
     if args.resolution in [1, 2, 4, 8]:
@@ -42,17 +44,22 @@ def loadCam(args, id, cam_info, resolution_scale):
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    if args.time_image_loading:
-        start_time = time.time()
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution, args, log_file)
-    if args.time_image_loading:
-        log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
+    if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
+        if args.time_image_loading:
+            start_time = time.time()
+        resized_image_rgb = PILtoTorch(cam_info.image, resolution, args, log_file)
+        if args.time_image_loading:
+            log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
 
-    gt_image = resized_image_rgb[:3, ...]
-    loaded_mask = None
+        assert resized_image_rgb.shape[0] == 3, "Image should have exactly 3 channels!"
+        gt_image = resized_image_rgb[:3, ...]
+        loaded_mask = None
 
-    if resized_image_rgb.shape[1] == 4:
-        loaded_mask = resized_image_rgb[3:4, ...]
+        if resized_image_rgb.shape[1] == 4:
+            loaded_mask = resized_image_rgb[3:4, ...]
+    else:
+        gt_image = None
+        loaded_mask = None
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
