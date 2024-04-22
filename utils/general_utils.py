@@ -230,7 +230,9 @@ def check_memory_usage_logging(prefix):
             torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024)
         )
 
-def PILtoTorch(pil_image, resolution, args, log_file):
+def PILtoTorch(pil_image, resolution, args, log_file, decompressed_image=None):
+    if decompressed_image is not None:
+        return decompressed_image
     pil_image.load()
     resized_image_PIL = pil_image.resize(resolution)
     if args.time_image_loading:

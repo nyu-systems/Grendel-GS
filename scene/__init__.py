@@ -170,7 +170,8 @@ class SceneDataset:
         args = self.args
         timers = utils.get_timers()
 
-        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        if utils.DEFAULT_GROUP.size() > 1:
+            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
         # Asynchronously load ground-truth image to GPU
         timers.start("load_gt_image_to_gpu")
@@ -186,7 +187,8 @@ class SceneDataset:
                         dp_rank_2_image[its_dp_rank] = batched_cameras[its_dp_rank].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
         else:
             batched_cameras[utils.DP_GROUP.rank()].original_image = batched_cameras[utils.DP_GROUP.rank()].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
-        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        if utils.DEFAULT_GROUP.size() > 1:
+            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
         timers.stop("load_gt_image_to_gpu")
 
         # Asynchronously send the original image from gpu0 to all GPUs in the same node.
@@ -219,7 +221,8 @@ class SceneDataset:
         if "gt_image_comm_op" in batched_cameras[utils.DP_GROUP.rank()].__dict__ and batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op is not None:
             batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op.wait()
             batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = None
-        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        if utils.DEFAULT_GROUP.size() > 1:
+            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
         timers.stop("scatter_gt_image")
 
         return batched_cameras

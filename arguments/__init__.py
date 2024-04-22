@@ -157,6 +157,7 @@ class DistributionParams(ParamGroup):
 
         self.distributed_dataset_storage = False # if True, we store dataset only on rank 0 and broadcast to other ranks.
         self.async_load_gt_image = False
+        self.multiprocesses_image_loading = False
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -281,6 +282,7 @@ def init_args(args):
         args.gaussians_distribution = False
         args.image_distribution = False
         args.image_distribution_mode = "0"
+        args.distributed_dataset_storage = False
 
     if utils.MP_GROUP.size() == 1:
         args.image_distribution_mode = "0"
