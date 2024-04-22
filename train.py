@@ -122,7 +122,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)
     with torch.no_grad():
-        scene = Scene(dataset_args, gaussians)
+        scene = Scene(args, gaussians)
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
         gaussians.training_setup(opt_args)
     utils.check_memory_usage_logging("after init and before training loop")

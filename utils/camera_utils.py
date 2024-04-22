@@ -175,13 +175,13 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     args = get_args()
 
     if args.multiprocesses_image_loading:
-        print("start multiprocesses_image_loading")
+        # print("start multiprocesses_image_loading")
         decompressed_images = decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, args)
         # decompressed_images = decompressed_images_from_camInfos_multiprocess_sharedmem(cam_infos, resolution_scale, args)
     else:
         decompressed_images = [None for _ in cam_infos]
 
-    print("finish multiprocesses_image_loading")
+    # print("finish multiprocesses_image_loading")
 
     camera_list = []
     for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos), disable=(utils.LOCAL_RANK != 0)):

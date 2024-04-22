@@ -69,12 +69,17 @@ class Scene:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
+
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         log_file = utils.get_log_file()
         for resolution_scale in [args.train_resolution_scale]:
             utils.print_rank_0("Decoding Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            if args.num_train_cameras > 0:
+                train_cameras = scene_info.train_cameras[:args.num_train_cameras]
+            else:
+                train_cameras = scene_info.train_cameras
+            self.train_cameras[resolution_scale] = cameraList_from_camInfos(train_cameras, resolution_scale, args)
             # output the number of cameras in the training set and image size to the log file
             log_file.write("Train Resolution Scale: {}\n".format(resolution_scale))
             log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras[resolution_scale])))
