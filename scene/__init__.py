@@ -19,6 +19,7 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import utils.general_utils as utils
+import torch
 
 class Scene:
 
@@ -165,6 +166,62 @@ class SceneDataset:
         for i in range(batch_size):
             batched_cameras.append(self.get_one_camera(batched_cameras_uid))
             batched_cameras_uid.append(batched_cameras[-1].uid)
+
+        args = self.args
+        timers = utils.get_timers()
+
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+
+        # Asynchronously load ground-truth image to GPU
+        timers.start("load_gt_image_to_gpu")
+        if args.distributed_dataset_storage:
+            assert args.bsz == args.dp_size, "I have not implemented this for bsz != dp_size"
+            if utils.IN_NODE_GROUP.rank() == 0:
+                dp_rank_2_image = {}
+                for gpu_id in range(0, utils.IN_NODE_GROUP.size()):
+                    its_global_rank = utils.GLOBAL_RANK + gpu_id
+                    its_dp_rank = its_global_rank // args.mp_size
+
+                    if its_dp_rank not in dp_rank_2_image:
+                        dp_rank_2_image[its_dp_rank] = batched_cameras[its_dp_rank].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
+        else:
+            batched_cameras[utils.DP_GROUP.rank()].original_image = batched_cameras[utils.DP_GROUP.rank()].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        timers.stop("load_gt_image_to_gpu")
+
+        # Asynchronously send the original image from gpu0 to all GPUs in the same node.
+        timers.start("scatter_gt_image")
+        if args.distributed_dataset_storage:
+            if utils.IN_NODE_GROUP.rank() == 0:
+                all_original_image_to_send = []
+                for gpu_id in range(0, utils.IN_NODE_GROUP.size()):
+                    its_global_rank = utils.GLOBAL_RANK + gpu_id
+                    its_dp_rank = its_global_rank // args.mp_size
+                    dp_rank_2_image[its_dp_rank] = dp_rank_2_image[its_dp_rank].contiguous() # the data loading is non-blocking, so this contiguous() may block until the data is loaded.
+                    all_original_image_to_send.append(dp_rank_2_image[its_dp_rank])
+                recv_buffer = all_original_image_to_send[0]
+                batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = torch.distributed.scatter(recv_buffer,
+                                            scatter_list=all_original_image_to_send,
+                                            src=0,
+                                            group=utils.IN_NODE_GROUP,
+                                            async_op=args.async_load_gt_image)
+                batched_cameras[utils.DP_GROUP.rank()].original_image = recv_buffer
+            else:
+                recv_buffer = torch.zeros((3, batched_cameras[utils.DP_GROUP.rank()].image_height, batched_cameras[utils.DP_GROUP.rank()].image_width), dtype=torch.uint8, device="cuda")
+                batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = torch.distributed.scatter(recv_buffer,
+                                            scatter_list=None,
+                                            src=0,
+                                            group=utils.IN_NODE_GROUP,
+                                            async_op=args.async_load_gt_image)
+                batched_cameras[utils.DP_GROUP.rank()].original_image = recv_buffer
+        else:
+            batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = None
+        if "gt_image_comm_op" in batched_cameras[utils.DP_GROUP.rank()].__dict__ and batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op is not None:
+            batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op.wait()
+            batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = None
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        timers.stop("scatter_gt_image")
+
         return batched_cameras
 
     def update_losses(self, losses):
