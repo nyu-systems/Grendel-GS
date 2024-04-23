@@ -64,6 +64,9 @@ def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, retur
         gt_image = None
         loaded_mask = None
     
+    # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory. 
+    cam_info.image.close()
+
     if return_image:
         return gt_image
 
@@ -189,6 +192,9 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
             camera_list.append(loadCam(args, id, c, resolution_scale, decompressed_image=decompressed_images[id], return_image=False))
         else:
             camera_list.append(None)
+
+    if utils.DEFAULT_GROUP.size() > 1:
+        torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
     return camera_list
 

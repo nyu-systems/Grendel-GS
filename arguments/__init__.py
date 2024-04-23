@@ -159,6 +159,7 @@ class DistributionParams(ParamGroup):
         self.async_load_gt_image = False
         self.multiprocesses_image_loading = False
         self.num_train_cameras = -1
+        self.distributed_save = False
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -169,6 +170,8 @@ class BenchmarkParams(ParamGroup):
         self.end2end_time = False # log end2end training time.
         self.check_memory_usage = False # check memory usage.
         self.log_iteration_memory_usage = False # log memory usage for every iteration.
+
+        self.check_cpu_memory = False # check cpu memory usage.
 
         self.benchmark_stats = False # Benchmark mode: it will enable some flags to log detailed statistics to research purposes.
         self.performance_stats = False # Performance mode: to know its generation quality, it will evaluate/save models at some iterations and use them for render.py and metrics.py .
@@ -288,6 +291,8 @@ def init_args(args):
     if utils.MP_GROUP.size() == 1:
         args.image_distribution_mode = "0"
 
+    if not args.gaussians_distribution:
+        args.distributed_save = False
 
     assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
 

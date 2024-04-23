@@ -118,6 +118,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     utils.set_timers(timers)
     utils.set_log_file(log_file)
     prepare_output_and_logger(dataset_args)
+    utils.log_cpu_memory_usage("at the beginning of training")
 
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)

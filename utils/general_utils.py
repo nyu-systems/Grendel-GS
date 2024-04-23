@@ -19,6 +19,7 @@ import torch.distributed as dist
 # from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
+import psutil
 
 ARGS = None
 LOG_FILE = None
@@ -373,3 +374,12 @@ def prepare_output_and_logger(args):
     # Create Tensorboard writer. Disable for now. 
     tb_writer = None
     return tb_writer
+
+def log_cpu_memory_usage(position_str):
+    args = get_args()
+    if not args.check_cpu_memory:
+        return
+    LOG_FILE.write("[Check CPU Memory]"+position_str+" ->  Memory Usage: {} GB. Available Memory: {} GB. Total memory: {} GB\n".format(
+        psutil.virtual_memory().used / 1024 / 1024 / 1024,
+        psutil.virtual_memory().available / 1024 / 1024 / 1024,
+        psutil.virtual_memory().total / 1024 / 1024 / 1024))

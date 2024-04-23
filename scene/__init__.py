@@ -43,6 +43,8 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        utils.log_cpu_memory_usage("before loading images meta data")
+
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
@@ -69,6 +71,7 @@ class Scene:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
+        utils.log_cpu_memory_usage("before decoding images")
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -95,6 +98,7 @@ class Scene:
                 log_file.write("Image size: {}x{}\n".format(self.test_cameras[resolution_scale][0].image_height, self.test_cameras[resolution_scale][0].image_width))
 
         utils.check_memory_usage_logging("after Loading all images")
+        utils.log_cpu_memory_usage("after decoding images")
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -105,6 +109,7 @@ class Scene:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
         utils.check_memory_usage_logging("after initializing point cloud")
+        utils.log_cpu_memory_usage("after loading initial 3dgs points")
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
@@ -175,8 +180,8 @@ class SceneDataset:
         args = self.args
         timers = utils.get_timers()
 
-        if utils.DEFAULT_GROUP.size() > 1:
-            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        # if utils.DEFAULT_GROUP.size() > 1:
+        #     torch.distributed.barrier(group=utils.DEFAULT_GROUP)
 
         # Asynchronously load ground-truth image to GPU
         timers.start("load_gt_image_to_gpu")
@@ -192,8 +197,8 @@ class SceneDataset:
                         dp_rank_2_image[its_dp_rank] = batched_cameras[its_dp_rank].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
         else:
             batched_cameras[utils.DP_GROUP.rank()].original_image = batched_cameras[utils.DP_GROUP.rank()].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
-        if utils.DEFAULT_GROUP.size() > 1:
-            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        # if utils.DEFAULT_GROUP.size() > 1:
+        #     torch.distributed.barrier(group=utils.DEFAULT_GROUP)
         timers.stop("load_gt_image_to_gpu")
 
         # Asynchronously send the original image from gpu0 to all GPUs in the same node.
@@ -226,8 +231,8 @@ class SceneDataset:
         if "gt_image_comm_op" in batched_cameras[utils.DP_GROUP.rank()].__dict__ and batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op is not None:
             batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op.wait()
             batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = None
-        if utils.DEFAULT_GROUP.size() > 1:
-            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        # if utils.DEFAULT_GROUP.size() > 1:
+        #     torch.distributed.barrier(group=utils.DEFAULT_GROUP)
         timers.stop("scatter_gt_image")
 
         return batched_cameras
