@@ -14,6 +14,7 @@ from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 from utils.general_utils import get_args, get_log_file
+import utils.general_utils as utils
 import time
 
 class Camera(nn.Module):
@@ -47,14 +48,21 @@ class Camera(nn.Module):
             if not args.lazy_load_image:
                 torch.cuda.synchronize()
             start_time = time.time()
-        self.original_image = image.to(self.data_device).clamp(0.0, 1.0)
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
 
-        if gt_alpha_mask is not None:
-            self.original_image *= gt_alpha_mask.to(self.data_device)
+        if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
+            # load to cpu
+            self.original_image_cpu = image.contiguous()
+            self.image_width = self.original_image_cpu.shape[2]
+            self.image_height = self.original_image_cpu.shape[1]
+            # TODO: fix this later.
+            assert gt_alpha_mask is None, "gt_alpha_mask should be None if image is loaded"
+            # if gt_alpha_mask is not None:
+            #     self.original_image *= gt_alpha_mask.to(self.data_device)
+            # else:
+            #     self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
         else:
-            self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            self.original_image_cpu = None
+            self.image_height, self.image_width = utils.get_img_size()
 
         if args.time_image_loading:
             if not args.lazy_load_image:

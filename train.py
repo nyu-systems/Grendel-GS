@@ -118,11 +118,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     utils.set_timers(timers)
     utils.set_log_file(log_file)
     prepare_output_and_logger(dataset_args)
+    utils.log_cpu_memory_usage("at the beginning of training")
 
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)
     with torch.no_grad():
-        scene = Scene(dataset_args, gaussians)
+        scene = Scene(args, gaussians)
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
         gaussians.training_setup(opt_args)
     utils.check_memory_usage_logging("after init and before training loop")
@@ -196,7 +197,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             image, compute_locally = render(screenspace_pkg, local_render_strategy)
 
             # Pixel-wise Loss Computation
-            globally_sync_for_timer()
+            globally_sync_for_timer()# adding this also creates some unstability in the time measurement.
             Ll1, ssim_loss = loss_computation(image,
                                               local_render_viewpoint_cam,
                                               compute_locally,
@@ -222,6 +223,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
             if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
+
+            # Release memory of locally rendered original_image
+            torch.cuda.synchronize()
+            local_render_viewpoint_cam.gt_image_comm_op = None
+            local_render_viewpoint_cam.original_image = None
+
 
         with torch.no_grad():
             # Sync gradients across replicas, if some 3dgs are stored replicatedly.
@@ -255,7 +262,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                         batched_strategy_histories[idx_in_one_batch].finish_strategy()
 
             timers.stop("strategy.update_stats")
-
 
             # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
             timers.start("allgather_loss_and_log")
@@ -402,7 +408,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                     if utils.MP_GROUP.size() > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     image = torch.clamp(image, 0.0, 1.0)
-                    gt_image = torch.clamp(local_render_camera.original_image.to("cuda"), 0.0, 1.0)
+                    gt_image = torch.clamp(local_render_camera.original_image / 255.0, 0.0, 1.0)
 
                     if idx + utils.DP_GROUP.rank() < num_cameras + 1:
                         l1_test += l1_loss(image, gt_image).mean().double()

@@ -35,6 +35,7 @@ from arguments import (
     print_all_args, 
     init_args
 )
+import utils.general_utils as utils
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, generate_num):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
@@ -45,23 +46,28 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
     set_cur_iter(iteration)
     cameraId2StrategyHistory = {}
+    generated_cnt = 0
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        if idx == generate_num:
-            break
+        if args.sample_freq != -1 and idx % args.sample_freq != 0:
+            if generated_cnt == args.generate_num:
+                break
+            generated_cnt += 1
+            continue
         strategy_history = get_division_strategy_history(cameraId2StrategyHistory, view, "evaluation")
         strategy = strategy_history.start_strategy()
         screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,
                                                      [strategy],
                                                      mode="test")
         rendered_image, _ = render(screenspace_pkg, strategy)
-        gt_image = view.original_image[0:3, :, :]
+        gt_image = torch.clamp(view.original_image_cpu[0:3, :, :].cuda() / 255.0, 0, 1.0)
         torchvision.utils.save_image(rendered_image, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt_image, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, generate_num : int):
     with torch.no_grad():
+        args = utils.get_args()
         gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        scene = Scene(args, gaussians, load_iteration=iteration, shuffle=False)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -86,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--generate_num", default=-1, type=int)
+    parser.add_argument("--sample_freq", default=-1, type=int)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
     init_distributed(args)

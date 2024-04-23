@@ -174,9 +174,12 @@ def general_distributed_loss_computation(image, viewpoint_cam, compute_locally, 
 
 
     # Move image_gt to GPU. its shape: (3, max_pixel_y-min_pixel_y, max_pixel_x-min_pixel_x)
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, min_pixel_y:max_pixel_y, min_pixel_x:max_pixel_x].cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, min_pixel_y:max_pixel_y, min_pixel_x:max_pixel_x].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
 
     # Loss computation
@@ -497,10 +500,12 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
     )
 
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    # image_gt = viewpoint_cam.original_image.cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
 
     # Loss computation
@@ -780,10 +785,12 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     coverage_max_y = min(last_pixel_y_plus1+window_size, utils.IMG_H)
     local_image_rect_pixels_compute_locally = torch.ones((coverage_max_y-coverage_min_y, utils.IMG_W), dtype=torch.bool, device="cuda")
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    # image_gt = viewpoint_cam.original_image.cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
 
     # Loss computation
@@ -982,10 +989,12 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     coverage_max_y = min(last_pixel_y_plus1+window_size, utils.IMG_H)
     local_image_rect_pixels_compute_locally = torch.ones((coverage_max_y-coverage_min_y, utils.IMG_W), dtype=torch.bool, device="cuda")
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    # image_gt = viewpoint_cam.original_image.cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
 
     # Loss computation
@@ -1050,9 +1059,12 @@ def functional_allreduce_distributed_loss_computation(image, viewpoint_cam, comp
     timers.stop("prepare_image_rect_and_mask")
 
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
     # Loss computation
     timers.start("local_loss_computation")
@@ -1114,9 +1126,9 @@ def allreduce_distributed_loss_computation(image, viewpoint_cam, compute_locally
     timers.stop("prepare_image_rect_and_mask")
 
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
     local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.stop("prepare_gt_image")
 
     # Loss computation
     timers.start("local_loss_computation")
@@ -1168,9 +1180,12 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
     timers.stop("prepare_image_rect_and_mask")
 
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, :].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
     # Loss computation
     timers.start("local_loss_computation")
@@ -1248,9 +1263,12 @@ def avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, comp
     timers.stop("prepare_image_rect_and_mask")
 
     # Move partial image_gt which is needed to GPU.
-    timers.start("gt_image_load_to_gpu")
-    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, coverage_min_x:coverage_max_x].cuda().contiguous()
-    timers.stop("gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    local_image_rect_gt = viewpoint_cam.original_image[:, coverage_min_y:coverage_max_y, coverage_min_x:coverage_max_x].contiguous()
+    local_image_rect_gt = torch.clamp(local_image_rect_gt / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
 
     # Loss computation
     timers.start("local_loss_computation")
@@ -1289,10 +1307,12 @@ def replicated_loss_computation(image, viewpoint_cam, compute_locally, strategy,
 
 
     # Move gt_image to gpu: if args.lazy_load_image is true, then the transfer will actually happen.
-    timers.start("gt_image_load_to_gpu")
-    gt_image = viewpoint_cam.original_image.cuda()
-    timers.stop("gt_image_load_to_gpu")
-    utils.check_memory_usage_logging("after gt_image_load_to_gpu")
+    timers.start("prepare_gt_image")
+    if ("gt_image_comm_op" not in viewpoint_cam.__dict__) and (viewpoint_cam.gt_image_comm_op is not None):
+        viewpoint_cam.gt_image_comm_op.wait()
+    gt_image = torch.clamp(viewpoint_cam.original_image / 255.0, 0.0, 1.0)
+    timers.stop("prepare_gt_image")
+    utils.check_memory_usage_logging("after prepare_gt_image")
 
 
     # Loss computation

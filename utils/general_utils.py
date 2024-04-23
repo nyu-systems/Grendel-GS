@@ -19,6 +19,7 @@ import torch.distributed as dist
 # from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
+import psutil
 
 ARGS = None
 LOG_FILE = None
@@ -29,6 +30,7 @@ WORLD_SIZE = 1
 DP_GROUP = None
 MP_GROUP = None
 DEFAULT_GROUP = None
+IN_NODE_GROUP = None
 TIMERS = None
 DENSIFY_ITER = 0
 
@@ -152,7 +154,7 @@ def init_distributed(args):
         assert WORLD_SIZE % args.dp_size == 0, "World size should be divisible by dp_size"
         args.mp_size = WORLD_SIZE // args.dp_size
 
-        global DP_GROUP, MP_GROUP, DEFAULT_GROUP
+        global DP_GROUP, MP_GROUP, DEFAULT_GROUP, IN_NODE_GROUP
 
         # mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
         # # Users can access the underlying process group thru `get_group` API.
@@ -177,11 +179,22 @@ def init_distributed(args):
 
         DEFAULT_GROUP = dist.group.WORLD
 
-        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()))
+        num_gpu_per_node = torch.cuda.device_count()
+        n_of_nodes = WORLD_SIZE // num_gpu_per_node
+        all_in_node_group = []
+        for rank in range(n_of_nodes):
+            in_node_group_ranks = list(range(rank*num_gpu_per_node, (rank+1)*num_gpu_per_node))
+            all_in_node_group.append(dist.new_group(in_node_group_ranks))
+        node_rank = GLOBAL_RANK // num_gpu_per_node
+        IN_NODE_GROUP = all_in_node_group[node_rank]
+        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()) + "     in_node_size: " + str(IN_NODE_GROUP.size()) + " in_node_rank: " + str(IN_NODE_GROUP.rank()))
+
+
     else:
         DP_GROUP = SingleGPUGroup()
         MP_GROUP = SingleGPUGroup()
         DEFAULT_GROUP = SingleGPUGroup()
+        IN_NODE_GROUP = SingleGPUGroup()
 
 def our_allgather_among_cpu_processes_float_list(data, group):
     ## official implementation: torch.distributed.all_gather_object()
@@ -218,13 +231,14 @@ def check_memory_usage_logging(prefix):
             torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024)
         )
 
-def PILtoTorch(pil_image, resolution, args, log_file):
-    # assert pil_image.size == resolution, f"Should not resize. image size {pil_image.size} and {resolution} mismatch should not happen in this current project!"
+def PILtoTorch(pil_image, resolution, args, log_file, decompressed_image=None):
+    if decompressed_image is not None:
+        return decompressed_image
+    pil_image.load()
     resized_image_PIL = pil_image.resize(resolution)
-    # resized_image_PIL = pil_image
     if args.time_image_loading:
         start_time = time.time()
-    resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
+    resized_image = torch.from_numpy(np.array(resized_image_PIL))
     if args.time_image_loading:
         log_file.write(f"pil->numpy->torch in {time.time() - start_time} seconds\n")
     if len(resized_image.shape) == 3:
@@ -360,3 +374,12 @@ def prepare_output_and_logger(args):
     # Create Tensorboard writer. Disable for now. 
     tb_writer = None
     return tb_writer
+
+def log_cpu_memory_usage(position_str):
+    args = get_args()
+    if not args.check_cpu_memory:
+        return
+    LOG_FILE.write("[Check CPU Memory]"+position_str+" ->  Memory Usage: {} GB. Available Memory: {} GB. Total memory: {} GB\n".format(
+        psutil.virtual_memory().used / 1024 / 1024 / 1024,
+        psutil.virtual_memory().available / 1024 / 1024 / 1024,
+        psutil.virtual_memory().total / 1024 / 1024 / 1024))

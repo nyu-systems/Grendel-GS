@@ -308,10 +308,10 @@ class GaussianModel:
     def save_ply(self, path):# here, we should be in torch.no_grad() context. train.py ensures that. 
         args = utils.get_args()
         _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
-
+        utils.log_cpu_memory_usage("start save_ply")
         group = utils.DEFAULT_GROUP
-        if args.gaussians_distribution:
-            # gather at rank 0
+        if args.gaussians_distribution and not args.distributed_save:
+            # gather all gaussians at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
                 tensor_sizes = torch.zeros((group.size()), dtype=torch.int, device="cuda")
@@ -347,16 +347,28 @@ class GaussianModel:
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
 
-        else:
+            if group.rank() != 0:
+                return
+
+        elif (args.gaussians_distribution and args.distributed_save):
+            assert utils.DEFAULT_GROUP.size() > 1, "distributed_save should be used with more than 1 rank."
             _xyz = self._xyz
             _features_dc = self._features_dc
             _features_rest = self._features_rest
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
-
-        if group.rank() != 0:
-            return
+            if path.endswith(".ply"):
+                path = path[:-4] + "_rk" + str(utils.GLOBAL_RANK) + "_ws" + str(utils.WORLD_SIZE) + ".ply"
+        elif not args.gaussians_distribution:
+            if group.rank() != 0:
+                return
+            _xyz = self._xyz
+            _features_dc = self._features_dc
+            _features_rest = self._features_rest
+            _opacity = self._opacity
+            _scaling = self._scaling
+            _rotation = self._rotation
 
         mkdir_p(os.path.dirname(path))
 
@@ -368,13 +380,18 @@ class GaussianModel:
         scale = _scaling.detach().cpu().numpy()
         rotation = _rotation.detach().cpu().numpy()
 
+        utils.log_cpu_memory_usage("after change gpu tensor to cpu numpy")
+
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
+
+        utils.log_cpu_memory_usage("after change numpy to plyelement before writing ply file")
         PlyData([el]).write(path)
+        utils.log_cpu_memory_usage("finish write ply file")
         # remark: max_radii2D, xyz_gradient_accum and denom are not saved here; they are save elsewhere.
 
     def reset_opacity(self):
