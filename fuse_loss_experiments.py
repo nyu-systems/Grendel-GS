@@ -20,19 +20,76 @@ def kernel_fused_loss(image, gt_image, mask, lambda_dssim=0.2):
     loss = (1.0 - lambda_dssim) * Ll1 + lambda_dssim * (1.0 - ssim_loss)
     return loss
 
+def test_l1_naive(image, gt_image, mask, lambda_dssim=0.2):
+    pixelwise_Ll1 = pixelwise_l1_with_mask(image, gt_image, mask)
+    Ll1 = pixelwise_Ll1.sum()
+    Ll1.backward()
+    # print("naive l1 loss:", Ll1.item())
+    return image.grad
+    
+def test_l1_fused(image, gt_image, mask, lambda_dssim=0.2):
+    l1_fused = diff_gaussian_rasterization.fused_loss(image, gt_image, mask, lambda_dssim)
+    l1_fused.backward()
+    # print("fused loss:", l1_fused.item())
+    return image.grad
+
 if __name__ == "__main__":
     # set random seed for reproducibility
     torch.manual_seed(1)
 
-    image = torch.rand(3, 1000, 1000).cuda()
+    image = torch.rand(3, 1000, 1000, requires_grad=True, device="cuda")
+    image_fused = image.detach().clone().requires_grad_(True)
     gt_image = torch.rand(3, 1000, 1000).cuda()
     mask = torch.randint(0, 2, (1000, 1000), dtype=torch.bool).cuda()
     lambda_dssim = 0.2
 
-    loss = loss_torch(image, gt_image, mask, lambda_dssim)
-    loss_fused = kernel_fused_loss(image, gt_image, mask, lambda_dssim)
-    print(loss.item())
-    print(loss_fused.item())
+    # loss = loss_torch(image, gt_image, mask, lambda_dssim)
+    # loss_fused = kernel_fused_loss(image, gt_image, mask, lambda_dssim)
+    # print(loss.item())
+    # print(loss_fused.item())
+    
+    print("*************************")
+    print("***** Naive L1 Loss *****")
+    print("*************************")
+    with torch.profiler.profile(
+      activities=[
+        torch.profiler.ProfilerActivity.CPU,
+        torch.profiler.ProfilerActivity.CUDA,
+      ],
+      schedule=torch.profiler.schedule(
+        skip_first=5,
+        wait=5,
+        warmup=1,
+        active=10)
+    ) as p:
+      for n in range(21):
+        naive_grad = test_l1_naive(image, gt_image, mask, lambda_dssim)
+        p.step()
+    print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
+    
+    
+    print("*************************")
+    print("*** Fused L1 Loss 1.0 ***")
+    print("*************************")
+    with torch.profiler.profile(
+      activities=[
+        torch.profiler.ProfilerActivity.CPU,
+        torch.profiler.ProfilerActivity.CUDA,
+      ],
+      schedule=torch.profiler.schedule(
+        skip_first=5,
+        wait=5,
+        warmup=1,
+        active=10)
+    ) as p:
+      for n in range(21):
+        fused_grad = test_l1_fused(image_fused, gt_image, mask, lambda_dssim)
+        p.step()
+    print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
+    
+    # naive_grad = test_l1_naive(image, gt_image, mask, lambda_dssim)
+    # fused_grad = test_l1_fused(image_fused, gt_image, mask, lambda_dssim)
+    # print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
 
 
 
