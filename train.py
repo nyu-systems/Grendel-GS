@@ -120,12 +120,25 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     prepare_output_and_logger(dataset_args)
     utils.log_cpu_memory_usage("at the beginning of training")
 
+    start_from_this_iteration = 1
+
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)
     with torch.no_grad():
         scene = Scene(args, gaussians)
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
         gaussians.training_setup(opt_args)
+
+        if args.start_checkpoint != "":
+            number_files = len(os.listdir(args.start_checkpoint))
+            assert number_files == utils.DEFAULT_GROUP.size(), "The number of files in the checkpoint folder must be equal to the number of processes."
+            if args.start_checkpoint[-1] != "/":
+                args.start_checkpoint += "/"
+            file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
+            (model_params, start_from_this_iteration) = torch.load(file_name)
+            gaussians.restore(model_params, opt_args)
+            start_from_this_iteration += args.dp_size
+
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset
@@ -140,8 +153,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     end2end_timers = End2endTimer(args)
     end2end_timers.start()
     progress_bar = tqdm(range(1, opt_args.iterations + 1), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
+    progress_bar.update(start_from_this_iteration - 1)
     num_trained_batches = 0
-    for iteration in range(1, opt_args.iterations + 1, args.bsz):
+    for iteration in range(start_from_this_iteration, opt_args.iterations + 1, args.bsz):
 
         # Step Initialization
         progress_bar.update(args.bsz)
@@ -303,6 +317,25 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
+                data_json = {}
+                for camera_id, strategy_history in cameraId2StrategyHistory.items():
+                    data_json[camera_id] = strategy_history.to_json()
+                
+                with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
+                    json.dump(data_json, f)
+                end2end_timers.start()
+
+            if any([iteration <= checkpoint_iteration < iteration+args.bsz for checkpoint_iteration in args.checkpoint_iterations]):
+                end2end_timers.stop()
+                utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
+                log_file.write("\n[ITER {}] Saving Checkpoint".format(iteration))
+                save_folder = scene.model_path + "/checkpoints/" + str(iteration) + "/"
+                if utils.DEFAULT_GROUP.rank() == 0:
+                    os.makedirs(save_folder, exist_ok=True)
+                    torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+                else:
+                    torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+                torch.save((gaussians.capture(), iteration), save_folder + "/chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth")
                 end2end_timers.start()
 
             # Optimizer step
@@ -364,15 +397,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     # Finish training
     end2end_timers.print_time(log_file, opt_args.iterations)
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
-
-    # Save some running statistics to file.
-    if not args.performance_stats:
-        data_json = {}
-        for camera_id, strategy_history in cameraId2StrategyHistory.items():
-            data_json[camera_id] = strategy_history.to_json()
-        
-        with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
-            json.dump(data_json, f)
 
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
     log_file = utils.get_log_file()

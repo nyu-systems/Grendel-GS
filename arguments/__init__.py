@@ -240,9 +240,6 @@ def init_args(args):
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
 
-    # TODO: we temporarily disable checkpoint because we have not implemented it yet.
-    args.checkpoint_iterations = []
-    args.start_checkpoint = None
     if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
         args.save_iterations.append(args.iterations)
 
