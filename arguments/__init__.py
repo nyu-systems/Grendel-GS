@@ -117,6 +117,7 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        self.min_opacity = 0.005
         self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
         super().__init__(parser, "Optimization Parameters")
 

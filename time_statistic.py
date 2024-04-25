@@ -464,24 +464,29 @@ def extract_json_from_python_time_log(file_path, load_genereated_json=False):
     return stats
 
 def extract_3dgs_count_from_python_log(folder):
-    files = [
-        "python_ws=4_rk=0.log",
-        "python_ws=4_rk=1.log",
-        "python_ws=4_rk=2.log",
-        "python_ws=4_rk=3.log",
-    ]
+    suffixes = get_suffix_in_folder(folder)
     stats = {}
     iterations = []
-    for rk, file in enumerate(files):
+    for rk, suffix in enumerate(suffixes):
+        file = f"python_{suffix}.log"
         file_path = folder + file
         with open(file_path, 'r') as f:
             lines = f.readlines()
         stats[f"n_3dgs_rk={rk}"] = []
         for line in lines:
+            # xyz shape: torch.Size([182686, 3])
+            if line.startswith("xyz shape:"):
+                # example
+                # xyz shape: torch.Size([182686, 3])
+                n_3dgs = int(line.split("[")[1].split(",")[0])
+                stats[f"n_3dgs_rk={rk}"].append(n_3dgs)
+                if rk == 0:
+                    iterations.append(0)
+
             if "densify_and_prune. Now num of 3dgs:" in line:
                 # example
-                # iteration 1000 densify_and_prune. Now num of 3dgs: 54539. Now Memory usage: 0.45931053161621094 GB. Max Memory usage: 4.580923080444336 GB.
-                iteration = int(line.split("iteration ")[1].split(" ")[0])
+                # iteration[600,601) densify_and_prune. Now num of 3dgs: 183910. Now Memory usage: 0.23658323287963867 GB. Max Memory usage: 0.399813175201416 GB. 
+                iteration = int(line.split("iteration[")[1].split(",")[0])
                 n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
                 if rk == 0:
                     iterations.append(iteration)
@@ -3155,6 +3160,101 @@ def compare_different_block_sizes(baseline_folder, folders):
         }, ignore_index=True)
     df.to_csv(baseline_folder + "/compare_different_block_sizes.csv", index=False)
 
+def analyze_quality(folder):
+    pass
+
+def get_final_n_3dgs(folder):
+    data, iterations = extract_3dgs_count_from_python_log(folder)
+    n_3dgs = 0
+    for key in data:
+        n_3dgs += data[key][-1]
+    return n_3dgs
+
+def get_all_evalutations(file_path):
+    lines = open(file_path, "r").readlines()
+    eval_test_PSNR = []
+    eval_train_PSNR = []
+    eval_test_l1 = []
+    eval_train_l1 = []
+    test_iteration = []
+    train_iteration = []
+    for line in lines:
+        # [ITER 30000] Evaluating test: L1 0.058287687942777805 PSNR 21.94811627739354
+        # [ITER 30000] Evaluating train: L1 0.03144958354532719 PSNR 26.123293685913087
+        if "Evaluating test: " in line:
+            eval_test_PSNR.append(float(line.split(" ")[-1]))
+            eval_test_l1.append(float(line.split(" ")[-3]))
+            test_iteration.append(int(line.split(" ")[1][:-1]))
+        if "Evaluating train: " in line:
+            eval_train_PSNR.append(float(line.split(" ")[-1]))
+            eval_train_l1.append(float(line.split(" ")[-3]))
+            train_iteration.append(int(line.split(" ")[1][:-1]))
+    return eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration
+
+def get_final_evaluation(folder):
+    suffixes = get_suffix_in_folder(folder)
+    eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
+    return eval_test_l1[-1], eval_test_PSNR[-1], eval_train_l1[-1], eval_train_PSNR[-1]
+
+def compare_n_3dgs(folders):
+    df = pd.DataFrame(columns=["experiment_name", "n_3dgs", "test_l1", "test_PSNR", "train_l1", "train_PSNR"])
+    for folder in folders:
+        n_3dgs = get_final_n_3dgs(folder)
+        test_l1, test_psnr, train_l1, train_psnr = get_final_evaluation(folder)
+        df = df._append({
+            "experiment_name": folder.split("/")[-2],
+            "n_3dgs": n_3dgs,
+            "test_l1": round(test_l1, 4),
+            "test_PSNR": round(test_psnr, 4),
+            "train_l1": round(train_l1, 4),
+            "train_PSNR": round(train_psnr, 4),
+        }, ignore_index=True)
+    df.to_csv(folders[0] + "/compare_final_results.csv", index=False)
+
+def extract_sum_3dgs_count_from_python_log(folder):
+    rk2count_3dgs, iterations = extract_3dgs_count_from_python_log(folder)
+    sum_3dgs_at_iterations = []
+    for i in range(len(iterations)):
+        n = 0
+        for key in rk2count_3dgs:
+            n += rk2count_3dgs[key][i]
+        sum_3dgs_at_iterations.append(n)
+    return sum_3dgs_at_iterations, iterations
+
+def loss_and_3dgs_curves(folders):
+
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(20, 20))
+    fig.subplots_adjust(hspace=0.5)
+
+    for folder in folders:
+        if folder[-1] != "/":
+            folder += "/"
+        n_3dgs, iterations = extract_sum_3dgs_count_from_python_log(folder)
+        suffixes = get_suffix_in_folder(folder)
+        eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
+
+        ax[0].plot(iterations, n_3dgs, label=folder.split("/")[-2])
+        ax[1].plot(train_iteration, eval_train_l1, label=folder.split("/")[-2])
+        ax[2].plot(train_iteration, eval_train_PSNR, label=folder.split("/")[-2])
+    
+    ax[0].set_title("n_3dgs", fontsize=24)
+    ax[0].set_xlabel('iteration', fontsize=20)
+    ax[0].set_ylabel('count', fontsize=20)
+    ax[0].legend(loc='lower right', fontsize=20)
+
+    ax[1].set_title("train_l1", fontsize=24)
+    ax[1].set_xlabel('iteration', fontsize=20)
+    ax[1].set_ylabel('l1', fontsize=20)
+    ax[1].legend(loc='upper right', fontsize=20)
+
+    ax[2].set_title("train_PSNR", fontsize=24)
+    ax[2].set_xlabel('iteration', fontsize=20)
+    ax[2].set_ylabel('PSNR', fontsize=20)
+    ax[2].legend(loc='lower right', fontsize=20)
+
+    plt.savefig(folders[0] + "/loss_and_3dgs_curves.png")
+
+
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
 
@@ -3679,16 +3779,66 @@ if __name__ == "__main__":
     # analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
 
 
-    for folder in ["no_avoid_pixel_all2all_train",
-                   "avoid_pixel_all2all_train",
-                   "avoid_pixel_all2all_tr_flc",
-                   "avoid_pixel_all2all_train_2",
-                   "avoid_pixel_all2all_train_flcnal"]:
-        analyze_time(
-            f"experiments/{folder}/",
-            [i for i in range(251, 30000, 500)]
-        )
-        analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+    # for folder in ["no_avoid_pixel_all2all_train",
+    #                "avoid_pixel_all2all_train",
+    #                "avoid_pixel_all2all_tr_flc",
+    #                "avoid_pixel_all2all_train_2",
+    #                "avoid_pixel_all2all_train_flcnal"]:
+    #     analyze_time(
+    #         f"experiments/{folder}/",
+    #         [i for i in range(251, 30000, 500)]
+    #     )
+    #     analyze_heuristics(f"experiments/{folder}/", working_image_ids=[0,10,20,30,40])
+
+    # train_densify_folders = ["train_den_to_0",
+    #                          "train_den_to_3000",
+    #                          "train_den_to_6000",
+    #                          "train_den_to_9000",
+    #                          "train_den_to_12000",
+    #                          "train_den_to_15000"
+    #                         ]
+    # draw_evaluation_results([f"experiments/{folder}/python_ws=4_rk=0.log" for folder in train_densify_folders])
+
+    # for folder in train_densify_folders:
+    #     analyze_quality(f"experiments/{folder}/")
+
+    # # draw_evaluation_results([f"experiments/{folder}/python_ws=1_rk=0.log" for folder in train_densify_folders])
+
+
+    # train_densify_folders = [
+    #     "train_drop0dot75_1gpu",
+    #     "train_drop0dot5_1gpu",
+    #     "train_drop0dot25_1gpu",
+    #     "train_den_to_0_1gpu",
+    #     "train_den_to_1000_1gpu",
+    #     "train_den_to_3000_1gpu",
+    #     "train_den_to_6000_1gpu",
+    #     "train_den_to_15000_1gpu",
+    #     "train_den_to_15000_1gpu_t1",
+    #     "train_den_to_15000_1gpu_t2",
+    #     "train_den_to_15000_1gpu_t3",
+    # ]
+    # compare_n_3dgs([f"experiments/{folder}/" for folder in train_densify_folders])
+    
+    # train_densify_folders = [
+    #     "bicycle_den_to_0",
+    #     "bicycle_den_to_6000",
+    #     "bicycle_den_to_15000",
+    #     "bicycle_den_to_15000_t3",
+    # ]
+    # compare_n_3dgs([f"experiments/{folder}/" for folder in train_densify_folders])
+
+    rubble_2k_folders = [
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_1",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_2",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_3",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_4",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_5",
+        "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_6",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_7",
+        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_8",
+    ]
+    loss_and_3dgs_curves(rubble_2k_folders)
 
     pass
 

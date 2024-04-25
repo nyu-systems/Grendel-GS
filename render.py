@@ -93,13 +93,14 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--generate_num", default=-1, type=int)
     parser.add_argument("--sample_freq", default=-1, type=int)
+    parser.add_argument("--distributed_load", action="store_true")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
     init_distributed(args)
     # I need to put the flags here because the render() function need it.
     # However, disable them during render.py because they are only needed during training.
 
-    log_file = open(args.model_path+"/render.log", 'w')
+    log_file = open(args.model_path+f"/render_ws={utils.DEFAULT_GROUP.size()}_rk_{utils.DEFAULT_GROUP.rank()}.log", 'w')
     set_log_file(log_file)
 
     ## Prepare arguments.

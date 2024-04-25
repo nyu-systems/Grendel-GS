@@ -196,6 +196,13 @@ def init_distributed(args):
         DEFAULT_GROUP = SingleGPUGroup()
         IN_NODE_GROUP = SingleGPUGroup()
 
+def get_first_rank_on_cur_node():
+    global GLOBAL_RANK
+    NODE_ID = GLOBAL_RANK // torch.cuda.device_count()
+    first_rank_in_node = NODE_ID * torch.cuda.device_count()
+    return first_rank_in_node
+    
+
 def our_allgather_among_cpu_processes_float_list(data, group):
     ## official implementation: torch.distributed.all_gather_object()
     # all_data = [None for _ in range(group.size())]

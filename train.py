@@ -78,7 +78,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
             timers.start("densify_and_prune")
             size_threshold = 20 if iteration > args.opacity_reset_interval else None
-            gaussians.densify_and_prune(args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            gaussians.densify_and_prune(args.densify_grad_threshold, args.min_opacity, scene.cameras_extent, size_threshold)
             timers.stop("densify_and_prune")
 
             # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
@@ -94,8 +94,16 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
             memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
             max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
-            log_file.write("iteration[{},{}) densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. \n".format(
-                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage))
+            max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
+            log_file.write("iteration[{},{}) densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB \n".format(
+                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory))
+
+            # all_gather the memory usage and log it.
+            memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([memory_usage], utils.DEFAULT_GROUP)
+            if max([a[0] for a in memory_usage_list]) > 17.5:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
+                print("Memory usage is over 18GB per GPU. stop densification.\n")
+                log_file.write("Memory usage is over 20GB per GPU. stop densification.\n")
+                args.disable_auto_densification = True
 
             utils.inc_densify_iter()
         
@@ -106,6 +114,13 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             timers.stop("reset_opacity")
 
         timers.stop("densification")
+    else:
+        # measue the memory usage.
+        memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+        max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+        max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
+        log_file.write("iteration[{},{}) Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB \n".format(
+            iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory))
 
 
 
@@ -446,7 +461,8 @@ if __name__ == "__main__":
 
 
     # create log folder
-    if utils.GLOBAL_RANK == 0:
+    if utils.IN_NODE_GROUP.rank() == 0:
+    # if utils.GLOBAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
     if utils.WORLD_SIZE > 1:

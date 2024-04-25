@@ -214,7 +214,7 @@ class SceneDataset:
                 recv_buffer = all_original_image_to_send[0]
                 batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = torch.distributed.scatter(recv_buffer,
                                             scatter_list=all_original_image_to_send,
-                                            src=0,
+                                            src=utils.get_first_rank_on_cur_node(),# NOTE: this rank is on global process group (regardless of group argument)
                                             group=utils.IN_NODE_GROUP,
                                             async_op=args.async_load_gt_image)
                 batched_cameras[utils.DP_GROUP.rank()].original_image = recv_buffer
@@ -222,7 +222,7 @@ class SceneDataset:
                 recv_buffer = torch.zeros((3, batched_cameras[utils.DP_GROUP.rank()].image_height, batched_cameras[utils.DP_GROUP.rank()].image_width), dtype=torch.uint8, device="cuda")
                 batched_cameras[utils.DP_GROUP.rank()].gt_image_comm_op = torch.distributed.scatter(recv_buffer,
                                             scatter_list=None,
-                                            src=0,
+                                            src=utils.get_first_rank_on_cur_node(),
                                             group=utils.IN_NODE_GROUP,
                                             async_op=args.async_load_gt_image)
                 batched_cameras[utils.DP_GROUP.rank()].original_image = recv_buffer

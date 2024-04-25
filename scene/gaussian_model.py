@@ -399,7 +399,45 @@ class GaussianModel:
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
-    def load_ply(self, path):
+    def distributed_load_ply(self, path):
+        folder = os.path.dirname(path)
+        # count the number of files like "point_cloud_rk0_ws4.ply"
+        num_files = len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)) and f.endswith(".ply")])
+        world_size = num_files
+
+        catted_xyz = []
+        catted_features_dc = []
+        catted_features_rest = []
+        catted_opacity = []
+        catted_scaling = []
+        catted_rotation = []
+        for rk in range(world_size):
+            one_checkpoint_path = folder + "/point_cloud_rk" + str(rk) + "_ws" + str(world_size) + ".ply"
+            xyz, features_dc, features_extra, opacities, scales, rots = self.load_raw_ply(one_checkpoint_path)
+            catted_xyz.append(xyz)
+            catted_features_dc.append(features_dc)
+            catted_features_rest.append(features_extra)
+            catted_opacity.append(opacities)
+            catted_scaling.append(scales)
+            catted_rotation.append(rots)
+        catted_xyz = np.concatenate(catted_xyz, axis=0)
+        catted_features_dc = np.concatenate(catted_features_dc, axis=0)
+        catted_features_rest = np.concatenate(catted_features_rest, axis=0)
+        catted_opacity = np.concatenate(catted_opacity, axis=0)
+        catted_scaling = np.concatenate(catted_scaling, axis=0)
+        catted_rotation = np.concatenate(catted_rotation, axis=0)
+
+        self._xyz = nn.Parameter(torch.tensor(catted_xyz, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._features_dc = nn.Parameter(torch.tensor(catted_features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._features_rest = nn.Parameter(torch.tensor(catted_features_rest, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(catted_opacity, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._scaling = nn.Parameter(torch.tensor(catted_scaling, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._rotation = nn.Parameter(torch.tensor(catted_rotation, dtype=torch.float, device="cuda").requires_grad_(True))
+
+        self.active_sh_degree = self.max_sh_degree
+
+    def load_raw_ply(self, path):
+        print("Loading ", path)
         plydata = PlyData.read(path)
 
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
@@ -458,6 +496,11 @@ class GaussianModel:
             scales = scales[drop_mask]
             rots = rots[drop_mask]
             opacities = opacities[drop_mask]
+        
+        return xyz, features_dc, features_extra, opacities, scales, rots
+
+    def one_file_load_ply(self, path):
+        xyz, features_dc, features_extra, opacities, scales, rots = self.load_raw_ply(path)
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -467,6 +510,13 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+
+    def load_ply(self, path):
+        args = utils.get_args()
+        if args.distributed_load:
+            self.distributed_load_ply(path)
+        else:
+            self.one_file_load_ply(path)
         # remark: max_radii2D, xyz_gradient_accum and denom are not loaded here; they are loaded from the self.restore()
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -673,10 +723,14 @@ class GaussianModel:
             state_to_gpuj.append(state[destination==j,...].contiguous())# This maybe a very time-consuming part.
             state_from_gpuj.append(torch.zeros((i2j_send_size[j][comm_group.rank()], *state.shape[1:]), device="cuda"))
 
+        # print(f"before all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
 
         torch.distributed.all_to_all(state_from_gpuj, state_to_gpuj, group=comm_group)
 
-        state_from_remote = torch.cat(state_from_gpuj, dim=0).contiguous()
+        # print(f"after all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
+
+        state_from_remote = torch.cat(state_from_gpuj, dim=0).contiguous()# it stucks at here.
+        # print(f"state_from_remote, ws={comm_group.size()}, rank={comm_group.rank()}")
         return state_from_remote
 
     def all2all_tensors_in_optimizer_implementation_1(self, destination, i2j_send_size):
@@ -784,8 +838,9 @@ class GaussianModel:
         return optimizable_tensors
 
     def all2all_tensors_in_optimizer(self, destination, i2j_send_size):
-        # return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
-        return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
+        return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
+        # return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
+        # when cross node all2all on perl, implementation_2 will get stuck at 1600 iterations, I do not know the reason. 
 
     def get_destination_1(self, world_size):
         # norm p=0
