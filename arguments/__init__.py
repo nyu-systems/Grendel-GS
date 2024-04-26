@@ -116,7 +116,8 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
-        self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
+        self.lr_scale_mode = "sqrt" # can be "linear", "sqrt", or "accumu"
+        self.update_filter = "visibility" # use visibility filter or to use grad != 0
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):

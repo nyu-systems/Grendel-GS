@@ -224,7 +224,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             batched_screenspace_pkg["statistic_collectors"].append(statistic_collector)
             batched_screenspace_pkg["losses"].append(loss)
 
-            # TODO: store this gradient of accumulation step and then implement all gather at rank 0 to get the gradients of all accumulation steps. to compute intra batch statistics like cosine similarity and noise signal ratio.
             if batched_parameter_gradients_pkg is not None:
                 with torch.no_grad():
                     for param_group in gaussians.optimizer.param_groups:
@@ -234,7 +233,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                             batched_parameter_gradients_pkg[name] = []
                             grad_prev[name] = grad
                         else:
-                            grad -= grad_prev[name]
+                            grad, grad_prev[name] = grad - grad_prev[name], grad
                         batched_parameter_gradients_pkg[name].append(grad)
                     
             if args.gaussians_distribution:
@@ -303,6 +302,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
                 log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
                 log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
+                # log the average number of true for visibility filter across different views in each batch.
+                log_file.write("iteration[{},{}) ratio_visible_mean: {}\n".format(iteration, iteration+args.bsz, torch.mean(torch.tensor([torch.sum(visibility_filter) for visibility_filter in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]).float()) / batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0].shape[0]))
+
 
             # Log and save
             training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.train_resolution_scale, dataset_args.test_resolution_scale)

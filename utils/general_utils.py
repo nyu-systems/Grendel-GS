@@ -369,21 +369,44 @@ def compute_batch_grad_stats(batched_parameter_gradients_pkg):
         "var": {},
         "nsr": {},
         "cosine": {},
+        "norm_sum_divided_by_norm": {}, 
+        "cosine_abs": {},
+        "binary_overlap_1": {},
+        "binary_overlap_2": {},
+        "binary_overlap_4": {},
     }
     for parameter_name, parameter_gradients in batched_parameter_gradients_pkg.items():
         mean_gradients = torch.mean(parameter_gradients, dim=0)
-        var_gradients = torch.var(parameter_gradients, dim=0)
+        var_gradients = torch.sqrt(torch.var(parameter_gradients, dim=0, unbiased=False))
         norm = torch.norm(mean_gradients)
         norm_var = torch.norm(var_gradients)
         nsr = norm_var / norm
+        batch_grad_stats["norm"][parameter_name] = norm.item()
+        batch_grad_stats["var"][parameter_name] = norm_var.item() if not norm_var.isnan() else 0.0
+        batch_grad_stats["nsr"][parameter_name] = nsr.item() if not nsr.isnan() else 0.0
+
         cosines = []
         for i in range(parameter_gradients.size(0)):
             for j in range(i+1, parameter_gradients.size(0)):
                 cosines.append(torch.nn.functional.cosine_similarity(parameter_gradients[i], parameter_gradients[j], dim=0))
-        cosine = torch.mean(torch.stack(cosines))
-        batch_grad_stats["norm"][parameter_name] = norm.item()
-        batch_grad_stats["var"][parameter_name] = norm_var.item()
-        batch_grad_stats["nsr"][parameter_name] = nsr.item() if not nsr.isnan() else 0.0
-        batch_grad_stats["cosine"][parameter_name] = cosine.item()
+        cosine = torch.mean(torch.stack(cosines)).item() if len(cosines) > 0 else 0.0
+        cosine_abs = torch.mean(torch.abs(torch.stack(cosines))).item() if len(cosines) > 0 else 0.0
+        batch_grad_stats["cosine"][parameter_name] = cosine
+        batch_grad_stats["cosine_abs"][parameter_name] = cosine_abs
+        
+        norm_sum = torch.norm(torch.sum(parameter_gradients, dim=0))
+        sum_norm = torch.sum(torch.norm(parameter_gradients.flatten(parameter_gradients.shape[0], -1), dim=-1))
+        norm_sum_divided_by_norm = norm_sum / sum_norm
+        batch_grad_stats["norm_sum_divided_by_norm"][parameter_name] = norm_sum_divided_by_norm.item() if not norm_sum_divided_by_norm.isnan() else 0.0
+
+        # Binary Overlap Metric
+        nonzero_mask = parameter_gradients != 0
+        total_params = nonzero_mask.numel() / parameter_gradients.size(0)  # total parameter elements per gradient
+        for i in [1, 2, 4]:
+            # count how many gaussians have more threshold number of views updates them
+            threshold = max(1, parameter_gradients.size(0) // i)
+            overlap_count = torch.sum(nonzero_mask.sum(dim=0) > threshold).item()
+            batch_grad_stats["binary_overlap_{}".format(i)][parameter_name] = overlap_count / total_params
+            
     return batch_grad_stats
         

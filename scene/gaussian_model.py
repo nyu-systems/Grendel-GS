@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import time
 import torch
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
@@ -254,12 +255,6 @@ class GaussianModel:
     def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg, batched_parameter_gradients_pkg):
         args = utils.get_args()
 
-        if "visible_count" in args.grad_normalization_mode:
-            # allgather visibility filder from all dp workers, so that each worker contains the visibility filter of all data points. 
-            batched_locally_preprocessed_visibility_filter_int = [x.int() for x in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]
-            sum_batched_locally_preprocessed_visibility_filter_int = torch.sum(torch.stack(batched_locally_preprocessed_visibility_filter_int), dim=0)
-            batched_screenspace_pkg["sum_batched_locally_preprocessed_visibility_filter_int"] = sum_batched_locally_preprocessed_visibility_filter_int
-
         if batched_parameter_gradients_pkg is not None:
             # this is a dict[parameter_name: List[parameter_gradients]]
             # first reduce within each MP group (which are computing the same view)
@@ -268,14 +263,16 @@ class GaussianModel:
                 # [bsz/dp_size, n_3dgs, ...]
                 if utils.MP_GROUP.size() > 1:
                     # TODO: now resolved by using all_reduce
-                    # the line below reduce the gradients to the global rank 0
-                    # dist.reduce(parameter_gradients, dst=0, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
+                    # the line below reduce the gradients to some global rank?
                     # i want to reduce the gradients to the rank 0 of the dp group
+                    # dst = utils.MP_GROUP.size() * utils.MP_GROUP.rank()
+                    # dist.reduce(parameter_gradients, dst=dst, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     dist.all_reduce(parameter_gradients, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                 if utils.MP_GROUP.rank() == 0:
                     parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
                     # [bsz, n_3dgs, ...]
-                    dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
+                    if utils.DP_GROUP.size() > 1:
+                        dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
                     batched_parameter_gradients_pkg[parameter_name] = parameter_gradients_gathered 
 
         if args.sync_grad_mode == "dense":
@@ -644,7 +641,15 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):# the :2] is a weird implementation. It is because viewspace_point_tensor is (N, 3) tensor.
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        update_filter_type = utils.get_args().update_filter
+        if update_filter_type == "grad":
+            grad_norm = torch.norm(viewspace_point_tensor.grad[:, :2], dim=-1, keepdim=True)
+            update_filter = grad_norm != 0.0
+            self.xyz_gradient_accum[update_filter] += grad_norm[update_filter]
+        elif update_filter_type == "visibility":
+            self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        else:
+            raise ValueError("update_filter_type should be grad or visibility.")
         self.denom[update_filter] += 1
 
     def group_for_redistribution(self):

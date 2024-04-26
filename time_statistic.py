@@ -2412,12 +2412,11 @@ def smooth_metrics(metrics_dict, window_length=41, polyorder=3):
             metrics_dict[key] = savgol_filter(metrics_dict[key], window_length, polyorder)
     return metrics_dict
 
-def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
+def draw_metrics(file_paths, metric_name, filter_keys=None, window_length=41, polyorder=3):
     """
     Draws specified metrics (grad_norm or grad_cosine_similarity) from the log files.
     """
     metric_dicts = [parse_metrics(file_path, metric_name) for file_path in file_paths]
-    print([metric_dict.keys() for metric_dict in metric_dicts])
     bszs = []
     for file_path in file_paths:
         try:
@@ -2431,8 +2430,11 @@ def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
     for key in metric_dicts[0]:
         if key == 'iterations':
             continue
+        if filter_keys and key not in filter_keys:
+            continue
         fig, ax = plt.subplots(figsize=(20, 10))
         for file_path, metric_dict in zip(file_paths, metric_dicts):
+            print(file_path)
             ax.plot(metric_dict['iterations'], metric_dict[key], label=file_path)
         ax.legend(loc='upper right')
         ax.set_title(metric_name)
@@ -2489,69 +2491,59 @@ def draw_histogram(file_paths, metric_name, window_length=41, polyorder=3, group
         fig.show()
  
 def draw_evaluation_results(file_paths):
-    eval_tests_PSNR = []
-    eval_trains_PSNR = []
-    test_iterations = []
-    train_iterations = []
+    psnr_loss_dicts = []
+    l1_loss_dicts = []
+    iterations_dicts = []
     # Evaluating test: 
     for file_path in file_paths:
         lines = open(file_path, "r").readlines()
-        eval_test_PSNR = []
-        eval_train_PSNR = []
-        test_iteration = []
-        train_iteration = []
+        psnr_loss_dict = {}
+        l1_loss_dict = {}
+        iterations_dict = {}
         for line in lines:
-            # [ITER 30000] Evaluating test: L1 0.058287687942777805 PSNR 21.94811627739354
-            # [ITER 30000] Evaluating train: L1 0.03144958354532719 PSNR 26.123293685913087
-            if "Evaluating test: " in line:
-                eval_test_PSNR.append(float(line.split(" ")[-1]))
-                test_iteration.append(int(line.split(" ")[1][:-1]))
-            if "Evaluating train: " in line:
-                eval_train_PSNR.append(float(line.split(" ")[-1]))
-                train_iteration.append(int(line.split(" ")[1][:-1]))
-        eval_tests_PSNR.append(eval_test_PSNR)
-        eval_trains_PSNR.append(eval_train_PSNR)
-        test_iterations.append(test_iteration)
-        train_iterations.append(train_iteration)
-
-    # draw the two figures on the same graph.
-    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    for file_path, eval_test_PSNR, iterations in zip(file_paths, eval_tests_PSNR, test_iterations):
-        # x-axis is iteration
-        # y-axis is PSNR
-        ax[0].plot(iterations, eval_test_PSNR, label=file_path)
+            # [ITER 30000] Evaluating {test_name}: L1 0.058287687942777805 PSNR 21.94811627739354
+            reg_exp = re.compile(r"\[ITER (?P<iteration>\d+)\] Evaluating (?P<test_name>\w+): L1 (?P<l1>\d+\.\d+) PSNR (?P<psnr>\d+\.\d+)")
+            match = reg_exp.match(line)
+            if match:
+                iteration = int(match.group("iteration"))
+                test_name = match.group("test_name")
+                l1 = float(match.group("l1"))
+                psnr = float(match.group("psnr"))
+                if test_name not in psnr_loss_dict:
+                    psnr_loss_dict[test_name] = []
+                    l1_loss_dict[test_name] = []
+                    iterations_dict[test_name] = []
+                psnr_loss_dict[test_name].append(psnr)
+                l1_loss_dict[test_name].append(l1)
+                iterations_dict[test_name].append(iteration)
+        psnr_loss_dicts.append(psnr_loss_dict)
+        l1_loss_dicts.append(l1_loss_dict)
+        iterations_dicts.append(iterations_dict)
     
-    ax[0].set_ylabel('PSNR')
-    secax = ax[0].secondary_yaxis('right')
-    secax.set_ylabel('PSNR')
-    ax[0].legend(loc='lower right')
-    ax[0].set_title("Evaluating test PSNR")
-
-    for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
-        # x-axis is iteration
-        # y-axis is PSNR
-        ax[1].plot(iterations, eval_train_PSNR, label=file_path)
-
-    ax[1].set_ylabel('PSNR')
-    secax = ax[1].secondary_yaxis('right')
-    secax.set_ylabel('PSNR')
-    ax[1].legend(loc='lower right')
-    ax[1].set_title("Evaluating train PSNR")
-
-    # #only train
-    # fig, ax = plt.subplots(figsize=(20, 10))
-    # for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
-    #     ax.plot(iterations, eval_train_PSNR, label=file_path)
-    # ax.set_ylabel('PSNR')
-    # secax = ax.secondary_yaxis('right')
-    # secax.set_ylabel('PSNR')
-    # ax.legend(loc='lower right')
-    # ax.set_title("Evaluating train PSNR")
-
-    folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
-    plt.savefig(folder+"compare_evaluation_results.png")
-
-
+    # for each test name draw a figure.
+    for test_name in psnr_loss_dicts[0]:
+        fig, ax = plt.subplots(figsize=(20, 10))
+        # draw psnr and l1 separately.
+        for psnr_loss_dict, l1_loss_dict, iterations_dict, file_path in zip(psnr_loss_dicts, l1_loss_dicts, iterations_dicts, file_paths):
+            ax = plt.subplot(121)
+            ax.plot(iterations_dict[test_name], psnr_loss_dict[test_name], label=file_path)
+            ax.set_title(test_name + " PSNR")
+            ax.set_xlabel('Iteration')
+            ax.set_ylabel('PSNR')
+            ax.legend(loc='lower right')
+            ax = plt.subplot(122)
+            ax.plot(iterations_dict[test_name], l1_loss_dict[test_name], label=file_path)
+            ax.set_title(test_name + " L1")
+            ax.set_xlabel('Iteration')
+            ax.set_ylabel('L1')
+            ax.legend(loc='upper right')
+        folder = "/".join(file_path.split("/")[:-1]) + "/"
+        fig.tight_layout()
+        fig.show()
+        fig.savefig(folder+"compare_evaluation_results_"+test_name+".png")
+                
+            
+        
 def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=True):
     if folder[-1] != "/":
         folder += "/"
