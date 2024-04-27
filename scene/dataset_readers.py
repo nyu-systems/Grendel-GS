@@ -104,8 +104,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path) # this is a lazy load, the image is not loaded yet
 
-        if hasattr(args, "fixed_training_image") and args.fixed_training_image == -1:
-            image.load() # load immediately after open file. 
+        # if hasattr(args, "fixed_training_image") and args.fixed_training_image == -1:
+        #     image.load() # load immediately after open file. 
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
@@ -137,7 +137,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfo(path, images, eval, llffhold=10):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")

@@ -145,7 +145,7 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         if utils.GLOBAL_RANK == 0:
-            print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+            print("Number of points before initialization : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -168,6 +168,16 @@ class GaussianModel:
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
             print("rank", utils.GLOBAL_RANK, "Number of initialized points after gaussians_distribution : ", fused_point_cloud.shape[0])
+
+        if args.drop_initial_3dgs_p > 0.0:
+            # drop each point with probability args.drop_initial_3dgs_p
+            drop_mask = np.random.rand(fused_point_cloud.shape[0]) > args.drop_initial_3dgs_p
+            fused_point_cloud = fused_point_cloud[drop_mask]
+            features = features[drop_mask]
+            scales = scales[drop_mask]
+            rots = rots[drop_mask]
+            opacities = opacities[drop_mask]
+            print("rank", utils.GLOBAL_RANK, "Number of initialized points after random drop : ", fused_point_cloud.shape[0])
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -314,9 +324,10 @@ class GaussianModel:
     def save_ply(self, path):# here, we should be in torch.no_grad() context. train.py ensures that. 
         args = utils.get_args()
         _xyz = _features_dc = _features_rest = _opacity = _scaling = _rotation = None
-
-        if args.gaussians_distribution:
-            # gather at rank 0
+        utils.log_cpu_memory_usage("start save_ply")
+        group = utils.DEFAULT_GROUP
+        if args.gaussians_distribution and not args.distributed_save:
+            # gather all gaussians at rank 0
             def gather_uneven_tensors(tensor):
                 # gather size of tensors on different ranks
                 tensor_sizes = torch.zeros((utils.WORLD_SIZE), dtype=torch.int, device="cuda")
@@ -351,7 +362,23 @@ class GaussianModel:
             _opacity = gather_uneven_tensors(self._opacity)
             _scaling = gather_uneven_tensors(self._scaling)
             _rotation = gather_uneven_tensors(self._rotation)
-        else:
+
+            if group.rank() != 0:
+                return
+
+        elif (args.gaussians_distribution and args.distributed_save):
+            assert utils.DEFAULT_GROUP.size() > 1, "distributed_save should be used with more than 1 rank."
+            _xyz = self._xyz
+            _features_dc = self._features_dc
+            _features_rest = self._features_rest
+            _opacity = self._opacity
+            _scaling = self._scaling
+            _rotation = self._rotation
+            if path.endswith(".ply"):
+                path = path[:-4] + "_rk" + str(utils.GLOBAL_RANK) + "_ws" + str(utils.WORLD_SIZE) + ".ply"
+        elif not args.gaussians_distribution:
+            if group.rank() != 0:
+                return
             _xyz = self._xyz
             _features_dc = self._features_dc
             _features_rest = self._features_rest
@@ -373,13 +400,18 @@ class GaussianModel:
         scale = _scaling.detach().cpu().numpy()
         rotation = _rotation.detach().cpu().numpy()
 
+        utils.log_cpu_memory_usage("after change gpu tensor to cpu numpy")
+
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
+
+        utils.log_cpu_memory_usage("after change numpy to plyelement before writing ply file")
         PlyData([el]).write(path)
+        utils.log_cpu_memory_usage("finish write ply file")
         # remark: max_radii2D, xyz_gradient_accum and denom are not saved here; they are save elsewhere.
 
     def reset_opacity(self):
@@ -387,7 +419,45 @@ class GaussianModel:
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
-    def load_ply(self, path):
+    def distributed_load_ply(self, path):
+        folder = os.path.dirname(path)
+        # count the number of files like "point_cloud_rk0_ws4.ply"
+        num_files = len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)) and f.endswith(".ply")])
+        world_size = num_files
+
+        catted_xyz = []
+        catted_features_dc = []
+        catted_features_rest = []
+        catted_opacity = []
+        catted_scaling = []
+        catted_rotation = []
+        for rk in range(world_size):
+            one_checkpoint_path = folder + "/point_cloud_rk" + str(rk) + "_ws" + str(world_size) + ".ply"
+            xyz, features_dc, features_extra, opacities, scales, rots = self.load_raw_ply(one_checkpoint_path)
+            catted_xyz.append(xyz)
+            catted_features_dc.append(features_dc)
+            catted_features_rest.append(features_extra)
+            catted_opacity.append(opacities)
+            catted_scaling.append(scales)
+            catted_rotation.append(rots)
+        catted_xyz = np.concatenate(catted_xyz, axis=0)
+        catted_features_dc = np.concatenate(catted_features_dc, axis=0)
+        catted_features_rest = np.concatenate(catted_features_rest, axis=0)
+        catted_opacity = np.concatenate(catted_opacity, axis=0)
+        catted_scaling = np.concatenate(catted_scaling, axis=0)
+        catted_rotation = np.concatenate(catted_rotation, axis=0)
+
+        self._xyz = nn.Parameter(torch.tensor(catted_xyz, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._features_dc = nn.Parameter(torch.tensor(catted_features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._features_rest = nn.Parameter(torch.tensor(catted_features_rest, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(catted_opacity, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._scaling = nn.Parameter(torch.tensor(catted_scaling, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._rotation = nn.Parameter(torch.tensor(catted_rotation, dtype=torch.float, device="cuda").requires_grad_(True))
+
+        self.active_sh_degree = self.max_sh_degree
+
+    def load_raw_ply(self, path):
+        print("Loading ", path)
         plydata = PlyData.read(path)
 
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
@@ -437,6 +507,21 @@ class GaussianModel:
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
             # TODO: will memory of non-local points be released after finishing this function.
 
+        if args.drop_initial_3dgs_p > 0.0:
+            # drop each point with probability args.drop_initial_3dgs_p
+            drop_mask = np.random.rand(xyz.shape[0]) > args.drop_initial_3dgs_p
+            xyz = xyz[drop_mask]
+            features_dc = features_dc[drop_mask]
+            features_extra = features_extra[drop_mask]
+            scales = scales[drop_mask]
+            rots = rots[drop_mask]
+            opacities = opacities[drop_mask]
+        
+        return xyz, features_dc, features_extra, opacities, scales, rots
+
+    def one_file_load_ply(self, path):
+        xyz, features_dc, features_extra, opacities, scales, rots = self.load_raw_ply(path)
+
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -445,6 +530,13 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+
+    def load_ply(self, path):
+        args = utils.get_args()
+        if args.distributed_load:
+            self.distributed_load_ply(path)
+        else:
+            self.one_file_load_ply(path)
         # remark: max_radii2D, xyz_gradient_accum and denom are not loaded here; they are loaded from the self.restore()
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -670,10 +762,14 @@ class GaussianModel:
             state_to_gpuj.append(state[destination==j,...].contiguous())# This maybe a very time-consuming part.
             state_from_gpuj.append(torch.zeros((i2j_send_size[j][comm_group.rank()], *state.shape[1:]), device="cuda"))
 
+        # print(f"before all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
 
         torch.distributed.all_to_all(state_from_gpuj, state_to_gpuj, group=comm_group)
 
-        state_from_remote = torch.cat(state_from_gpuj, dim=0).contiguous()
+        # print(f"after all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
+
+        state_from_remote = torch.cat(state_from_gpuj, dim=0).contiguous()# it stucks at here.
+        # print(f"state_from_remote, ws={comm_group.size()}, rank={comm_group.rank()}")
         return state_from_remote
 
     def all2all_tensors_in_optimizer_implementation_1(self, destination, i2j_send_size):
@@ -781,8 +877,9 @@ class GaussianModel:
         return optimizable_tensors
 
     def all2all_tensors_in_optimizer(self, destination, i2j_send_size):
-        # return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
-        return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
+        return self.all2all_tensors_in_optimizer_implementation_1(destination, i2j_send_size)
+        # return self.all2all_tensors_in_optimizer_implementation_2(destination, i2j_send_size)
+        # when cross node all2all on perl, implementation_2 will get stuck at 1600 iterations, I do not know the reason. 
 
     def get_destination_1(self, world_size):
         # norm p=0

@@ -118,6 +118,7 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
         self.lr_scale_mode = "sqrt" # can be "linear", "sqrt", or "accumu"
         self.update_filter = "visibility" # use visibility filter or to use grad != 0
+        self.min_opacity = 0.005
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):
@@ -154,6 +155,11 @@ class DistributionParams(ParamGroup):
         self.mp_size = -1 # model parallel degree.
         self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
+        self.distributed_dataset_storage = False # if True, we store dataset only on rank 0 and broadcast to other ranks.
+        self.async_load_gt_image = False
+        self.multiprocesses_image_loading = False
+        self.num_train_cameras = -1
+        self.distributed_save = False
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -164,6 +170,8 @@ class BenchmarkParams(ParamGroup):
         self.end2end_time = False # log end2end training time.
         self.check_memory_usage = False # check memory usage.
         self.log_iteration_memory_usage = False # log memory usage for every iteration.
+
+        self.check_cpu_memory = False # check cpu memory usage.
 
         self.benchmark_stats = False # Benchmark mode: it will enable some flags to log detailed statistics to research purposes.
         self.performance_stats = False # Performance mode: to know its generation quality, it will evaluate/save models at some iterations and use them for render.py and metrics.py .
@@ -186,6 +194,7 @@ class DebugParams(ParamGroup):
         self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
         self.nsys_profile = False # profile with nsys.
+        self.drop_initial_3dgs_p = 0.0 # profile with nsys.
 
         super().__init__(parser, "Debug Parameters")
 
@@ -233,9 +242,6 @@ def init_args(args):
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
     assert not (args.gaussians_distribution and args.batch_grad_stats), "cannot analyze batch_grad_stats when gaussians_distribution is enabled."
 
-    # TODO: we temporarily disable checkpoint because we have not implemented it yet.
-    args.checkpoint_iterations = []
-    args.start_checkpoint = None
     if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
         args.save_iterations.append(args.iterations)
 
@@ -279,10 +285,13 @@ def init_args(args):
         args.gaussians_distribution = False
         args.image_distribution = False
         args.image_distribution_mode = "0"
+        args.distributed_dataset_storage = False
 
     if utils.MP_GROUP.size() == 1:
         args.image_distribution_mode = "0"
 
+    if not args.gaussians_distribution:
+        args.distributed_save = False
 
     assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
 

@@ -24,7 +24,7 @@ from scene import Scene, GaussianModel, SceneDataset
 from gaussian_renderer.workload_division import get_division_strategy_history, get_local_running_time_by_modes
 from utils.general_utils import safe_state, init_distributed, prepare_output_and_logger
 import utils.general_utils as utils
-from utils.timer import Timer
+from utils.timer import Timer, End2endTimer
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
@@ -78,7 +78,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
             timers.start("densify_and_prune")
             size_threshold = 20 if iteration > args.opacity_reset_interval else None
-            gaussians.densify_and_prune(args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            gaussians.densify_and_prune(args.densify_grad_threshold, args.min_opacity, scene.cameras_extent, size_threshold)
             timers.stop("densify_and_prune")
 
             # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
@@ -94,8 +94,16 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
             memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
             max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
-            log_file.write("iteration[{},{}) densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. \n".format(
-                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage))
+            max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
+            log_file.write("iteration[{},{}) densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB \n".format(
+                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory))
+
+            # all_gather the memory usage and log it.
+            memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([memory_usage], utils.DEFAULT_GROUP)
+            if max([a[0] for a in memory_usage_list]) > 17.5:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
+                print("Memory usage is over 18GB per GPU. stop densification.\n")
+                log_file.write("Memory usage is over 20GB per GPU. stop densification.\n")
+                args.disable_auto_densification = True
 
             utils.inc_densify_iter()
         
@@ -106,6 +114,13 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             timers.stop("reset_opacity")
 
         timers.stop("densification")
+    else:
+        # measue the memory usage.
+        memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+        max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+        max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
+        log_file.write("iteration[{},{}) Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB \n".format(
+            iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory))
 
 
 
@@ -118,13 +133,27 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     utils.set_timers(timers)
     utils.set_log_file(log_file)
     prepare_output_and_logger(dataset_args)
+    utils.log_cpu_memory_usage("at the beginning of training")
+
+    start_from_this_iteration = 1
 
     # init parameterized scene
     gaussians = GaussianModel(dataset_args.sh_degree)
     with torch.no_grad():
-        scene = Scene(dataset_args, gaussians)
+        scene = Scene(args, gaussians)
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
         gaussians.training_setup(opt_args)
+
+        if args.start_checkpoint != "":
+            number_files = len(os.listdir(args.start_checkpoint))
+            assert number_files == utils.DEFAULT_GROUP.size(), "The number of files in the checkpoint folder must be equal to the number of processes."
+            if args.start_checkpoint[-1] != "/":
+                args.start_checkpoint += "/"
+            file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
+            (model_params, start_from_this_iteration) = torch.load(file_name)
+            gaussians.restore(model_params, opt_args)
+            start_from_this_iteration += args.dp_size
+
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset
@@ -136,10 +165,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     # Training Loop
-    train_start_time = time.time()
+    end2end_timers = End2endTimer(args)
+    end2end_timers.start()
     progress_bar = tqdm(range(1, opt_args.iterations + 1), desc="Training progress", disable=(utils.LOCAL_RANK != 0))
+    progress_bar.update(start_from_this_iteration - 1)
     num_trained_batches = 0
-    for iteration in range(1, opt_args.iterations + 1, args.bsz):
+    for iteration in range(start_from_this_iteration, opt_args.iterations + 1, args.bsz):
 
         # Step Initialization
         progress_bar.update(args.bsz)
@@ -201,7 +232,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             image, compute_locally = render(screenspace_pkg, local_render_strategy)
 
             # Pixel-wise Loss Computation
-            globally_sync_for_timer()
+            globally_sync_for_timer()# adding this also creates some unstability in the time measurement.
             Ll1, ssim_loss = loss_computation(image,
                                               local_render_viewpoint_cam,
                                               compute_locally,
@@ -238,6 +269,12 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                     
             if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
+
+            # Release memory of locally rendered original_image
+            torch.cuda.synchronize()
+            local_render_viewpoint_cam.gt_image_comm_op = None
+            local_render_viewpoint_cam.original_image = None
+
 
         with torch.no_grad():
             # Sync gradients across replicas, if some 3dgs are stored replicatedly.
@@ -277,7 +314,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
             timers.stop("strategy.update_stats")
 
-
             # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
             timers.start("allgather_loss_and_log")
             if utils.DP_GROUP.size() > 1:
@@ -297,15 +333,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             log_file.write(log_string)
             timers.stop("allgather_loss_and_log")
 
-            if utils.check_update_at_this_iter(iteration, args.bsz, args.log_interval, 0):
-                stats, exp_avg_dict, exp_avg_sq_dict = gaussians.log_gaussian_stats()
-                log_file.write("iteration[{},{}) gaussian stats: {}\n".format(iteration, iteration+args.bsz, stats))
-                log_file.write("iteration[{},{}) exp_avg_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_dict))
-                log_file.write("iteration[{},{}) exp_avg_sq_dict: {}\n".format(iteration, iteration+args.bsz, exp_avg_sq_dict))
-                # log the average number of true for visibility filter across different views in each batch.
-                log_file.write("iteration[{},{}) ratio_visible_mean: {}\n".format(iteration, iteration+args.bsz, torch.mean(torch.tensor([torch.sum(visibility_filter) for visibility_filter in batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"]]).float()) / batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"][0].shape[0]))
-
-
             # Log and save
             training_report(iteration, l1_loss, args.test_iterations, scene, pipe_args, background, dataset_args.train_resolution_scale, dataset_args.test_resolution_scale)
 
@@ -315,9 +342,30 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Save Gaussians
             # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
             if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
+                end2end_timers.stop()
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
+                data_json = {}
+                for camera_id, strategy_history in cameraId2StrategyHistory.items():
+                    data_json[camera_id] = strategy_history.to_json()
+                
+                with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
+                    json.dump(data_json, f)
+                end2end_timers.start()
+
+            if any([iteration <= checkpoint_iteration < iteration+args.bsz for checkpoint_iteration in args.checkpoint_iterations]):
+                end2end_timers.stop()
+                utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
+                log_file.write("\n[ITER {}] Saving Checkpoint".format(iteration))
+                save_folder = scene.model_path + "/checkpoints/" + str(iteration) + "/"
+                if utils.DEFAULT_GROUP.rank() == 0:
+                    os.makedirs(save_folder, exist_ok=True)
+                    torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+                else:
+                    torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+                torch.save((gaussians.capture(), iteration), save_folder + "/chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth")
+                end2end_timers.start()
 
             # Optimizer step
             if iteration < opt_args.iterations:
@@ -342,10 +390,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         log_file.flush()
 
     # Finish training
-    if args.end2end_time:
-        torch.cuda.synchronize()
-        log_file.write("end2end total_time: {:.6f} ms, iterations: {}, throughput {:.2f} it/s\n".format(time.time() - train_start_time, opt_args.iterations, opt_args.iterations/(time.time() - train_start_time)))
-    
+    end2end_timers.print_time(log_file, opt_args.iterations)
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
 
     # Save some running statistics to file.
@@ -357,18 +402,15 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
             json.dump(data_json, f)
 
-def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, train_resolution_scale=1.0, test_resolution_scale=1.0):
+def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
     log_file = utils.get_log_file()
     # Report test and samples of training set
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
-        # print(test_resolution_scale, train_resolution_scale)
-        validation_configs = ({'name': 'test_on_test_res', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
-                              {'name': 'test_on_train_res', 'cameras' : scene.getTestCameras(train_resolution_scale)}, 
-                            {'name': 'train_on_test_res', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras(test_resolution_scale))] for idx in range(5, 30, 5)]},
-                            {'name': 'train_on_train_res', 'cameras' : [scene.getTrainCameras(train_resolution_scale)[idx % len(scene.getTrainCameras(train_resolution_scale))] for idx in range(5, 30, 5)]})
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
+                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
         # init workload division strategy
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -432,7 +474,8 @@ if __name__ == "__main__":
 
 
     # create log folder
-    if utils.GLOBAL_RANK == 0:
+    if utils.IN_NODE_GROUP.rank() == 0:
+    # if utils.GLOBAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)
         os.makedirs(args.model_path, exist_ok = True)
     if utils.WORLD_SIZE > 1:
