@@ -421,7 +421,7 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
-                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(0, len(scene.getTrainCameras()), 10)]})
         # init workload division strategy
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
