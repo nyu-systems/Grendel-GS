@@ -287,10 +287,15 @@ if __name__ == "__main__":
     RANK = int(os.environ.get("RANK", 0))
     LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
     WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+    
+    master_addr = os.environ.get("MASTER_ADDR", "")
+    master_port = os.environ.get("MASTER_PORT", "")
     # print(WORLD_SIZE, RANK, LOCAL_RANK)
     print("WORLD_SIZE: ", WORLD_SIZE, "RANK: ", RANK, "LOCAL_RANK: ", LOCAL_RANK)
     print("NCCL_ALGO: ", os.environ.get("NCCL_ALGO", None))
     print("NCCL_DEBUG: ", os.environ.get("NCCL_DEBUG", None))
+    print("master_addr: ", os.environ.get("MASTER_ADDR", None))
+    print("master_port: ", os.environ.get("MASTER_PORT", None))
 
     # print memory occupy of the tensor in GB
     print("tensor size: ", args.tensor_size, "MB")

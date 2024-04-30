@@ -196,6 +196,9 @@ class DebugParams(ParamGroup):
         self.nsys_profile = False # profile with nsys.
         self.drop_initial_3dgs_p = 0.0 # profile with nsys.
 
+        self.more_sync = False
+        self.my_all2all = False
+
         super().__init__(parser, "Debug Parameters")
 
 def get_combined_args(parser : ArgumentParser):

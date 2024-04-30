@@ -726,6 +726,8 @@ class GaussianModel:
         # print(f"before all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
 
         torch.distributed.all_to_all(state_from_gpuj, state_to_gpuj, group=comm_group)
+        torch.cuda.synchronize()# add synchronize here.
+        torch.distributed.barrier(group=comm_group)
 
         # print(f"after all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")
 

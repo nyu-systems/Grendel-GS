@@ -48,6 +48,7 @@ def get_cuda_args(strategy, mode="train"):# "test"
             "dist_global_strategy": strategy.get_global_strategy_str(),
             "avoid_pixel_all2all": avoid_pixel_all2all,
             "stats_collector": {},
+            "more_sync": args.more_sync
         }
     return cuda_args
 
@@ -146,7 +147,39 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
     return screenspace_pkg
 
 
+class _AlltoAll(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, group, out_tensor_list, *tensors):
+        ctx.group = group
+        ctx.input_tensor_size_list = [
+            tensors[i].size() for i in range(torch.distributed.get_world_size(group=group))
+        ]
+        my_rank = torch.distributed.get_rank(group=group)
+        tensors = tuple(t.contiguous() for t in tensors)
+        torch.distributed.all_to_all(
+            out_tensor_list,
+            list(tensors),
+            group=group,
+        )
+        torch.cuda.synchronize()
+        torch.distributed.barrier(group=group)
+        return tuple(out_tensor_list)
 
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        tensor_list = [
+            torch.empty(size, device=grad_outputs[0].device, dtype=grad_outputs[0].dtype)
+            for size in ctx.input_tensor_size_list
+        ]
+        return (None, None) + _AlltoAll.apply(ctx.group, tensor_list, *grad_outputs)
+
+def my_all_to_all(output_tensor_list, input_tensor_list, group, use_function_version):
+    if use_function_version:
+        return _AlltoAll.apply(group, output_tensor_list, *input_tensor_list)
+    else:
+        torch.distributed.all_to_all(output_tensor_list, input_tensor_list, group=group)
+        torch.cuda.synchronize()
+        torch.distributed.barrier(group=group)
 
 
 def all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies):
@@ -170,6 +203,9 @@ def all_to_all_communication(batched_rasterizers, batched_screenspace_params, ba
     torch.distributed.all_gather_into_tensor(i2j_send_size, local2j_send_size, group=utils.DEFAULT_GROUP)
     i2j_send_size = i2j_send_size.cpu().numpy().tolist()
 
+    # print("i2j_send_size:", i2j_send_size)
+    args = utils.get_args()
+
     def one_all_to_all(batched_tensors, use_function_version=False):
         tensor_to_rki = []
         tensor_from_rki = []
@@ -179,19 +215,29 @@ def all_to_all_communication(batched_rasterizers, batched_screenspace_params, ba
                 tensor_to_rki.append(batched_tensors[d_i][batched_local2j_ids[d_i][d_j]].contiguous()) # NCCL communication requires contiguous memory.
                 tensor_from_rki.append(torch.zeros((i2j_send_size[i][utils.DEFAULT_GROUP.rank()], ) + batched_tensors[0].shape[1:], 
                                                    dtype=batched_tensors[0].dtype, device="cuda"))
+        # print("startall2all"+str(utils.LOCAL_RANK)+"use_function_version:"+str(use_function_version)+"rank:"+str(utils.DEFAULT_GROUP.rank())+"size:"+str(utils.DEFAULT_GROUP.size())+"local_rank:"+str(utils.LOCAL_RANK)+"local_size:"+str(utils.DP_GROUP.size()))
+        if args.more_sync:
+            torch.cuda.synchronize()
 
-        if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
-            dist_func.all_to_all(
-                output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki,
-                group=utils.DEFAULT_GROUP
-            )# The function version could naturally enable communication during backward. 
+        if args.my_all2all:
+            my_all_to_all(tensor_from_rki, tensor_to_rki, utils.DEFAULT_GROUP, use_function_version)
         else:
-            torch.distributed.all_to_all(
-                output_tensor_list=tensor_from_rki,
-                input_tensor_list=tensor_to_rki,
-                group=utils.DEFAULT_GROUP
-            )
+            if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
+                dist_func.all_to_all(
+                    output_tensor_list=tensor_from_rki,
+                    input_tensor_list=tensor_to_rki,
+                    group=utils.DEFAULT_GROUP
+                )# The function version could naturally enable communication during backward. 
+            else:
+                torch.distributed.all_to_all(
+                    output_tensor_list=tensor_from_rki,
+                    input_tensor_list=tensor_to_rki,
+                    group=utils.DEFAULT_GROUP
+                )
+        if args.more_sync:
+            torch.cuda.synchronize()
+            torch.distributed.barrier(group=utils.DEFAULT_GROUP)
+        # print("endall2all"+str(utils.LOCAL_RANK))
         return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
 
     # Merge means2D, rgb, conic_opacity into one functional all-to-all communication call.
@@ -206,18 +252,31 @@ def all_to_all_communication(batched_rasterizers, batched_screenspace_params, ba
         batched_catted_screenspace_states.append(torch.cat([means2D, rgb, conic_opacity], dim=1).contiguous())
         batched_catted_screenspace_auxiliary_states.append(torch.cat([radii.float().unsqueeze(1), depths.unsqueeze(1)], dim=1).contiguous())
 
+    # print("startfirstall2all"+str(utils.LOCAL_RANK))
+    if args.more_sync:
+        torch.cuda.synchronize()
     params_redistributed = one_all_to_all(batched_catted_screenspace_states, use_function_version=True)
+    if args.more_sync:
+        torch.cuda.synchronize()
     means2D_redistributed, rgb_redistributed, conic_opacity_redistributed = torch.split(
         params_redistributed,
         [mean2d_dim1, rgb_dim1, conic_opacity_dim1],
         dim=1
     )
+    # print("startsecondall2all"+str(utils.LOCAL_RANK))
+    if args.more_sync:
+        torch.cuda.synchronize()
     radii_depth_redistributed = one_all_to_all(batched_catted_screenspace_auxiliary_states, use_function_version=False)
+    if args.more_sync:
+        torch.cuda.synchronize()
     radii_redistributed, depths_redistributed = torch.split(
         radii_depth_redistributed,
         [1, 1],
         dim=1
     )
+    # print("endall2all"+str(utils.LOCAL_RANK))
+    if args.more_sync:
+        torch.cuda.synchronize()
     radii_redistributed = radii_redistributed.squeeze(1).int()
     depths_redistributed = depths_redistributed.squeeze(1)
 
@@ -303,7 +362,12 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
     if timers is not None:
         timers.stop("forward_preprocess_gaussians")
 
-
+    # if utils.get_cur_iter() >= 2574:
+    #     print("iteration: ", utils.get_cur_iter(), "before all_to_all_communication", "local_rank: ", utils.LOCAL_RANK)
+    args = utils.get_args()
+    if args.more_sync:
+        torch.cuda.synchronize() # HACK: synchronize to avoid perl hang issue?
+    # torch.distributed.barrier(group=utils.DEFAULT_GROUP)
     if timers is not None:
         timers.start("forward_all_to_all_communication")
     means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
@@ -311,7 +375,12 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
     utils.check_memory_usage_logging("after forward_all_to_all_communication")
     if timers is not None:
         timers.stop("forward_all_to_all_communication")
-    
+    if args.more_sync:
+        torch.cuda.synchronize() # HACK: synchronize to avoid perl hang issue?
+
+    # if utils.get_cur_iter() >= 2574:
+    #     print("iteration: ", utils.get_cur_iter(), "after all_to_all_communication", "local_rank: ", utils.LOCAL_RANK)
+
     screenspace_pkg = {
                 "batched_locally_preprocessed_mean2D": batched_means2D,
                 "batched_locally_preprocessed_radii": batched_radii,

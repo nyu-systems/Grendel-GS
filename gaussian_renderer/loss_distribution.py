@@ -67,7 +67,11 @@ def get_all_pos_send_to_j(compute_locally, touched_locally):
     pos_send_to_j = [None for _ in range(utils.MP_GROUP.size())]
     for j in range(utils.MP_GROUP.size()):
         pos_send_to_j[j] = torch.empty((send_to_j_size[j], 2), dtype=torch.long, device="cuda")
+    if utils.get_args().more_sync:
+        torch.cuda.synchronize()
     torch.distributed.all_to_all(pos_send_to_j, pos_recv_from_i, group=utils.MP_GROUP)
+    if utils.get_args().more_sync:
+        torch.cuda.synchronize()
     all_pos_send_to_j = torch.cat(pos_send_to_j, dim=0).contiguous()
     timers.stop("[all_pos_send_to_j]all_to_all_pos_send_to_j")
 
@@ -620,6 +624,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
     # This method works when image resolution is small because we want to reduce the number of kernel launches. 
 
     timers = utils.get_timers()
+    args = utils.get_args()
 
     assert strategy is not None, "strategy should not be None in fast_distributed_loss_computation"
     assert utils.BLOCK_Y > 5, "utils.BLOCK_Y should be greater than 5 to make sure fast_distributed_loss_computation works as expected."
@@ -710,8 +715,12 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
             recv_list[utils.MP_GROUP.rank()+1] = recv_from_rk_plus_1_buffer
             send_list[utils.MP_GROUP.rank()+1] = send_to_rk_plus_1
         
+        if args.more_sync:
+            torch.cuda.synchronize()
         torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
-
+        if args.more_sync:
+            torch.cuda.synchronize()
+    
         if utils.MP_GROUP.rank() != 0:
             recv_from_rk_minus_1 = recv_list[utils.MP_GROUP.rank()-1]
         if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:
@@ -824,6 +833,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
     # This method works when image resolution is small because we want to reduce the number of kernel launches. 
 
     timers = utils.get_timers()
+    args = utils.get_args()
 
     assert strategy is not None, "strategy should not be None in fast_distributed_loss_computation"
     assert utils.BLOCK_Y > 5, "utils.BLOCK_Y should be greater than 5 to make sure fast_distributed_loss_computation works as expected."
@@ -914,8 +924,12 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
             recv_list[utils.MP_GROUP.rank()+1] = recv_from_rk_plus_1_buffer
             send_list[utils.MP_GROUP.rank()+1] = send_to_rk_plus_1
         
+        if args.more_sync:
+            torch.cuda.synchronize()
         torch.distributed.all_to_all(recv_list, send_list, group=utils.MP_GROUP)
-
+        if args.more_sync:
+            torch.cuda.synchronize()
+    
         if utils.MP_GROUP.rank() != 0:
             recv_from_rk_minus_1 = recv_list[utils.MP_GROUP.rank()-1]
         if utils.MP_GROUP.rank() != utils.MP_GROUP.size()-1:

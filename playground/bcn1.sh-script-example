@@ -9,8 +9,8 @@
 # PORT=$4
 NODE_COUNT=2
 NODE_RANK=1
-IP_ADDR="10.32.35.103"
-PORT=10233
+IP_ADDR="nid001164"
+PORT=12666
 
 # --standalone 
 torchrun \

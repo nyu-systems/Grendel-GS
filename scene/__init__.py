@@ -171,6 +171,7 @@ class SceneDataset:
         return viewpoint_cam
 
     def get_batched_cameras(self, batch_size):
+        assert batch_size < self.camera_size, "Error: Batch size is larger than the number of cameras in the dataset"
         batched_cameras = []
         batched_cameras_uid = []
         for i in range(batch_size):

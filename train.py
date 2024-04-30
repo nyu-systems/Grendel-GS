@@ -110,6 +110,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
         if utils.check_update_at_this_iter(iteration, args.bsz, args.opacity_reset_interval, 0):
             # TODO: do opacity reset if dataset_args.white_background and iteration == opt_args.densify_from_iter
             timers.start("reset_opacity")
+            log_file.write("reset_opacity. \n")
             gaussians.reset_opacity()
             timers.stop("reset_opacity")
 
@@ -152,7 +153,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
             (model_params, start_from_this_iteration) = torch.load(file_name)
             gaussians.restore(model_params, opt_args)
-            start_from_this_iteration += args.dp_size
+            start_from_this_iteration += args.bsz
+            print("Restored from checkpoint: {}\n".format(file_name))
+            log_file.write("Restored from checkpoint: {}\n".format(file_name))
 
     utils.check_memory_usage_logging("after init and before training loop")
 
@@ -171,6 +174,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     progress_bar.update(start_from_this_iteration - 1)
     num_trained_batches = 0
     for iteration in range(start_from_this_iteration, opt_args.iterations + 1, args.bsz):
+        if args.more_sync:
+            torch.cuda.synchronize()
+            torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
+        # print("after the barrier")
 
         # Step Initialization
         progress_bar.update(args.bsz)
@@ -206,6 +213,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         assert args.bsz % args.dp_size == 0, "dp_size must be a divisor of bsz."
         micro_bsz_size = args.dp_size
         num_samples_per_dp_worker = args.bsz // args.dp_size
+        all_local_render_viewpoint_cam = []
         for micro_step in range(num_samples_per_dp_worker):
             # Micro Step Initialization
             micro_batched_cameras = batched_cameras[micro_step::num_samples_per_dp_worker]
@@ -213,18 +221,38 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             local_render_viewpoint_cam = micro_batched_cameras[utils.DP_GROUP.rank()]
             utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
             local_render_strategy = micro_batched_strategies[utils.DP_GROUP.rank()]
+            all_local_render_viewpoint_cam.append(local_render_viewpoint_cam)
+
+            # print("micro_batched_cameras: ", [camera.image_name for camera in micro_batched_cameras], "local_rank: ", utils.LOCAL_RANK)
 
             # 3DGS preprocess and all2all communication
             globally_sync_for_timer()
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", iteration, "micro_step: ", micro_step, "local_rank: ", utils.LOCAL_RANK)
+            if args.more_sync:
+                torch.cuda.synchronize()
             screenspace_pkg = preprocess3dgs_and_all2all(micro_batched_cameras, gaussians, pipe_args, background,
                                                          micro_batched_strategies,
                                                          mode="train")
+            if args.more_sync:
+                torch.cuda.synchronize()
+            # torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("after preprocess3dgs_and_all2all")
+
             statistic_collector = screenspace_pkg["cuda_args"]["stats_collector"]
 
             # Pixel-wise Render
             globally_sync_for_timer() # NOTE: this is to make sure: we are measuring time for local work. where to add this barrier depends on: whether there will be global communication(i.e. allreduce) in the following code.
             image, compute_locally = render(screenspace_pkg, local_render_strategy)
+            if args.more_sync:
+                torch.cuda.synchronize()
 
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "after render", "local_rank: ", utils.LOCAL_RANK)
             # Pixel-wise Loss Computation
             globally_sync_for_timer()# adding this also creates some unstability in the time measurement.
             Ll1, ssim_loss = loss_computation(image,
@@ -235,14 +263,25 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                                               args.image_distribution_config.loss_distribution_mode)
             loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim_loss)
             utils.check_memory_usage_logging("after loss")
-
+            if args.more_sync:
+                torch.cuda.synchronize()
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "after loss_computation", "local_rank: ", utils.LOCAL_RANK)
             # Backward
             globally_sync_for_timer()
             timers.start("backward")
             loss.backward()
             timers.stop("backward")
+            if args.more_sync:
+                torch.cuda.synchronize()
+            # torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
             utils.check_memory_usage_logging("after backward")
-
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "after backward", "local_rank: ", utils.LOCAL_RANK)
+            # if utils.get_cur_iter() >= 2574:
+            #     print()
             batched_screenspace_pkg["batched_locally_preprocessed_radii"].extend(screenspace_pkg["batched_locally_preprocessed_radii"])
             batched_screenspace_pkg["batched_locally_preprocessed_visibility_filter"].extend(screenspace_pkg["batched_locally_preprocessed_visibility_filter"])
             batched_screenspace_pkg["batched_locally_preprocessed_mean2D"].extend(screenspace_pkg["batched_locally_preprocessed_mean2D"])
@@ -253,21 +292,26 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             if args.gaussians_distribution:
                 batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
 
-            # Release memory of locally rendered original_image
-            torch.cuda.synchronize()
-            local_render_viewpoint_cam.gt_image_comm_op = None
-            local_render_viewpoint_cam.original_image = None
-
 
         with torch.no_grad():
             # Sync gradients across replicas, if some 3dgs are stored replicatedly.
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "beforeglobally_sync_for_timer", "local_rank: ", utils.LOCAL_RANK)
             globally_sync_for_timer()
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "startsync", "local_rank: ", utils.LOCAL_RANK)
             timers.start("sync_gradients_for_replicated_3dgs_storage")
             gaussians.sync_gradients_for_replicated_3dgs_storage(batched_screenspace_pkg)
             if not args.gaussians_distribution and utils.MP_GROUP.size() > 1:
                 for local_render_screenspace_mean2D in batched_screenspace_pkg["batched_locally_preprocessed_mean2D"]:
                     torch.distributed.all_reduce(local_render_screenspace_mean2D.grad.data, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
             timers.stop("sync_gradients_for_replicated_3dgs_storage")
+
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "aftersync", "local_rank: ", utils.LOCAL_RANK)
 
             # Adjust workload division strategy. 
             globally_sync_for_timer()
@@ -291,6 +335,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                         batched_strategy_histories[idx_in_one_batch].finish_strategy()
 
             timers.stop("strategy.update_stats")
+
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "after strategy.update_stats", "local_rank: ", utils.LOCAL_RANK)
 
             # Update Epoch Statistics: allgather loss into a tensor across DP GROUP
             timers.start("allgather_loss_and_log")
@@ -325,6 +373,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Densification
             densification(iteration, scene, gaussians, batched_screenspace_pkg)
 
+            # if utils.get_cur_iter() >= 2574:
+            #     torch.cuda.synchronize()
+            #     print("iteration: ", utils.get_cur_iter(), "after densification", "local_rank: ", utils.LOCAL_RANK)
+            
             # Save Gaussians
             # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
             if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
@@ -402,7 +454,15 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 timers.stop("optimizer_step")
                 utils.check_memory_usage_logging("after optimizer step")
 
+        if args.more_sync:
+            torch.cuda.synchronize()
+        # torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
         # Finish a iteration and clean up
+        for local_render_viewpoint_cam in all_local_render_viewpoint_cam:
+            # Release memory of locally rendered original_image
+            local_render_viewpoint_cam.gt_image_comm_op = None
+            local_render_viewpoint_cam.original_image = None
+
         if args.nsys_profile:
             nvtx.range_pop()
         if utils.check_enable_python_timer():
@@ -416,12 +476,14 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
     log_file = utils.get_log_file()
     # Report test and samples of training set
+    while len(testing_iterations) > 0 and testing_iterations[0] < iteration:
+        testing_iterations.pop(0)
     if len(testing_iterations) > 0 and utils.check_update_at_this_iter(iteration, utils.get_args().bsz, testing_iterations[0], 0):
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(test_resolution_scale)}, 
-                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                            {'name': 'train', 'cameras' : [scene.getTrainCameras(test_resolution_scale)[idx % len(scene.getTrainCameras())] for idx in range(0, len(scene.getTrainCameras()), 10)]})
         # init workload division strategy
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -432,6 +494,10 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                 eval_dataset = SceneDataset(config['cameras'])
                 cameraId2StrategyHistory = {}
                 for idx in range(1, num_cameras+1, args.dp_size):
+                    if args.more_sync:
+                        torch.cuda.synchronize()
+                    # torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
+
                     batched_cameras = eval_dataset.get_batched_cameras(args.dp_size)
                     local_render_camera = batched_cameras[utils.DP_GROUP.rank()]
                     batched_strategies = []
@@ -439,10 +505,17 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                         hack_history = get_division_strategy_history(cameraId2StrategyHistory, viewpoint, "evaluation")
                         batched_strategies.append(hack_history.start_strategy())
                     local_render_strategy = batched_strategies[utils.DP_GROUP.rank()]
+                    if args.more_sync:
+                        torch.cuda.synchronize()
                     screenspace_pkg = preprocess3dgs_and_all2all(batched_cameras, scene.gaussians, pipe_args, background,
                                                                  batched_strategies,
                                                                  mode="test")
+                    if args.more_sync:
+                        torch.cuda.synchronize()
+                    # torch.distributed.barrier(group=utils.DEFAULT_GROUP) # HACK: to avoid weird behavior in perl cluster.
                     image, _ = render(screenspace_pkg, local_render_strategy)
+                    if args.more_sync:
+                        torch.cuda.synchronize()
 
                     if utils.MP_GROUP.size() > 1:
                         torch.distributed.all_reduce(image, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
@@ -474,6 +547,8 @@ if __name__ == "__main__":
     debug_p = DebugParams(parser)
     args = parser.parse_args(sys.argv[1:])
 
+    # os.environ["TORCH_CPP_LOG_LEVEL"]="INFO"
+    # os.environ["TORCH_DISTRIBUTED_DEBUG"]="DETAIL"
     # Set up distributed training
     init_distributed(args)
 
