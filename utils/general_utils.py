@@ -179,7 +179,7 @@ def init_distributed(args):
 
         DEFAULT_GROUP = dist.group.WORLD
 
-        num_gpu_per_node = torch.cuda.device_count()
+        num_gpu_per_node = one_node_device_count()
         n_of_nodes = WORLD_SIZE // num_gpu_per_node
         all_in_node_group = []
         for rank in range(n_of_nodes):
@@ -196,10 +196,14 @@ def init_distributed(args):
         DEFAULT_GROUP = SingleGPUGroup()
         IN_NODE_GROUP = SingleGPUGroup()
 
+def one_node_device_count():
+    return 4 # HACK: because in perl cluster, it is always 4 GPUs per node. TODO: change it back. 
+    return torch.cuda.device_count()
+
 def get_first_rank_on_cur_node():
     global GLOBAL_RANK
-    NODE_ID = GLOBAL_RANK // torch.cuda.device_count()
-    first_rank_in_node = NODE_ID * torch.cuda.device_count()
+    NODE_ID = GLOBAL_RANK // one_node_device_count()
+    first_rank_in_node = NODE_ID * one_node_device_count()
     return first_rank_in_node
     
 
