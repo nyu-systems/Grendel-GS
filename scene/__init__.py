@@ -149,6 +149,10 @@ class SceneDataset:
         self.log_file = utils.get_log_file()
         self.args = utils.get_args()
 
+        self.random_sequence = None
+        if self.args.fixed_samples_sequence:
+            self.random_sequence = self.generate_random_squence()
+
     @property
     def cur_epoch(self):
         return len(self.epoch_loss)
@@ -158,6 +162,10 @@ class SceneDataset:
         return len(self.iteration_loss)
 
     def get_one_camera(self, batched_cameras_uid):
+        if self.random_sequence:
+            # print(f"rank {utils.LOCAL_RANK} poped_cam.uid: {self.random_sequence[0].uid}")
+            return self.random_sequence.pop(0)
+        
         if len(self.cur_epoch_cameras) == 0:
             self.cur_epoch_cameras = self.cameras.copy()
         self.cur_iteration += 1
@@ -169,6 +177,32 @@ class SceneDataset:
                 break
         viewpoint_cam = self.cur_epoch_cameras.pop(camera_id)
         return viewpoint_cam
+
+    def generate_random_squence(self, max_bsz=128, len=512):
+        # Generate a random sequence of cameras, each max_bsz cameras are in a batch.
+        # only need to generate the index of the cameras as and int array.
+        # The actual cameras are fetched in get_batched_cameras.
+        assert len % max_bsz == 0, "len must be divisible by max_bsz"
+        random_sequence = []
+        if os.path.exists(f"random_sequence_max_bsz={max_bsz}_len={len}.txt"):
+            with open(f"random_sequence_max_bsz={max_bsz}_len={len}.txt", "r") as f:
+                batched_cameras_uid = [int(line.strip()) for line in f]
+            for uid in batched_cameras_uid:
+                for cam in self.cameras:
+                    if cam.uid == uid:
+                        random_sequence.append(cam)
+                        break
+            return random_sequence
+        for _ in range(len // max_bsz):
+            batched_cameras_uid = []
+            for _ in range(max_bsz):
+                random_sequence.append(self.get_one_camera(batched_cameras_uid))
+                batched_cameras_uid.append(random_sequence[-1].uid)
+        # save to txt
+        with open(f"random_sequence_max_bsz={max_bsz}_len={len}.txt", "w") as f:
+            for cam in random_sequence:
+                f.write(str(cam.uid) + "\n")
+        return random_sequence
 
     def get_batched_cameras(self, batch_size):
         batched_cameras = []
@@ -196,7 +230,11 @@ class SceneDataset:
                     if its_dp_rank not in dp_rank_2_image:
                         dp_rank_2_image[its_dp_rank] = batched_cameras[its_dp_rank].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
         else:
-            batched_cameras[utils.DP_GROUP.rank()].original_image = batched_cameras[utils.DP_GROUP.rank()].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
+            if args.gaussians_distribution:
+                batched_cameras[utils.DP_GROUP.rank()].original_image = batched_cameras[utils.DP_GROUP.rank()].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
+            else:
+                for i in range(len(batched_cameras)):
+                    batched_cameras[i].original_image = batched_cameras[i].original_image_cpu.cuda(non_blocking=args.async_load_gt_image)
         # if utils.DEFAULT_GROUP.size() > 1:
         #     torch.distributed.barrier(group=utils.DEFAULT_GROUP)
         timers.stop("load_gt_image_to_gpu")

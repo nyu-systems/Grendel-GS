@@ -249,17 +249,7 @@ class GaussianModel:
             "avg_size": avg_size,
             "avg_opacity": avg_opacity,
         }
-
-        # get the exp_avg, exp_avg_sq state for all parameters
-        exp_avg_dict = {}
-        exp_avg_sq_dict = {}
-        for group in self.optimizer.param_groups:
-            stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
-                if 'exp_avg' in stored_state:
-                    exp_avg_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg"], dim=-1)).item()
-                    exp_avg_sq_dict[group["name"]] = torch.mean(torch.norm(stored_state["exp_avg_sq"], dim=-1)).item()
-        return stats, exp_avg_dict, exp_avg_sq_dict
+        return stats
         
 
     def sync_gradients_for_replicated_3dgs_storage(self, batched_screenspace_pkg, batched_parameter_gradients_pkg):
@@ -272,18 +262,14 @@ class GaussianModel:
                 parameter_gradients = torch.stack(parameter_gradients)
                 # [bsz/dp_size, n_3dgs, ...]
                 if utils.MP_GROUP.size() > 1:
-                    # TODO: now resolved by using all_reduce
-                    # the line below reduce the gradients to some global rank?
-                    # i want to reduce the gradients to the rank 0 of the dp group
-                    # dst = utils.MP_GROUP.size() * utils.MP_GROUP.rank()
-                    # dist.reduce(parameter_gradients, dst=dst, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                     dist.all_reduce(parameter_gradients, op=dist.ReduceOp.SUM, group=utils.MP_GROUP)
                 if utils.MP_GROUP.rank() == 0:
-                    parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
-                    # [bsz, n_3dgs, ...]
                     if utils.DP_GROUP.size() > 1:
+                        parameter_gradients_gathered = torch.zeros((parameter_gradients.shape[0]*utils.DP_GROUP.size(), ) + parameter_gradients.shape[1:], device="cuda")
+                        # [bsz, n_3dgs, ...]
                         dist.all_gather_into_tensor(parameter_gradients_gathered, parameter_gradients, group=utils.DP_GROUP)
-                    batched_parameter_gradients_pkg[parameter_name] = parameter_gradients_gathered 
+                        parameter_gradients = parameter_gradients_gathered
+                    batched_parameter_gradients_pkg[parameter_name] = parameter_gradients
 
         if args.sync_grad_mode == "dense":
             sync_func = sync_gradients_densely
