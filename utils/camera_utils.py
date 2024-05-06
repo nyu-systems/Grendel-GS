@@ -23,7 +23,7 @@ import torch
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, return_image=False):
-    orig_w, orig_h = cam_info.image.size
+    orig_w, orig_h = cam_info.width, cam_info.height
     if id == 0:
         utils.set_img_size(orig_h, orig_w)
     args = get_args()
@@ -54,18 +54,20 @@ def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, retur
         if args.time_image_loading:
             log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
 
-        assert resized_image_rgb.shape[0] == 3, "Image should have exactly 3 channels!"
-        gt_image = resized_image_rgb[:3, ...]
+        # assert resized_image_rgb.shape[0] == 3, "Image should have exactly 3 channels!"
+        gt_image = resized_image_rgb[:3, ...].contiguous()
         loaded_mask = None
 
-        if resized_image_rgb.shape[1] == 4:
-            loaded_mask = resized_image_rgb[3:4, ...]
+        # TODO: change this back.
+        # if resized_image_rgb.shape[1] == 4:
+        #     loaded_mask = resized_image_rgb[3:4, ...]
+
+        # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory. 
+        cam_info.image.close()
     else:
         gt_image = None
         loaded_mask = None
     
-    # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory. 
-    cam_info.image.close()
 
     if return_image:
         return gt_image

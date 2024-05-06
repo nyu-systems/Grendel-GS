@@ -312,15 +312,20 @@ def get_suffix_in_folder(folder):
     if not folder.endswith("/"):
         folder += "/"
     
-    suffix_list_candidates = [
-        "ws=1_rk=0",
-        "ws=2_rk=0",
-        "ws=2_rk=1",
-        "ws=4_rk=0",
-        "ws=4_rk=1",
-        "ws=4_rk=2",
-        "ws=4_rk=3",
-    ]
+    # suffix_list_candidates = [
+    #     "ws=1_rk=0",
+    #     "ws=2_rk=0",
+    #     "ws=2_rk=1",
+    #     "ws=4_rk=0",
+    #     "ws=4_rk=1",
+    #     "ws=4_rk=2",
+    #     "ws=4_rk=3",
+    # ]
+    suffix_list_candidates = []
+    for ws in [1,2,4,8,16,32]:
+        for rk in range(ws):
+            suffix_list_candidates.append(f"ws={ws}_rk={rk}")
+    
     suffix_list = []
 
     for suffix in suffix_list_candidates:
@@ -467,6 +472,7 @@ def extract_3dgs_count_from_python_log(folder):
     suffixes = get_suffix_in_folder(folder)
     stats = {}
     iterations = []
+    start_iteration = 0
     for rk, suffix in enumerate(suffixes):
         file = f"python_{suffix}.log"
         file_path = folder + file
@@ -474,6 +480,14 @@ def extract_3dgs_count_from_python_log(folder):
             lines = f.readlines()
         stats[f"n_3dgs_rk={rk}"] = []
         for line in lines:
+            # start_checkpoint: /pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_4g_dp_2/checkpoints/79997
+
+            if line.startswith("start_checkpoint:"):
+                if "checkpoints/" in line:
+                    start_iteration = int(line.split("checkpoints/")[1].split("/")[0])
+                else:
+                    start_iteration = 0
+
             # xyz shape: torch.Size([182686, 3])
             if line.startswith("xyz shape:"):
                 # example
@@ -481,9 +495,9 @@ def extract_3dgs_count_from_python_log(folder):
                 n_3dgs = int(line.split("[")[1].split(",")[0])
                 stats[f"n_3dgs_rk={rk}"].append(n_3dgs)
                 if rk == 0:
-                    iterations.append(0)
+                    iterations.append(start_iteration)
 
-            if "densify_and_prune. Now num of 3dgs:" in line:
+            if "Now num of 3dgs:" in line:
                 # example
                 # iteration[600,601) densify_and_prune. Now num of 3dgs: 183910. Now Memory usage: 0.23658323287963867 GB. Max Memory usage: 0.399813175201416 GB. 
                 iteration = int(line.split("iteration[")[1].split(",")[0])
@@ -3223,7 +3237,7 @@ def extract_sum_3dgs_count_from_python_log(folder):
 
 def loss_and_3dgs_curves(folders):
 
-    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(20, 20))
+    fig, ax = plt.subplots(nrows=5, ncols=1, figsize=(30, 20))
     fig.subplots_adjust(hspace=0.5)
 
     for folder in folders:
@@ -3236,6 +3250,8 @@ def loss_and_3dgs_curves(folders):
         ax[0].plot(iterations, n_3dgs, label=folder.split("/")[-2])
         ax[1].plot(train_iteration, eval_train_l1, label=folder.split("/")[-2])
         ax[2].plot(train_iteration, eval_train_PSNR, label=folder.split("/")[-2])
+        ax[3].plot(test_iteration, eval_test_l1, label=folder.split("/")[-2])
+        ax[4].plot(test_iteration, eval_test_PSNR, label=folder.split("/")[-2])
     
     ax[0].set_title("n_3dgs", fontsize=24)
     ax[0].set_xlabel('iteration', fontsize=20)
@@ -3251,6 +3267,16 @@ def loss_and_3dgs_curves(folders):
     ax[2].set_xlabel('iteration', fontsize=20)
     ax[2].set_ylabel('PSNR', fontsize=20)
     ax[2].legend(loc='lower right', fontsize=20)
+
+    ax[3].set_title("test_l1", fontsize=24)
+    ax[3].set_xlabel('iteration', fontsize=20)
+    ax[3].set_ylabel('l1', fontsize=20)
+    ax[3].legend(loc='upper right', fontsize=20)
+
+    ax[4].set_title("test_PSNR", fontsize=24)
+    ax[4].set_xlabel('iteration', fontsize=20)
+    ax[4].set_ylabel('PSNR', fontsize=20)
+    ax[4].legend(loc='lower right', fontsize=20)
 
     plt.savefig(folders[0] + "/loss_and_3dgs_curves.png")
 
@@ -3828,17 +3854,38 @@ if __name__ == "__main__":
     # ]
     # compare_n_3dgs([f"experiments/{folder}/" for folder in train_densify_folders])
 
-    rubble_2k_folders = [
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_1",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_2",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_3",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_4",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_5",
-        "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_6",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_7",
-        # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_8",
+    # rubble_2k_folders = [
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_1",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_2",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_3",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_4",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_5",
+    #     "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_6",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_7",
+    #     # "/pscratch/sd/j/jy-nyu/running_expes/rubble_2k_mp_8",
+    # ]
+    # loss_and_3dgs_curves(rubble_2k_folders)
+
+    mat_bA_folders = [
+        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_test/",
+        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_1/",
+        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_2/",
+        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_3/",
+        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_1",
+        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_2",
+        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_3",
+        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_4",
+        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_5",
     ]
-    loss_and_3dgs_curves(rubble_2k_folders)
+    loss_and_3dgs_curves(mat_bA_folders)
+
+    # mat_ball2_folders = [
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_4g_dp_1/",
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_4g_dp_2/",
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_16g_dp_1/",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_16g_dp_2"
+    # ]
+    # loss_and_3dgs_curves(mat_ball2_folders)
 
     pass
 

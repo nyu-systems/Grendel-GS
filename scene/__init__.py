@@ -46,12 +46,19 @@ class Scene:
         utils.log_cpu_memory_usage("before loading images meta data")
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
-        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
-            print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, args.llffhold)
+        elif os.path.exists(os.path.join(args.source_path, "transforms_train_my.json")):
+        #     print("Found transforms_train.json file, assuming Blender data set!")
+        #     scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+        # else:
+            scene_info = sceneLoadTypeCallbacks["City"](args.source_path,
+                                                        args.random_background,
+                                                        args.white_background,
+                                                        args.eval,
+                                                        ds=1,
+                                                        llffhold=args.llffhold)
         else:
-            assert False, "Could not recognize scene type!"
+            raise ValueError("No valid dataset found in the source path")
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
@@ -91,7 +98,11 @@ class Scene:
         if args.eval:
             for resolution_scale in [args.test_resolution_scale]:
                 utils.print_rank_0("Decoding Test Cameras")
-                self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+                if args.num_test_cameras > 0:
+                    test_cameras = scene_info.test_cameras[:args.num_test_cameras]
+                else:
+                    test_cameras = scene_info.test_cameras
+                self.test_cameras[resolution_scale] = cameraList_from_camInfos(test_cameras, resolution_scale, args)
                 # output the number of cameras in the training set and image size to the log file
                 log_file.write("Test Resolution Scale: {}\n".format(resolution_scale))
                 log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras[resolution_scale])))
@@ -117,12 +128,12 @@ class Scene:
 
     def getTrainCameras(self, scale=1.0):
         if scale not in self.train_cameras:
-            return None
+            return []
         return self.train_cameras[scale]
 
     def getTestCameras(self, scale=1.0):
         if scale not in self.test_cameras:
-            return None
+            return []
         return self.test_cameras[scale]
 
     def log_scene_info_to_file(self, log_file, prefix_str=""):
@@ -171,6 +182,7 @@ class SceneDataset:
         return viewpoint_cam
 
     def get_batched_cameras(self, batch_size):
+        assert batch_size <= self.camera_size, "Batch size is larger than the number of cameras in the scene."
         batched_cameras = []
         batched_cameras_uid = []
         for i in range(batch_size):

@@ -11,6 +11,7 @@
 
 import os
 import sys
+import glob
 from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
@@ -24,6 +25,7 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+from colorama import Fore, init, Style
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -116,8 +118,14 @@ def fetchPly(path):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
-    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    try:
+        colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    except:
+        colors = np.random.rand(positions.shape[0], positions.shape[1])
+    try:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    except:
+        normals = np.random.rand(positions.shape[0], positions.shape[1])
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 def storePly(path, xyz, rgb):
@@ -183,6 +191,110 @@ def readColmapSceneInfo(path, images, eval, llffhold=10):
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info
+
+def readCamerasFromTransformsCity(path, transformsfile, random_background, white_background, extension=".png", undistorted=False, is_debug=False):
+    cam_infos = []
+    if undistorted:
+        print("Undistortion the images!!!")
+    with open(os.path.join(path, transformsfile)) as json_file:
+        contents = json.load(json_file)
+        try:
+            fovx = contents["camera_angle_x"]
+        except:
+            fovx = None
+
+        # TODO: for debug, change it back
+        frames = contents["frames"]
+        # check if filename already contain postfix
+        if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
+            extension = ""
+
+        c2ws = np.array([frame["transform_matrix"] for frame in frames])
+        
+        Ts = c2ws[:,:3,3]
+
+        ct = 0
+
+        progress_bar = tqdm(frames, desc="Loading dataset")
+
+        for idx, frame in enumerate(frames):
+            # cam_name = os.path.join(path, frame["file_path"] + extension)
+            cam_name = frame["file_path"]
+            if not os.path.exists(cam_name):
+                print(f"File {cam_name} not found, skipping...")
+                continue
+            # NeRF 'transform_matrix' is a camera-to-world transform
+            c2w = np.array(frame["transform_matrix"])
+            
+            if idx % 10 == 0:
+                progress_bar.set_postfix({"num": Fore.YELLOW+f"{ct}/{len(frames)}"+Style.RESET_ALL})
+                progress_bar.update(10)
+            if idx == len(frames) - 1:
+                progress_bar.close()
+            
+            ct += 1
+            # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+            c2w[:3, 1:3] *= -1
+
+            # get the world-to-camera transform and set R, T
+            w2c = np.linalg.inv(c2w)
+
+            R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+            T = w2c[:3, 3]
+
+            image_path = os.path.join(path, cam_name)
+            # if "block_10" in image_path:
+            #     continue
+            image_name = cam_name[-17:] #Path(cam_name).stem
+            image = Image.open(image_path)
+
+            if undistorted:
+                assert False, "Undistortion not implemented for City"
+                mtx = np.array(
+                    [
+                        [frame["fl_x"], 0, frame["cx"]],
+                        [0, frame["fl_y"], frame["cy"]],
+                        [0, 0, 1.0],
+                    ],
+                    dtype=np.float32,
+                )
+                dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
+                im_data = np.array(image.convert("RGB"))
+                arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
+                image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            else:
+                # TODO: because we assume background is black, thus we do not need to use this code
+
+                pass
+                # im_data = np.array(image.convert("RGBA"))
+                # if random_background:
+                #     bg = [np.random.random(),np.random.random(),np.random.random()] 
+                # elif white_background:
+                #     bg = [1.0, 1.0, 1.0]
+                # else:
+                #     bg = [0.0, 0.0, 0.0]
+                # norm_data = im_data / 255.0
+                # arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+                # image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+
+            if fovx is not None:
+                fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+                FovY = fovy 
+                FovX = fovx
+            else:
+                # given focal in pixel unit
+                FovY = focal2fov(frame["fl_y"], image.size[1])
+                FovX = focal2fov(frame["fl_x"], image.size[0])
+
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+            if utils.get_args().distributed_dataset_storage and utils.LOCAL_RANK != 0:
+                image.close()
+
+
+            if is_debug and idx > 50:
+                break
+    return cam_infos
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
     cam_infos = []
@@ -262,7 +374,56 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
+def readCityInfo(path, random_background, white_background, eval, ds, extension=".tif", llffhold=8, undistorted=False):
+
+    # if ds > 1:
+    #     json_path = glob.glob(os.path.join(path, f"*_{ds}.json"))[0].split('/')[-1]
+    # else:
+    #     json_path = glob.glob(os.path.join(path, f"*.json"))[0].split('/')[-1]
+    train_json_path = os.path.join(path, f"transforms_train_my.json")
+    test_json_path = os.path.join(path, f"transforms_test_my.json")
+    print("Reading Training Transforms from {} {}".format(train_json_path, test_json_path))
+    
+    # cam_infos = readCamerasFromTransformsCity(path, json_path, random_background, white_background, extension, undistorted)
+    # print("Load Cameras: ", len(cam_infos))
+    train_cam_infos = readCamerasFromTransformsCity(path, train_json_path, random_background, white_background, extension, undistorted)
+    test_cam_infos = readCamerasFromTransformsCity(path, test_json_path, random_background, white_background, extension, undistorted)
+    print("Load Cameras(train, test): ", len(train_cam_infos), len(test_cam_infos))
+    
+    # if not eval:
+    #     train_cam_infos.extend(cam_infos)
+    #     test_cam_infos = []
+    # else:
+    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = glob.glob(os.path.join(path, "*.ply"))[0]
+    if os.path.exists(ply_path):
+        try:
+            pcd = fetchPly(ply_path)
+        except:
+            raise ValueError("must have tiepoints!")
+    else:
+        assert False, "No ply file found!"
+        # las_paths = glob.glob(os.path.join(path, "LAS/*.las"))
+        # las_path = las_paths[0]
+        # print(f'las_path: {las_path}')
+        # try:
+        #     pcd = read_multiple_las_files(las_paths, ply_path)
+        # except:
+        #     raise ValueError("Load LAS failed!")
+    
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "City": readCityInfo,   
 }

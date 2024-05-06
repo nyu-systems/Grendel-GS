@@ -63,9 +63,11 @@ class AuxiliaryParams(ParamGroup):
         self.quiet = False
         self.checkpoint_iterations = []
         self.start_checkpoint = ""
+        self.auto_start_checkpoint = False
         self.log_folder = "experiments/default_folder"
         self.log_interval = 50
         self.debug_why = False
+        self.llffhold = 10
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -108,6 +110,8 @@ class OptimizationParams(ParamGroup):
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
+        self.lr_scale_loss = 1.0
+        self.lr_scale_pos_and_scale = 1.0
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
@@ -116,6 +120,8 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
+        self.densify_memory_limit = 17.5
+        self.opacity_reset_until_iter = -1
         self.random_background = False
         self.min_opacity = 0.005
         self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
@@ -160,6 +166,7 @@ class DistributionParams(ParamGroup):
         self.async_load_gt_image = False
         self.multiprocesses_image_loading = False
         self.num_train_cameras = -1
+        self.num_test_cameras = -1
         self.distributed_save = False
 
         super().__init__(parser, "Distribution Parameters")
@@ -195,6 +202,12 @@ class DebugParams(ParamGroup):
 
         self.nsys_profile = False # profile with nsys.
         self.drop_initial_3dgs_p = 0.0 # profile with nsys.
+
+        self.clear_floaters = False # clear floaters in the image.
+        self.prune_based_on_opacity_interval = 4000
+        self.sync_more = False
+        self.log_memory_summary = False
+        self.empty_cache_more = False
 
         super().__init__(parser, "Debug Parameters")
 
@@ -235,14 +248,19 @@ def print_all_args(args, log_file):
     utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
     log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
 
+def find_latest_checkpoint(log_folder):
+    checkpoint_folder = os.path.join(log_folder, "checkpoints")
+    if os.path.exists(checkpoint_folder):
+        all_sub_folders = os.listdir(checkpoint_folder)
+        if len(all_sub_folders) > 0:
+            all_sub_folders.sort(key=lambda x: int(x), reverse=True)
+            return os.path.join(checkpoint_folder, all_sub_folders[0])
+    return ""
 
 def init_args(args):
 
     # Check arguments
     assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
-
-    if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
-        args.save_iterations.append(args.iterations)
 
     if args.benchmark_stats:
         args.zhx_time = True
@@ -273,6 +291,12 @@ def init_args(args):
         assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
         assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
 
+    if args.opacity_reset_until_iter == -1:
+        args.opacity_reset_until_iter = args.densify_until_iter + args.bsz
+
+    if args.auto_start_checkpoint:
+        args.start_checkpoint = find_latest_checkpoint(args.log_folder)
+
     if args.fixed_training_image != -1:
         args.test_iterations = [] # disable testing during training.
         args.disable_auto_densification = True
@@ -285,6 +309,7 @@ def init_args(args):
         args.image_distribution = False
         args.image_distribution_mode = "0"
         args.distributed_dataset_storage = False
+        args.distributed_save = False
 
     if utils.MP_GROUP.size() == 1:
         args.image_distribution_mode = "0"
@@ -296,5 +321,21 @@ def init_args(args):
 
     # sort test_iterations
     args.test_iterations.sort()
+    if len(args.test_iterations) > 0:
+        while args.test_iterations[-1] < args.iterations:
+            args.test_iterations.append(args.test_iterations[-1]+10000)
+
+    args.save_iterations.sort()
+    if len(args.save_iterations) > 0:
+        while args.save_iterations[-1] < args.iterations:
+            args.save_iterations.append(args.save_iterations[-1]+20000)
+    if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
+        args.save_iterations.append(args.iterations)
+
+    args.checkpoint_iterations.sort()
+    if len(args.checkpoint_iterations) > 0:
+        while args.checkpoint_iterations[-1] < args.iterations:
+            args.checkpoint_iterations.append(args.checkpoint_iterations[-1]+50000)
+
 
     init_image_distribution_config(args)

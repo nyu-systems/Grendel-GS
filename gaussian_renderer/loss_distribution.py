@@ -1338,4 +1338,7 @@ name2loss_implementation = {
 }
 
 def loss_computation(image, viewpoint_cam, compute_locally, strategy, statistic_collector, image_distribution_mode):
+    # HACK: if image is a scalar tensor, that implies there is no render. We return 0 to make sure the gradient is also 0.
+    if len(image.shape) == 0:
+        return image*0, image*0
     return name2loss_implementation[image_distribution_mode](image, viewpoint_cam, compute_locally, strategy, statistic_collector)

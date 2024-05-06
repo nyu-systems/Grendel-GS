@@ -473,9 +473,9 @@ class DivisionStrategyHistory:
     def finish_strategy(self):
         with torch.no_grad():
             self.update_heuristic()
-            if utils.get_args().benchmark_stats:
-                self.working_strategy.heuristic = None
-                # Because the heuristic is of size (# of tiles, ) and takes up lots of memory if we keep it for every iteration.
+            # if utils.get_args().benchmark_stats:
+            self.working_strategy.heuristic = None
+            # Because the heuristic is of size (# of tiles, ) and takes up lots of memory if we keep it for every iteration.
             self.add(self.working_iteration, self.working_strategy)
 
     def to_json(self):

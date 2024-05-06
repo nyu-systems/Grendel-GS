@@ -198,12 +198,14 @@ class GaussianModel:
         shard_world_size = self.group_for_redistribution().size()
         self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], shard_world_size), dtype=torch.int, device="cuda")
 
+        args = utils.get_args()
+
         l = [
-            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale * args.lr_scale_pos_and_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
+            {'params': [self._scaling], 'lr': training_args.scaling_lr * args.lr_scale_pos_and_scale, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
@@ -227,8 +229,8 @@ class GaussianModel:
             else:
                 assert False, f"lr_scale_mode {training_args.lr_scale_mode} not supported."
 
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale*lr_scale,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale*lr_scale,
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale*lr_scale*args.lr_scale_pos_and_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale*lr_scale*args.lr_scale_pos_and_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
@@ -395,9 +397,15 @@ class GaussianModel:
         # remark: max_radii2D, xyz_gradient_accum and denom are not saved here; they are save elsewhere.
 
     def reset_opacity(self):
+        utils.LOG_FILE.write("Resetting opacity to 0.01\n")
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
+    
+    def prune_based_on_opacity(self, min_opacity):
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        utils.LOG_FILE.write("Pruning based on opacity. Percent: {:.2f}\n".format(100 * prune_mask.sum().item() / prune_mask.shape[0]))
+        self.prune_points(prune_mask)
 
     def distributed_load_ply(self, path):
         folder = os.path.dirname(path)
@@ -575,6 +583,9 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+        # if self.sum_visible_count_in_one_batch is not None:
+        if utils.get_args().clear_floaters:
+            return 
         self.sum_visible_count_in_one_batch = self.sum_visible_count_in_one_batch[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):

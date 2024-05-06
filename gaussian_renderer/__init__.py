@@ -374,16 +374,26 @@ def render(screenspace_pkg, strategy=None):
     # render
     if timers is not None:
         timers.start("forward_render_gaussians")
-    rendered_image, n_render, n_consider, n_contrib = screenspace_pkg["rasterizer"].render_gaussians(
-        means2D=screenspace_pkg["means2D_for_render"],
-        conic_opacity=screenspace_pkg["conic_opacity_for_render"],
-        rgb=screenspace_pkg["rgb_for_render"],
-        depths=screenspace_pkg["depths_for_render"],
-        radii=screenspace_pkg["radii_for_render"],
-        compute_locally=compute_locally,
-        extended_compute_locally=extended_compute_locally,
-        cuda_args=screenspace_pkg["cuda_args"]
-    )
+    if screenspace_pkg["means2D_for_render"].shape[0] < 1000:
+        # assert utils.get_args().image_distribution_mode == "3", "The image_distribution_mode should be 3."
+        # rendered_image = torch.zeros((3, screenspace_pkg["rasterizer"].raster_settings.image_height, screenspace_pkg["rasterizer"].raster_settings.image_width), dtype=torch.float32, device="cuda", requires_grad=True)
+        rendered_image = screenspace_pkg["means2D_for_render"].sum()+screenspace_pkg["conic_opacity_for_render"].sum()+screenspace_pkg["rgb_for_render"].sum()
+        screenspace_pkg["cuda_args"]["stats_collector"]["forward_render_time"] = 0.0
+        screenspace_pkg["cuda_args"]["stats_collector"]["backward_render_time"] = 0.0
+        screenspace_pkg["cuda_args"]["stats_collector"]["forward_loss_time"] = 0.0
+        screenspace_pkg["cuda_args"]["stats_collector"]["backward_loss_time"] = 0.0
+        return rendered_image, compute_locally
+    else:
+        rendered_image, n_render, n_consider, n_contrib = screenspace_pkg["rasterizer"].render_gaussians(
+            means2D=screenspace_pkg["means2D_for_render"],
+            conic_opacity=screenspace_pkg["conic_opacity_for_render"],
+            rgb=screenspace_pkg["rgb_for_render"],
+            depths=screenspace_pkg["depths_for_render"],
+            radii=screenspace_pkg["radii_for_render"],
+            compute_locally=compute_locally,
+            extended_compute_locally=extended_compute_locally,
+            cuda_args=screenspace_pkg["cuda_args"]
+        )
     if timers is not None:
         timers.stop("forward_render_gaussians")
     utils.check_memory_usage_logging("after forward_render_gaussians")

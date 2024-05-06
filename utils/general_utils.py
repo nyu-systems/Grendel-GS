@@ -217,7 +217,10 @@ def our_allgather_among_cpu_processes_float_list(data, group):
     assert isinstance(data, list) and isinstance(data[0], float), "data should be a list of float"
     data_gpu = torch.tensor(data, dtype=torch.float32, device="cuda")
     all_data_gpu = torch.empty( (group.size(), len(data_gpu)), dtype=torch.float32, device="cuda")
-    torch.distributed.all_gather_into_tensor(all_data_gpu, data_gpu, group=group)
+    if group.size() > 1:
+        torch.distributed.all_gather_into_tensor(all_data_gpu, data_gpu, group=group)
+    else:
+        all_data_gpu = data_gpu.unsqueeze(0)
 
     all_data = all_data_gpu.cpu().tolist()
     return all_data
