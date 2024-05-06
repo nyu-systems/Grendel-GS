@@ -141,7 +141,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
     for batch_size in [2**i for i in range(7)]:
         utils.get_args().bsz = batch_size
-        utils.print_rank_0(f"Running with batch size {utils.get_args().bsz} for [{start_from_this_iteration}, {opt_args.iterations}]")
         trajectory_dict = {}
         # init parameterized scene
         gaussians = GaussianModel(dataset_args.sh_degree)
@@ -161,6 +160,9 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 # start_from_this_iteration += args.dp_size
 
         utils.check_memory_usage_logging("after init and before training loop")
+        num_3dgs = gaussians.get_xyz.shape[0]
+        log_file.write("num of 3dgs before training: {}\n".format(num_3dgs))
+        utils.print_rank_0(f"Running with batch size {utils.get_args().bsz} for [{start_from_this_iteration}, {opt_args.iterations}], num of 3dgs: {num_3dgs}.\n")
 
         # init dataset
         train_dataset = SceneDataset(scene.getTrainCameras(dataset_args.train_resolution_scale))
@@ -226,7 +228,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 utils.set_img_size(local_render_viewpoint_cam.image_height, local_render_viewpoint_cam.image_width)
                 local_render_strategy = micro_batched_strategies[utils.DP_GROUP.rank()]
                 time.sleep(0.1)
-                # log_file.write("iteration: {}, micro_step: {}, local_rank: {}, local_render_viewpoint_cam.uid: {}\n".format(iteration, micro_step, utils.LOCAL_RANK, local_render_viewpoint_cam.uid))
+                log_file.write("iteration: {}, micro_step: {}, local_rank: {}, local_render_viewpoint_cam.uid: {}\n".format(iteration, micro_step, utils.LOCAL_RANK, local_render_viewpoint_cam.uid))
 
                 # 3DGS preprocess and all2all communication
                 # globally_sync_for_timer()
@@ -267,13 +269,16 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                     with torch.no_grad():
                         for param_group in gaussians.optimizer.param_groups:
                             name = param_group["name"]
+                            if name == "f_rest":
+                                continue
                             grad = param_group["params"][0].grad.clone().detach()
                             if name not in batched_parameter_gradients_pkg:
                                 batched_parameter_gradients_pkg[name] = []
                                 grad_prev[name] = grad
                             else:
                                 grad, grad_prev[name] = grad - grad_prev[name], grad
-                            batched_parameter_gradients_pkg[name].append(grad)
+                            batched_parameter_gradients_pkg[name].append(grad.clone().detach())
+                            # print the size of memory of the gradients.
                         
                 if args.gaussians_distribution:
                     batched_screenspace_pkg["batched_local2j_ids_bool"].append(screenspace_pkg["local2j_ids_bool"])
@@ -282,7 +287,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 torch.cuda.synchronize()
                 local_render_viewpoint_cam.gt_image_comm_op = None
                 local_render_viewpoint_cam.original_image = None
-
 
             with torch.no_grad():
                 # Sync gradients across replicas, if some 3dgs are stored replicatedly.
@@ -377,6 +381,15 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
                 # Optimizer step
                 if iteration <= opt_args.iterations:
+                    if batched_parameter_gradients_pkg is not None and utils.LOCAL_RANK == 0:
+                        # get parameter weights
+                        weights_dict = {}
+                        for param_group in gaussians.optimizer.param_groups:
+                            name = param_group["name"]
+                            if name == "f_rest":
+                                continue
+                            weights_dict[name] = param_group['params'][0].clone().detach()
+
                     timers.start("optimizer_step")
 
                     if args.lr_scale_mode != "accumu": # we scale the learning rate rather than accumulate the gradients.
@@ -394,10 +407,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                         # get optimizer states for each parameter
                         exp_avg_dict = {}
                         exp_avg_sq_dict = {}
-                        weights_dict = {}
                         for param_group in gaussians.optimizer.param_groups:
                             name = param_group["name"]
-                            weights_dict[name] = param_group['params'][0].clone().detach()
+                            if name == "f_rest":
+                                continue
                             stored_state = gaussians.optimizer.state.get(param_group['params'][0], None)
                             if stored_state is not None:
                                 exp_avg_dict[name] = stored_state['exp_avg'].clone().detach()
@@ -405,9 +418,11 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                         # save mini-batch gradients and optimizer states
                         save_dict = dict()
                         for name in batched_parameter_gradients_pkg.keys():
-                            save_dict[name] = (batched_parameter_gradients_pkg[name], exp_avg_dict[name], exp_avg_sq_dict[name], weights_dict[name])
+                            save_dict[name] = (batched_parameter_gradients_pkg[name].cpu(), exp_avg_dict[name].cpu(), exp_avg_sq_dict[name].cpu(), weights_dict[name].cpu())
+                            # save_dict[name] = (batched_parameter_gradients_pkg[name], exp_avg_dict[name], exp_avg_sq_dict[name], weights_dict[name])
                             # Tensor: [bsz, n_3dgs, grad_dim], Tensor: [n_3dgs, grad_dim], Tensor: [n_3dgs, grad_dim]
                         trajectory_dict[iteration] = save_dict
+                    torch.cuda.empty_cache()
 
             # Finish a iteration and clean up
             if args.nsys_profile:
@@ -429,6 +444,14 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             with open(args.log_folder+"/strategy_history_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".json", 'w') as f:
                 json.dump(data_json, f)
         
+        # compute the size of the trajectory_dict
+        if utils.GLOBAL_RANK == 0:
+            num_iters = len(trajectory_dict)
+            grad_size = {}
+            for name, (grad, exp_avg, exp_avg_sq, weights) in list(trajectory_dict.values())[0].items():
+                grad_size[name] = grad.numel() * grad.element_size() * num_iters / 1024 / 1024 / 1024
+                print("name: {}, grad_size: {} GB".format(name, grad_size[name]))
+                
         if batch_size == 1:
             # Save the trajectory_dict
             base_trajectory_dict = trajectory_dict
@@ -461,9 +484,10 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 weights_delta_cosine_similarity_dict = {}
                 weights_delta_norm_ratio_dict = {}
                 for name, (grad, exp_avg, exp_avg_sq, weights) in grad_pkg.items():
-                    base_exp_avg_accumu = torch.sum(torch.concat([base_trajectory_dict[base_iteration][name][1] for base_iteration in base_iterations]), dim=0)
-                    base_weights_delta = base_trajectory_dict[iteration+batch_size][name][3] - base_trajectory_dict[iteration][name][3]
-                    weights_delta = trajectory_dict[iteration+batch_size][name][3] - trajectory_dict[iteration][name][3]
+                    exp_avg = exp_avg.cuda()
+                    base_exp_avg_accumu = torch.sum(torch.concat([base_trajectory_dict[base_iteration][name][1].cuda() for base_iteration in base_iterations]), dim=0)
+                    base_weights_delta = base_trajectory_dict[iteration+batch_size][name][3].cuda() - base_trajectory_dict[iteration][name][3].cuda()
+                    weights_delta = trajectory_dict[iteration+batch_size][name][3].cuda() - trajectory_dict[iteration][name][3].cuda()
 
                     exp_avg_cosine_similarity_dict[name] = torch.nn.functional.cosine_similarity(exp_avg, base_exp_avg_accumu).mean().item()
                     exp_avg_norm_ratio_dict[name] = (torch.norm(exp_avg) / torch.norm(base_exp_avg_accumu)).mean().item()
@@ -497,7 +521,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 # exp_avg_sq_norm_ratio[iteration] = exp_avg_sq_norm_ratio_dict
                 weights_delta_cosine_similarity[iteration] = weights_delta_cosine_similarity_dict
                 weights_delta_norm_ratio[iteration] = weights_delta_norm_ratio_dict
-        
+
+            torch.cuda.empty_cache()
             log_file.write("\n========================================================\nstart grad stats for batch_size: {}\n\n".format(batch_size))
             for iteration in trajectory_dict.keys():
                 log_file.write("iteration: {}\n".format(iteration))
@@ -513,6 +538,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                     except KeyError:
                         break
             log_file.write("\n========================================================\nend: grad stats for batch_size: {}\n\n".format(batch_size))
+            utils.print_rank_0(f"Max Memory usage util Batch size {batch_size}: {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024} GB.")
                         
 
 def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_args, background, test_resolution_scale=1.0):
