@@ -146,6 +146,9 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
+    def all_parameters(self):
+        return [self._xyz, self._features_dc, self._features_rest, self._scaling, self._rotation, self._opacity]
+
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -161,8 +164,22 @@ class GaussianModel:
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+        for param_group in self.optimizer.param_groups:
+            if training_args.lr_scale_mode == "linear":
+                lr_scale = training_args.bsz
+                param_group["lr"] *= lr_scale
+            elif training_args.lr_scale_mode == "sqrt":
+                lr_scale = np.sqrt(training_args.bsz)
+                param_group["lr"] *= lr_scale
+                if "eps" in param_group: # Adam
+                    param_group["eps"] /= lr_scale
+                    param_group["betas"] = [beta ** training_args.bsz for beta in param_group["betas"]]
+            elif training_args.lr_scale_mode == "none":
+                lr_scale = 1
+            else:
+                assert False, f"lr_scale_mode {training_args.lr_scale_mode} not supported."
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale * lr_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale * lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 

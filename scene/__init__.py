@@ -82,6 +82,52 @@ class Scene:
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
+        self.cur_epoch_cameras = []
+        self.random_sequence = None
+        if args.fixed_random_sequence:
+            self.random_sequence = self.generate_random_squence()
+
+    def generate_random_squence(self, max_bsz=16, len=128, scale=1.0):
+        # Generate a random sequence of cameras, each max_bsz cameras are in a batch.
+        # only need to generate the index of the cameras as and int array.
+        # The actual cameras are fetched in get_batched_cameras.
+        assert len % max_bsz == 0, "len must be divisible by max_bsz"
+        random_sequence = []
+        if os.path.exists(f"random_sequence_max_bsz={max_bsz}_len={len}.txt"):
+            with open(f"random_sequence_max_bsz={max_bsz}_len={len}.txt", "r") as f:
+                batched_cameras_uid = [int(line.strip()) for line in f]
+            for uid in batched_cameras_uid:
+                for cam in self.train_cameras[scale]:
+                    if cam.uid == uid:
+                        random_sequence.append(cam)
+                        break
+            return random_sequence
+
+        for _ in range(len // max_bsz):
+            batched_cameras_uid = []
+            for _ in range(max_bsz):
+                random_sequence.append(self.get_one_camera(batched_cameras_uid))
+                batched_cameras_uid.append(random_sequence[-1].uid)
+        # save to txt
+        with open(f"random_sequence_max_bsz={max_bsz}_len={len}.txt", "w") as f:
+            for cam in random_sequence:
+                f.write(str(cam.uid) + "\n")
+        return random_sequence
+
+    def get_one_camera(self, batched_cameras_uid, scale=1.0):
+        if self.random_sequence:
+            return self.random_sequence.pop(0)
+        
+        if len(self.cur_epoch_cameras) == 0:
+            self.cur_epoch_cameras = self.train_cameras[scale].copy()
+
+        while True:
+            camera_id = random.randint(0, len(self.cur_epoch_cameras)-1)
+            if self.cur_epoch_cameras[camera_id].uid not in batched_cameras_uid:
+                break
+        viewpoint_cam = self.cur_epoch_cameras.pop(camera_id)
+        return viewpoint_cam
+
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
