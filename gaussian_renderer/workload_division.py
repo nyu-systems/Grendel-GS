@@ -59,7 +59,7 @@ def check_division_indices_globally_same(division_indices):
         for j in range(utils.MP_GROUP.size()):
             assert recevie[i][j] == division_indices[j], f"check_division_indices_globally_save failed: {i} {j}"
 
-def division_pos_heuristic(heuristic, tile_num, world_size):
+def division_pos_heuristic(heuristic, tile_num, world_size, right=False):
     assert heuristic.shape[0] == tile_num, "the length of heuristics should be the same as the number of tiles."
     heuristic_prefix_sum = torch.cumsum(heuristic, dim=0)
     heuristic_sum = heuristic_prefix_sum[-1]
@@ -69,7 +69,7 @@ def division_pos_heuristic(heuristic, tile_num, world_size):
     division_pos = [0]
 
     # Use searchsorted to find the positions
-    division_indices = torch.searchsorted(heuristic_prefix_sum, thresholds)
+    division_indices = torch.searchsorted(heuristic_prefix_sum, thresholds, right=right)
 
     # check_division_indices_globally_same(division_indices)
 

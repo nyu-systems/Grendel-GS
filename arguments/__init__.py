@@ -137,7 +137,7 @@ class DistributionParams(ParamGroup):
         self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
         self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
         self.dist_global_strategy = "" # if self.render_distribution_adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
-        self.adjust_strategy_warmp_iterations = 20 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
+        self.adjust_strategy_warmp_iterations = -1 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
         # self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
         self.image_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
 
@@ -168,6 +168,13 @@ class DistributionParams(ParamGroup):
         self.num_train_cameras = -1
         self.num_test_cameras = -1
         self.distributed_save = False
+
+        self.use_final_system = False # if True, we use the final system.
+        self.no_heuristics_update = False
+        self.border_divpos_coeff = 2
+        self.no_avoid_pixel_all2all = False
+
+        self.use_final_system2 = False # if True, we use the final system.
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -241,7 +248,10 @@ def print_all_args(args, log_file):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
     log_file.write("-"*30+"\n\n")
 
-    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
+    if args.use_final_system or args.use_final_system2:
+        log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size))
+    else:
+        log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
 
     # Make sure block size match between python and cuda code.
     cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
@@ -311,8 +321,13 @@ def init_args(args):
         args.distributed_dataset_storage = False
         args.distributed_save = False
 
-    if utils.MP_GROUP.size() == 1:
+    assert (not args.use_final_system) or (not args.use_final_system2), "use_final_system and use_final_system2 can not be enabled at the same time."
+
+    if args.use_final_system or args.use_final_system2:
+        args.image_distribution_mode = "3"
+    elif utils.MP_GROUP.size() == 1:
         args.image_distribution_mode = "0"
+    
 
     if not args.gaussians_distribution:
         args.distributed_save = False

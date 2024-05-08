@@ -3866,18 +3866,18 @@ if __name__ == "__main__":
     # ]
     # loss_and_3dgs_curves(rubble_2k_folders)
 
-    mat_bA_folders = [
-        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_test/",
-        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_1/",
-        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_2/",
-        # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_3/",
-        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_1",
-        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_2",
-        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_3",
-        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_4",
-        "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_5",
-    ]
-    loss_and_3dgs_curves(mat_bA_folders)
+    # mat_bA_folders = [
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_test/",
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_1/",
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_2/",
+    #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ds2_bA_4g_mp_3/",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_1",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_2",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_3",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_4",
+    #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_bA_4g_dp_5",
+    # ]
+    # loss_and_3dgs_curves(mat_bA_folders)
 
     # mat_ball2_folders = [
     #     # "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_4g_dp_1/",
@@ -3886,6 +3886,8 @@ if __name__ == "__main__":
     #     "/pscratch/sd/j/jy-nyu/mat_expes/mat_ball2_16g_dp_2"
     # ]
     # loss_and_3dgs_curves(mat_ball2_folders)
+
+    loss_and_3dgs_curves(["/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1/"])
 
     pass
 

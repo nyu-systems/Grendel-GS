@@ -69,14 +69,17 @@ def get_timers():
 BLOCK_X, BLOCK_Y = 16, 16
 ONE_DIM_BLOCK_SIZE = 256
 IMG_H, IMG_W = None, None
+TILE_Y, TILE_X = None, None
 
 def set_block_size(x, y, z):
     global BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE
     BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE = x, y, z
 
 def set_img_size(h, w):
-    global IMG_H, IMG_W
+    global IMG_H, IMG_W, TILE_Y, TILE_X
     IMG_H, IMG_W = h, w
+    TILE_Y = (IMG_H + BLOCK_Y - 1) // BLOCK_Y
+    TILE_X = (IMG_W + BLOCK_X - 1) // BLOCK_X
 
 def get_img_size():
     global IMG_H, IMG_W
@@ -104,6 +107,11 @@ def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()
     return args.zhx_python_time and ( check_update_at_this_iter(iteration, args.bsz, args.log_interval, 1) or iteration in args.force_python_timer_iterations)
+
+def globally_sync_for_timer():
+    global DEFAULT_GROUP
+    if check_enable_python_timer() and DEFAULT_GROUP.size() > 1:
+        torch.distributed.barrier(group=DEFAULT_GROUP)
 
 def check_update_at_this_iter(iteration, bsz, update_interval, update_residual):
     residual_l = iteration % update_interval
@@ -142,7 +150,7 @@ def check_comm_group():
         print(f"MP_GROUP.rank() {MP_GROUP.rank()} tensor: {tensor.item()}\n", flush=True)
 
 def init_distributed(args):
-    global GLOBAL_RANK, LOCAL_RANK, WORLD_SIZE
+    global GLOBAL_RANK, LOCAL_RANK, WORLD_SIZE, DEFAULT_GROUP, IN_NODE_GROUP
     GLOBAL_RANK = int(os.environ.get("RANK", 0))
     LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
     WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
@@ -154,7 +162,7 @@ def init_distributed(args):
         assert WORLD_SIZE % args.dp_size == 0, "World size should be divisible by dp_size"
         args.mp_size = WORLD_SIZE // args.dp_size
 
-        global DP_GROUP, MP_GROUP, DEFAULT_GROUP, IN_NODE_GROUP
+        global DP_GROUP, MP_GROUP
 
         # mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
         # # Users can access the underlying process group thru `get_group` API.
@@ -193,6 +201,32 @@ def init_distributed(args):
     else:
         DP_GROUP = SingleGPUGroup()
         MP_GROUP = SingleGPUGroup()
+        DEFAULT_GROUP = SingleGPUGroup()
+        IN_NODE_GROUP = SingleGPUGroup()
+
+def init_distributed_final(args):
+    global GLOBAL_RANK, LOCAL_RANK, WORLD_SIZE, DEFAULT_GROUP, IN_NODE_GROUP
+    GLOBAL_RANK = int(os.environ.get("RANK", 0))
+    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
+    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
+    if WORLD_SIZE > 1:
+        torch.distributed.init_process_group("nccl", rank=GLOBAL_RANK, world_size=WORLD_SIZE)
+        assert torch.cuda.is_available(), "Distributed mode requires CUDA"
+        assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
+
+        DEFAULT_GROUP = dist.group.WORLD
+
+        num_gpu_per_node = one_node_device_count()
+        n_of_nodes = WORLD_SIZE // num_gpu_per_node
+        all_in_node_group = []
+        for rank in range(n_of_nodes):
+            in_node_group_ranks = list(range(rank*num_gpu_per_node, (rank+1)*num_gpu_per_node))
+            all_in_node_group.append(dist.new_group(in_node_group_ranks))
+        node_rank = GLOBAL_RANK // num_gpu_per_node
+        IN_NODE_GROUP = all_in_node_group[node_rank]
+        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     in_node_size: " + str(IN_NODE_GROUP.size()) + " in_node_rank: " + str(IN_NODE_GROUP.rank()))
+
+    else:
         DEFAULT_GROUP = SingleGPUGroup()
         IN_NODE_GROUP = SingleGPUGroup()
 

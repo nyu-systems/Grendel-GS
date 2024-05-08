@@ -181,13 +181,16 @@ class SceneDataset:
         viewpoint_cam = self.cur_epoch_cameras.pop(camera_id)
         return viewpoint_cam
 
-    def get_batched_cameras(self, batch_size):
+    def get_batched_cameras(self, batch_size, load_now=True):
         assert batch_size <= self.camera_size, "Batch size is larger than the number of cameras in the scene."
         batched_cameras = []
         batched_cameras_uid = []
         for i in range(batch_size):
             batched_cameras.append(self.get_one_camera(batched_cameras_uid))
             batched_cameras_uid.append(batched_cameras[-1].uid)
+
+        if not load_now:
+            return batched_cameras
 
         args = self.args
         timers = utils.get_timers()
