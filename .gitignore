@@ -6,6 +6,7 @@ experiments*
 *.ipynb
 plots/
 wandb/
+wandb
 
 *.pyc
 .vscode

@@ -32,7 +32,7 @@ import wandb
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    tb_writer = None
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -151,7 +151,7 @@ def prepare_output_and_logger(args):
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
-    wandb.init(project="3dgs-analyse", config=vars(args))
+    wandb.init(project="3dgs-analyse", config=vars(args), group="train")
 
     # # Create Tensorboard writer
     # tb_writer = None
@@ -226,8 +226,9 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    prepare_output_and_logger(args)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done
