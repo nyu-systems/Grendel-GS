@@ -23,9 +23,11 @@ import torch
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, return_image=False):
-    orig_w, orig_h = cam_info.width, cam_info.height
     if id == 0:
+        orig_h, orig_w = cam_info.image.size
         utils.set_img_size(orig_h, orig_w)
+    orig_h, orig_w = utils.get_img_size()
+
     args = get_args()
     log_file = get_log_file()
     if args.resolution in [1, 2, 4, 8]:
