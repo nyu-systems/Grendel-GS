@@ -231,8 +231,9 @@ def init_distributed_final(args):
         IN_NODE_GROUP = SingleGPUGroup()
 
 def one_node_device_count():
-    return 4 # HACK: because in perl cluster, it is always 4 GPUs per node. TODO: change it back. 
-    return torch.cuda.device_count()
+    # return 4 # HACK: because in perl cluster, it is always 4 GPUs per node. TODO: change it back. 
+    global WORLD_SIZE
+    return min(torch.cuda.device_count(), WORLD_SIZE)
 
 def get_first_rank_on_cur_node():
     global GLOBAL_RANK

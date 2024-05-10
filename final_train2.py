@@ -11,7 +11,7 @@ from scene import Scene, GaussianModel, SceneDataset
 from gaussian_renderer.workload_division import division_pos_heuristic
 from utils.general_utils import prepare_output_and_logger, globally_sync_for_timer
 import utils.general_utils as utils
-from utils.timer import Timer, End2endTimer
+from utils.timer import Timer, End2endTimer, EpochTimer
 from tqdm import tqdm
 from utils.image_utils import psnr
 import torch.distributed as dist
@@ -19,6 +19,7 @@ from densification import densification
 import diff_gaussian_rasterization
 import time
 from utils.loss_utils import pixelwise_l1_with_mask, pixelwise_ssim_with_mask
+from torch import nn
 
 class DivisionStrategyFinal:
 
@@ -355,28 +356,7 @@ def final_system_loss_computation(image, viewpoint_cam, compute_locally, strateg
     # utils.check_memory_usage_logging("after ssim_loss")
     timers.stop("local_loss_computation") # measure time before allreduce, so that we can get the real local time. 
 
-    if args.get_global_exact_loss:
-        # get the loss without redundant pixels compute, to make sure it runs correctly.
-        # this is for debugging. 
-        with torch.no_grad():
-            local_image_rect_pixels_compute_locally = diff_gaussian_rasterization._C.get_pixels_compute_locally_and_in_rect(# check this function.
-                compute_locally,
-                utils.IMG_H, utils.IMG_W,
-                coverage_min_y, coverage_max_y, 0, utils.IMG_W
-            )
-            pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
-                                                   local_image_rect_gt,
-                                                   local_image_rect_pixels_compute_locally)
-            pixelwise_Ll1_sum = pixelwise_Ll1.sum() / (utils.get_num_pixels()*3)
-            pixelwise_ssim_loss = pixelwise_ssim_with_mask(local_image_rect,
-                                                           local_image_rect_gt,
-                                                           local_image_rect_pixels_compute_locally)
-            pixelwise_ssim_loss_sum = pixelwise_ssim_loss.sum() / (utils.get_num_pixels()*3)
-            test_loss = (1.0 - args.lambda_dssim) * pixelwise_Ll1_sum + args.lambda_dssim * (1.0 - pixelwise_ssim_loss_sum)
-    else:
-        test_loss = None
-
-    return Ll1, ssim_loss, test_loss
+    return Ll1, ssim_loss, None
 
 def batched_loss_computation(batched_image, batched_cameras, batched_compute_locally, batched_strategies, batched_statistic_collector):
     args = utils.get_args()
@@ -414,6 +394,84 @@ def batched_loss_computation(batched_image, batched_cameras, batched_compute_loc
     timers.stop("loss_computation")
     return loss_sum * args.lr_scale_loss, losses_for_saving, all_test_losses
 
+def merge_multiple_checkpoints(checkpoint_files):
+    all_model_params = []
+    start_from_this_iteration = 0
+    for checkpoint_file in checkpoint_files:
+        (model_params, start_from_this_iteration) = torch.load(checkpoint_file, map_location=f"cuda:{utils.LOCAL_RANK}")
+        all_model_params.append(model_params)
+    
+    active_sh_degree = all_model_params[0][0]
+
+    xyz = torch.cat([model_params[1] for model_params in all_model_params], dim=0)
+    features_dc = torch.cat([model_params[2] for model_params in all_model_params], dim=0)
+    features_rest = torch.cat([model_params[3] for model_params in all_model_params], dim=0)
+    scaling = torch.cat([model_params[4] for model_params in all_model_params], dim=0)
+    rotation = torch.cat([model_params[5] for model_params in all_model_params], dim=0)
+    opacity = torch.cat([model_params[6] for model_params in all_model_params], dim=0)
+    max_radii2D = torch.cat([model_params[7] for model_params in all_model_params], dim=0)
+    xyz_gradient_accum = torch.cat([model_params[8] for model_params in all_model_params], dim=0)
+    denom = torch.cat([model_params[9] for model_params in all_model_params], dim=0)
+    opt_dict = None
+    spatial_lr_scale = all_model_params[0][-1]
+
+        # self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
+        # self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
+        # self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
+        # self._scaling = nn.Parameter(scales.requires_grad_(True))
+        # self._rotation = nn.Parameter(rots.requires_grad_(True))
+        # self._opacity = nn.Parameter(opacities.requires_grad_(True))
+
+    merged_model_params = (active_sh_degree,
+                           nn.Parameter(xyz.requires_grad_(True)),
+                           nn.Parameter(features_dc.requires_grad_(True)),
+                           nn.Parameter(features_rest.requires_grad_(True)),
+                           nn.Parameter(scaling.requires_grad_(True)),
+                           nn.Parameter(rotation.requires_grad_(True)),
+                           nn.Parameter(opacity.requires_grad_(True)),
+                           max_radii2D, 
+                           xyz_gradient_accum, 
+                           denom, 
+                           opt_dict, 
+                           spatial_lr_scale)
+
+    return merged_model_params, start_from_this_iteration
+
+def drop_duplicate_gaussians(model_params, drop_duplicate_gaussians_coeff):
+    if drop_duplicate_gaussians_coeff == 1.0:
+        return model_params
+
+    active_sh_degree = model_params[0]
+    xyz = model_params[1]
+    features_dc = model_params[2]
+    features_rest = model_params[3]
+    scaling = model_params[4]
+    rotation = model_params[5]
+    opacity = model_params[6]
+    max_radii2D = model_params[7]
+    xyz_gradient_accum = model_params[8]
+    denom = model_params[9]
+    opt_dict = None
+    spatial_lr_scale = model_params[11]
+
+    all_indices = torch.arange(int(xyz.shape[0]*drop_duplicate_gaussians_coeff), device=xyz.device)
+    keep_indices = all_indices % xyz.shape[0]
+
+    return (
+        active_sh_degree,
+        nn.Parameter(xyz[keep_indices].requires_grad_(True)),
+        nn.Parameter(features_dc[keep_indices].requires_grad_(True)),
+        nn.Parameter(features_rest[keep_indices].requires_grad_(True)),
+        nn.Parameter(scaling[keep_indices].requires_grad_(True)),
+        nn.Parameter(rotation[keep_indices].requires_grad_(True)),
+        nn.Parameter(opacity[keep_indices].requires_grad_(True)),
+        max_radii2D[keep_indices],
+        xyz_gradient_accum[keep_indices],
+        denom[keep_indices],
+        opt_dict,
+        spatial_lr_scale
+    )
+
 def training(dataset_args, opt_args, pipe_args, args, log_file):
     args.no_avoid_pixel_all2all = True
     print("set args.no_avoid_pixel_all2all to True")
@@ -438,18 +496,30 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
         if args.start_checkpoint != "":
             number_files = len(os.listdir(args.start_checkpoint))
-            assert number_files == utils.DEFAULT_GROUP.size(), "The number of files in the checkpoint folder must be equal to the number of processes."
             if args.start_checkpoint[-1] != "/":
                 args.start_checkpoint += "/"
-            file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
-            (model_params, start_from_this_iteration) = torch.load(file_name)
+            if number_files == utils.DEFAULT_GROUP.size():
+                file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
+                (model_params, start_from_this_iteration) = torch.load(file_name)
+
+            else:
+                assert number_files % utils.DEFAULT_GROUP.size() == 0, "The number of files in the checkpoint folder must be a multiple of the number of processes."
+                local_processed_file_names = []
+                for i in range(utils.DEFAULT_GROUP.rank(), number_files, utils.DEFAULT_GROUP.size()):
+                    local_processed_file_names.append(args.start_checkpoint+"chkpnt" + str(i) + ".pth")
+                (model_params, start_from_this_iteration) = merge_multiple_checkpoints(local_processed_file_names)
+                file_name = local_processed_file_names
+
+            if args.drop_duplicate_gaussians_coeff != 1.0:
+                model_params = drop_duplicate_gaussians(model_params, args.drop_duplicate_gaussians_coeff)
+
             gaussians.restore(model_params, opt_args)
             start_from_this_iteration += args.bsz
             utils.print_rank_0("Restored from checkpoint: {}".format(file_name))
             log_file.write("Restored from checkpoint: {}\n".format(file_name))
 
         scene.log_scene_info_to_file(log_file, "Scene Info Before Training")
-
+    # exit()
     utils.check_memory_usage_logging("after init and before training loop")
 
     # init dataset

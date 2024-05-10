@@ -52,6 +52,8 @@ class Camera(nn.Module):
         if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
             # load to cpu
             self.original_image_cpu = image.contiguous()
+            if args.preload_dataset_gpu:
+                self.original_image_cpu = self.original_image_cpu.to("cuda").to(torch.float32)
             self.image_width = self.original_image_cpu.shape[2]
             self.image_height = self.original_image_cpu.shape[1]
             # TODO: fix this later.

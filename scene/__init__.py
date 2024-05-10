@@ -20,6 +20,7 @@ from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import utils.general_utils as utils
 import torch
+import time
 
 class Scene:
 
@@ -160,6 +161,10 @@ class SceneDataset:
         self.log_file = utils.get_log_file()
         self.args = utils.get_args()
 
+        self.last_time_point = None
+        self.epoch_time = []
+        self.epoch_n_sample = []
+
     @property
     def cur_epoch(self):
         return len(self.epoch_loss)
@@ -170,7 +175,22 @@ class SceneDataset:
 
     def get_one_camera(self, batched_cameras_uid):
         if len(self.cur_epoch_cameras) == 0:
+            # start a new epoch
             self.cur_epoch_cameras = self.cameras.copy()
+
+            if self.args.final_system_bench_time:
+                torch.cuda.synchronize()
+                new_time_point = time.time()
+                if self.last_time_point is not None:
+                    self.epoch_time.append(new_time_point - self.last_time_point)
+                    self.log_file.write("epoch {} time: {:.3f} s, n_samples: {}, throughput {:.2f} it/s\n".format(
+                        len(self.epoch_time), self.epoch_time[-1], self.epoch_n_sample[-1], self.epoch_n_sample[-1]/self.epoch_time[-1]))
+
+                self.last_time_point = new_time_point
+                self.epoch_n_sample.append(0)
+                self.args.no_heuristics_update = (len(self.epoch_n_sample) == 1)
+                # This first epoch is not stable, we should not use its statistics to update the heuristics.
+
         self.cur_iteration += 1
 
         # TODO: fixed_training_image not implemented. 
@@ -261,3 +281,6 @@ class SceneDataset:
                 )
                 self.log_file.write("epoch {} loss: {}\n".format(len(self.epoch_loss), self.epoch_loss[-1]))
                 self.iteration_loss = []
+
+        if self.args.final_system_bench_time:
+            self.epoch_n_sample[-1] += len(losses)

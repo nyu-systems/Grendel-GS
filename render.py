@@ -106,6 +106,10 @@ if __name__ == "__main__":
     ## Prepare arguments.
     # Check arguments
     init_args(args)
+    if args.skip_train:
+        args.num_train_cameras = 1
+    if args.skip_test:
+        args.num_test_cameras = 1
     # Set up global args
     set_args(args)
     print_all_args(args, log_file)

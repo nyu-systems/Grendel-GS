@@ -175,6 +175,10 @@ class DistributionParams(ParamGroup):
         self.no_avoid_pixel_all2all = False
 
         self.use_final_system2 = False # if True, we use the final system.
+        self.final_system_bench_time = False
+        self.drop_duplicate_gaussians_coeff = 1.0
+
+        self.preload_dataset_gpu = False
 
         super().__init__(parser, "Distribution Parameters")
 
@@ -352,5 +356,10 @@ def init_args(args):
         while args.checkpoint_iterations[-1] < args.iterations:
             args.checkpoint_iterations.append(args.checkpoint_iterations[-1]+50000)
 
+    if args.final_system_bench_time:
+        args.test_iterations = []
+        args.save_iterations = []
+        args.checkpoint_iterations = []
+        args.disable_auto_densification = True
 
     init_image_distribution_config(args)

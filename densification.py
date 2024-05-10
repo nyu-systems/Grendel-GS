@@ -59,11 +59,18 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
                 log_file.write("Memory Summary: {} GB \n".format(torch.cuda.memory_summary()))
 
             # all_gather the memory usage and log it.
-            memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([memory_usage], utils.DEFAULT_GROUP)
-            if max([a[0] for a in memory_usage_list]) > args.densify_memory_limit:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
-                print("Memory usage is over 18GB per GPU. stop densification.\n")
-                log_file.write("Memory usage is over 20GB per GPU. stop densification.\n")
+            # memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([memory_usage], utils.DEFAULT_GROUP)
+            # if max([a[0] for a in memory_usage_list]) > args.densify_memory_limit:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
+            #     print("Memory usage is over 18GB per GPU. stop densification.\n")
+            #     log_file.write("Memory usage is over 20GB per GPU. stop densification.\n")
+            #     args.disable_auto_densification = True
+
+            memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([max_reserved_memory], utils.DEFAULT_GROUP)
+            if max([a[0] for a in memory_usage_list]) > 36:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
+                print("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
+                log_file.write("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
                 args.disable_auto_densification = True
+
 
             utils.inc_densify_iter()
         

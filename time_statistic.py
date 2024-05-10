@@ -3887,7 +3887,7 @@ if __name__ == "__main__":
     # ]
     # loss_and_3dgs_curves(mat_ball2_folders)
 
-    loss_and_3dgs_curves(["/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1/"])
+    loss_and_3dgs_curves(["/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1_b16/"])
 
     pass
 

@@ -97,7 +97,8 @@ class GaussianModel:
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum # TODO: deal with self.send_to_gpui_cnt
         self.denom = denom
-        self.optimizer.load_state_dict(opt_dict)
+        if opt_dict is not None:
+            self.optimizer.load_state_dict(opt_dict)
 
     @property
     def get_scaling(self):
