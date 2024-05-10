@@ -11,7 +11,7 @@ from scene import Scene, GaussianModel, SceneDataset
 from gaussian_renderer.workload_division import division_pos_heuristic
 from utils.general_utils import prepare_output_and_logger, globally_sync_for_timer
 import utils.general_utils as utils
-from utils.timer import Timer, End2endTimer, EpochTimer
+from utils.timer import Timer, End2endTimer
 from tqdm import tqdm
 from utils.image_utils import psnr
 import torch.distributed as dist
