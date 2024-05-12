@@ -33,6 +33,23 @@ def test_l1_fused(image, gt_image, mask, lambda_dssim=0.2):
     # print("fused loss:", l1_fused.item())
     return image.grad
 
+def test_total_naive(image, gt_image, mask, lambda_dssim=0.2):
+    pixelwise_Ll1 = pixelwise_l1_with_mask(image, gt_image, mask)
+    Ll1 = pixelwise_Ll1.sum()
+    pixelwise_Lssim = pixelwise_ssim_with_mask(image, gt_image, mask)
+    Lssim = pixelwise_Lssim.sum()
+    loss = (1.0 - lambda_dssim) * Ll1 + lambda_dssim * (1.0 - Lssim)
+    loss.backward()
+    
+    # print("naive l1 loss:", Ll1.item())
+    return image.grad
+
+def test_total_fused(image, gt_image, mask, lambda_dssim=0.2):
+    loss_fused = diff_gaussian_rasterization.fused_loss(image, gt_image, mask, lambda_dssim)
+    loss_fused.backward()
+    # print("fused loss:", l1_fused.item())
+    return image.grad
+
 if __name__ == "__main__":
     # set random seed for reproducibility
     torch.manual_seed(1)
@@ -49,7 +66,7 @@ if __name__ == "__main__":
     # print(loss_fused.item())
     
     print("*************************")
-    print("***** Naive L1 Loss *****")
+    print("***** Naive Fused Loss *****")
     print("*************************")
     with torch.profiler.profile(
       activities=[
@@ -63,13 +80,13 @@ if __name__ == "__main__":
         active=10)
     ) as p:
       for n in range(21):
-        naive_grad = test_l1_naive(image, gt_image, mask, lambda_dssim)
+        naive_grad = test_total_naive(image, gt_image, mask, lambda_dssim)
         p.step()
     print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
     
     
     print("*************************")
-    print("*** Fused L1 Loss 1.0 ***")
+    print("*** Fused Loss 1.0 ***")
     print("*************************")
     with torch.profiler.profile(
       activities=[
@@ -83,13 +100,10 @@ if __name__ == "__main__":
         active=10)
     ) as p:
       for n in range(21):
-        fused_grad = test_l1_fused(image_fused, gt_image, mask, lambda_dssim)
+        fused_grad = test_total_fused(image_fused, gt_image, mask, lambda_dssim)
         p.step()
     print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
     
     # naive_grad = test_l1_naive(image, gt_image, mask, lambda_dssim)
     # fused_grad = test_l1_fused(image_fused, gt_image, mask, lambda_dssim)
     # print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
-
-
-
