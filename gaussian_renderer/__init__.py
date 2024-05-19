@@ -90,6 +90,24 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
         debug=pipe.debug
     )
 
+    # # print raster_settings in a json format
+    # import json
+    # raster_settings_dict = {}
+    # raster_settings_dict["viewmatrix"] = raster_settings.viewmatrix.tolist()
+    # raster_settings_dict["projmatrix"] = raster_settings.projmatrix.tolist()
+    # raster_settings_dict["bg"] = raster_settings.bg.tolist()
+    # raster_settings_dict["image_height"] = raster_settings.image_height
+    # raster_settings_dict["image_width"] = raster_settings.image_width
+    # raster_settings_dict["tanfovx"] = raster_settings.tanfovx
+    # raster_settings_dict["tanfovy"] = raster_settings.tanfovy
+    # raster_settings_dict["scale_modifier"] = raster_settings.scale_modifier
+    # raster_settings_dict["sh_degree"] = raster_settings.sh_degree
+    # raster_settings_dict["campos"] = raster_settings.campos.tolist()
+    # raster_settings_dict["prefiltered"] = raster_settings.prefiltered
+    # raster_settings_dict["debug"] = raster_settings.debug
+    # json.dump(raster_settings_dict, open("one_raster_settings_example.json", "w"))
+    # exit()
+
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
     if timers is not None:
         timers.stop("forward_prepare_args_and_settings")

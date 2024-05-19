@@ -437,6 +437,42 @@ def merge_multiple_checkpoints(checkpoint_files):
 
     return merged_model_params, start_from_this_iteration
 
+def get_part_of_checkpoints(checkpoint_file, num_parts, part_id):
+    (model_params, start_from_this_iteration) = torch.load(checkpoint_file, map_location=f"cuda:{utils.LOCAL_RANK}")
+
+    num_gaussians = model_params[1].shape[0]
+    num_gaussians_per_part = num_gaussians // num_parts + 1
+    start_idx = part_id * num_gaussians_per_part
+    end_idx = min((part_id+1) * num_gaussians_per_part, num_gaussians)
+
+    active_sh_degree = model_params[0]
+    xyz = model_params[1][start_idx:end_idx]
+    features_dc = model_params[2][start_idx:end_idx]
+    features_rest = model_params[3][start_idx:end_idx]
+    scaling = model_params[4][start_idx:end_idx]
+    rotation = model_params[5][start_idx:end_idx]
+    opacity = model_params[6][start_idx:end_idx]
+    max_radii2D = model_params[7][start_idx:end_idx]
+    xyz_gradient_accum = model_params[8][start_idx:end_idx]
+    denom = model_params[9][start_idx:end_idx]
+    opt_dict = None
+    spatial_lr_scale = model_params[11]
+
+    new_model_params = (active_sh_degree,
+            nn.Parameter(xyz.requires_grad_(True)),
+            nn.Parameter(features_dc.requires_grad_(True)),
+            nn.Parameter(features_rest.requires_grad_(True)),
+            nn.Parameter(scaling.requires_grad_(True)),
+            nn.Parameter(rotation.requires_grad_(True)),
+            nn.Parameter(opacity.requires_grad_(True)),
+            max_radii2D, 
+            xyz_gradient_accum, 
+            denom, 
+            opt_dict, 
+            spatial_lr_scale)
+    return new_model_params, start_from_this_iteration
+
+
 def drop_duplicate_gaussians(model_params, drop_duplicate_gaussians_coeff):
     if drop_duplicate_gaussians_coeff == 1.0:
         return model_params
@@ -502,13 +538,17 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank()) + ".pth"
                 (model_params, start_from_this_iteration) = torch.load(file_name)
 
-            else:
+            elif number_files > utils.DEFAULT_GROUP.size():
                 assert number_files % utils.DEFAULT_GROUP.size() == 0, "The number of files in the checkpoint folder must be a multiple of the number of processes."
                 local_processed_file_names = []
                 for i in range(utils.DEFAULT_GROUP.rank(), number_files, utils.DEFAULT_GROUP.size()):
                     local_processed_file_names.append(args.start_checkpoint+"chkpnt" + str(i) + ".pth")
                 (model_params, start_from_this_iteration) = merge_multiple_checkpoints(local_processed_file_names)
                 file_name = local_processed_file_names
+            elif number_files < utils.DEFAULT_GROUP.size():
+                assert utils.DEFAULT_GROUP.size() % number_files == 0, "The number of files in the checkpoint folder must be a divisor of the number of processes."
+                file_name = args.start_checkpoint+"chkpnt" + str(utils.DEFAULT_GROUP.rank() % number_files) + ".pth"
+                (model_params, start_from_this_iteration) = get_part_of_checkpoints(file_name, utils.DEFAULT_GROUP.size()//number_files, utils.DEFAULT_GROUP.rank()//number_files)
 
             if args.drop_duplicate_gaussians_coeff != 1.0:
                 model_params = drop_duplicate_gaussians(model_params, args.drop_duplicate_gaussians_coeff)
@@ -644,6 +684,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
             if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
                 end2end_timers.stop()
+                end2end_timers.print_time(log_file, iteration+args.bsz)
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
@@ -656,7 +697,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 end2end_timers.stop()
                 utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
                 log_file.write("\n[ITER {}] Saving Checkpoint".format(iteration))
-                end2end_timers.print_time(log_file, iteration+args.bsz)
+                # end2end_timers.print_time(log_file, iteration+args.bsz)
                 save_folder = scene.model_path + "/checkpoints/" + str(iteration) + "/"
                 if utils.DEFAULT_GROUP.rank() == 0:
                     os.makedirs(save_folder, exist_ok=True)
@@ -722,7 +763,8 @@ def training_report(iteration, l1_loss, testing_iterations, scene : Scene, pipe_
                 for idx in range(1, num_cameras+1, args.bsz):
                     if args.empty_cache_more and idx % 10 == 0:
                         torch.cuda.empty_cache()
-                    batched_cameras = eval_dataset.get_batched_cameras(args.bsz, load_now=False)
+                    num_camera_to_load = min(args.bsz, num_cameras-idx+1)
+                    batched_cameras = eval_dataset.get_batched_cameras(num_camera_to_load, load_now=False)
                     batched_strategies, gpuid2tasks = start_strategy_final(batched_cameras, strategy_history)
                     load_camera_from_cpu_to_all_gpu_for_eval(batched_cameras, batched_strategies, gpuid2tasks)
 

@@ -283,6 +283,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # if for some save_iteration in save_iterations, iteration <= save_iteration < iteration+args.bsz, then save the gaussians.
             if any([iteration <= save_iteration < iteration+args.bsz for save_iteration in args.save_iterations]):
                 end2end_timers.stop()
+                end2end_timers.print_time(log_file, iteration+args.bsz)
                 utils.print_rank_0("\n[ITER {}] Saving Gaussians".format(iteration))
                 log_file.write("[ITER {}] Saving Gaussians\n".format(iteration))
                 scene.save(iteration)
@@ -298,7 +299,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                 end2end_timers.stop()
                 utils.print_rank_0("\n[ITER {}] Saving Checkpoint".format(iteration))
                 log_file.write("\n[ITER {}] Saving Checkpoint".format(iteration))
-                end2end_timers.print_time(log_file, iteration+args.bsz)
                 save_folder = scene.model_path + "/checkpoints/" + str(iteration) + "/"
                 if utils.DEFAULT_GROUP.rank() == 0:
                     os.makedirs(save_folder, exist_ok=True)
@@ -449,4 +449,5 @@ if __name__ == "__main__":
         training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)
 
     # All done
+    torch.distributed.barrier(group=utils.DEFAULT_GROUP)
     utils.print_rank_0("\nTraining complete.")

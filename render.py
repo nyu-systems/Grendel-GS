@@ -49,10 +49,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     generated_cnt = 0
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         if args.sample_freq != -1 and idx % args.sample_freq != 0:
-            if generated_cnt == args.generate_num:
-                break
-            generated_cnt += 1
             continue
+        if generated_cnt == args.generate_num:
+            break
+        generated_cnt += 1
         strategy_history = get_division_strategy_history(cameraId2StrategyHistory, view, "evaluation")
         strategy = strategy_history.start_strategy()
         screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,

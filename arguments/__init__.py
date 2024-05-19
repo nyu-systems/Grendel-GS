@@ -179,6 +179,7 @@ class DistributionParams(ParamGroup):
         self.drop_duplicate_gaussians_coeff = 1.0
 
         self.preload_dataset_gpu = False
+        self.optimize_loadbalance = False
 
         super().__init__(parser, "Distribution Parameters")
 
