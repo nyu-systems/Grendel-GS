@@ -41,13 +41,13 @@ def test_total_naive(image, gt_image, mask, lambda_dssim=0.2):
     loss = (1.0 - lambda_dssim) * Ll1 + lambda_dssim * (1.0 - Lssim)
     loss.backward()
     
-    # print("naive l1 loss:", Ll1.item())
+    print("naive total loss:", loss.item())
     return image.grad
 
 def test_total_fused(image, gt_image, mask, lambda_dssim=0.2):
     loss_fused = diff_gaussian_rasterization.fused_loss(image, gt_image, mask, lambda_dssim)
     loss_fused.backward()
-    # print("fused loss:", l1_fused.item())
+    print("fused loss:", loss_fused.item())
     return image.grad
 
 if __name__ == "__main__":
@@ -104,6 +104,8 @@ if __name__ == "__main__":
         p.step()
     print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
     
-    # naive_grad = test_l1_naive(image, gt_image, mask, lambda_dssim)
-    # fused_grad = test_l1_fused(image_fused, gt_image, mask, lambda_dssim)
-    # print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
+    naive_grad = test_total_naive(image, gt_image, mask, lambda_dssim)
+    print("naive_grad: ", naive_grad)
+    fused_grad = test_total_fused(image_fused, gt_image, mask, lambda_dssim)
+    print("fused_grad: ", fused_grad)
+    print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
