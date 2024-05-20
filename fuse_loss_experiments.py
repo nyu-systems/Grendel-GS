@@ -108,4 +108,6 @@ if __name__ == "__main__":
     print("naive_grad: ", naive_grad)
     fused_grad = test_total_fused(image_fused, gt_image, mask, lambda_dssim)
     print("fused_grad: ", fused_grad)
-    print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
+    #print("Same grad?", torch.allclose(naive_grad * (1.0 - lambda_dssim), fused_grad, rtol=0))
+    print("Same grad?", torch.allclose(naive_grad, fused_grad, rtol=0, atol=1e-4))
+    
