@@ -82,6 +82,8 @@ def get_final_n3dgs_from_log(folder):
 
 
 def get_results_test(folder):
+    if not os.path.exists(os.path.join(folder, "results_test.json")):
+        return None
     result_test_file_path = os.path.join(folder, "results_test.json")
     with open(result_test_file_path, "r") as f:
         results_test = json.load(f)
@@ -103,12 +105,14 @@ def draw_n3dgs_metrics(folders, save_folder):
     all_points = []
     for folder in folders:
         result = get_results_test(folder)
+        if result is None:
+            continue
         n3dgs = get_final_n3dgs_from_log(folder)
         # all_results.append(get_results_test(folder))
         # all_n3dgs.append(get_final_n3dgs_from_log(folder))
         expe_name = folder.split("/")[-1]
-        if expe_name == "rub_16g_7_c2":
-            expe_name = "rub_16g_7"
+        # if expe_name == "rub_16g_7_c2":
+        #     expe_name = "rub_16g_7"
         point = (n3dgs, result, "Experiment: " + expe_name)
         all_points.append(point)
 
@@ -122,11 +126,13 @@ def draw_n3dgs_metrics(folders, save_folder):
         # keep 3 decimal places
         df = df._append({"Expe_name": point[2], 
                         "n3dgs": point[0], 
-                        "PSNR": round(point[1]["PSNR"], 3), 
-                        "SSIM": round(point[1]["SSIM"], 3), 
-                        "LPIPS": round(point[1]["LPIPS"], 3)}, 
+                        "PSNR": round(point[1]["PSNR"], 2), 
+                        "SSIM": round(point[1]["SSIM"], 2), 
+                        "LPIPS": round(point[1]["LPIPS"], 2)}, 
                     ignore_index=True)
     df.to_csv(os.path.join(save_folder, "n3dgs_metrics.csv"), index=False)
+    # convert to latex
+    convert_df_to_latex(df, os.path.join(save_folder, "n3dgs_metrics.tex"), drop_first_column=False)
 
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(30, 10))
     fig.subplots_adjust(hspace=0.5)
@@ -157,6 +163,37 @@ def draw_n3dgs_metrics(folders, save_folder):
 
     plt.savefig(os.path.join(save_folder, "n3dgs_metrics.png"))
 
+def draw_n3dgs_metrics_table_for_paper(folder):
+    # load df
+    df = pd.read_csv(os.path.join(folder, "n3dgs_metrics.csv"))
+    # the first column changes to experiment 1, 2, 3, 4, 5
+    for i in range(df.shape[0]):
+        df.iat[i, 0] = "EXPE " + str(i+1)
+    # convert to latex
+    convert_df_to_latex(df, os.path.join(folder, "n3dgs_metrics_table_for_paper.tex"), drop_first_column=False)
+
+
+def convert_df_to_latex(df, save_path, drop_first_column=True):
+    # delete the first colume of df
+    df_latex = df.copy()
+    if drop_first_column:
+        df_latex = df_latex.drop(df_latex.columns[0], axis=1)
+    # go throught each element, replace _ with space
+    for i in range(df_latex.shape[0]):
+        for j in range(df_latex.shape[1]):
+            if df_latex.iat[i, j] is not None and isinstance(df_latex.iat[i, j], str):
+                df_latex.iat[i, j] = df_latex.iat[i, j].replace("_", " ")
+            # round to 2
+            if df_latex.iat[i, j] is not None and isinstance(df_latex.iat[i, j], float):
+                df_latex.iat[i, j] = str(df_latex.iat[i, j])
+                # df_latex.iat[i, j] = str(round(df_latex.iat[i, j], 2))
+            # drop 0 at the end of these float numbers
+
+    # go through each column name, replace _ with space
+    for i in range(df_latex.shape[1]):
+        df_latex.columns.values[i] = df_latex.columns.values[i].replace("_", " ")
+    df_latex.to_latex(save_path, index=False)
+
 def draw_speed(scene_name, folder, save_folder):
 
     ngpu_bsz_2_throughput = {}
@@ -184,24 +221,19 @@ def draw_speed(scene_name, folder, save_folder):
     ngpu_bsz_2_final_ave_throughput = {}
     for n_gpu in [1, 2, 4, 8, 16, 32]:
         for bsz in [1, 2, 4, 8, 16, 32, 64]:
-            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) == 0:
+            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) < 5:
                 continue
-            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) >= 1:
-                ngpu_bsz_2_1stepoch_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][0]
-            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) >= 2:
-                ngpu_bsz_2_2rdepoch_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][1]
-            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) >= 3:
-                # ngpu_bsz_2_final_throughput[str((n_gpu, bsz))] = max(ngpu_bsz_2_throughput[str((n_gpu, bsz))][2:])
-                ngpu_bsz_2_final_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][2]
-            if len(ngpu_bsz_2_throughput[str((n_gpu, bsz))]) >= 5:
-                ngpu_bsz_2_final_ave_throughput[str((n_gpu, bsz))] = round(sum(ngpu_bsz_2_throughput[str((n_gpu, bsz))][3:6]) / 3, 3)
+            ngpu_bsz_2_1stepoch_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][0]
+            ngpu_bsz_2_2rdepoch_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][1]
+            ngpu_bsz_2_final_throughput[str((n_gpu, bsz))] = ngpu_bsz_2_throughput[str((n_gpu, bsz))][2]
+            ngpu_bsz_2_final_ave_throughput[str((n_gpu, bsz))] = round(sum(ngpu_bsz_2_throughput[str((n_gpu, bsz))][3:6]) / 3, 2)
     json.dump(ngpu_bsz_2_1stepoch_throughput, open(os.path.join(save_folder, f"{scene_name}_speed_1stepoch.json"), "w"), indent=4)
     json.dump(ngpu_bsz_2_2rdepoch_throughput, open(os.path.join(save_folder, f"{scene_name}_speed_2rdepoch.json"), "w"), indent=4)
     json.dump(ngpu_bsz_2_final_throughput, open(os.path.join(save_folder, f"{scene_name}_speed_final.json"), "w"), indent=4)
     json.dump(ngpu_bsz_2_final_ave_throughput, open(os.path.join(save_folder, f"{scene_name}_speed_final_ave.json"), "w"), indent=4)
 
     # Draw a dataframe for the ngpu_bsz_2_2rdepoch_throughput, Rows are ngpu, Columns are bsz
-    df = pd.DataFrame(columns=["#_GPU", "bsz=1", "bsz=2", "bsz=4", "bsz=8", "bsz=16", "bsz=32", "bsz=64"])
+    df = pd.DataFrame(columns=["GPU count", "bsz=1", "bsz=2", "bsz=4", "bsz=8", "bsz=16", "bsz=32", "bsz=64"])
     for n_gpu in [1, 2, 4, 8, 16, 32]:
         row = [str(n_gpu)+"_gpu"]
         for bsz in [1, 2, 4, 8, 16, 32, 64]:
@@ -211,9 +243,10 @@ def draw_speed(scene_name, folder, save_folder):
                 row.append(None)
         df.loc[n_gpu] = row
     df.to_csv(os.path.join(save_folder, f"{scene_name}_speed_without_loadbalancing.csv"))
+    convert_df_to_latex(df, os.path.join(save_folder, f"{scene_name}_speed_without_loadbalancing.tex"), drop_first_column=False)
 
     # Draw a dataframe for the ngpu_bsz_2_final_ave_throughput, Rows are ngpu, Columns are bsz
-    df = pd.DataFrame(columns=["#_GPU", "bsz=1", "bsz=2", "bsz=4", "bsz=8", "bsz=16", "bsz=32", "bsz=64"])
+    df = pd.DataFrame(columns=["GPU count", "bsz=1", "bsz=2", "bsz=4", "bsz=8", "bsz=16", "bsz=32", "bsz=64"])
     for n_gpu in [1, 2, 4, 8, 16, 32]:
         row = [str(n_gpu)+"_gpu"]
         for bsz in [1, 2, 4, 8, 16, 32, 64]:
@@ -223,16 +256,18 @@ def draw_speed(scene_name, folder, save_folder):
                 row.append(None)
         df.loc[n_gpu] = row
     df.to_csv(os.path.join(save_folder, f"{scene_name}_speed_with_loadbalancing.csv"))
+    convert_df_to_latex(df, os.path.join(save_folder, f"{scene_name}_speed_with_loadbalancing.tex"), drop_first_column=False)
 
 def draw_memory(scene_name, folder, save_folder):
 
     ngpu_bsz_2_n3dgs = {}
 
-    for bsz in [1, 4]:
-        for n_gpu in [1, 2, 4, 8, 16]:
+    for bsz in [1, 4, 16]:
+        for n_gpu in [1, 2, 4, 8, 16, 32]:
             expe_name = f"{scene_name}_mem_{n_gpu}g_{bsz}b"
             expe_folder = os.path.join(folder, expe_name)
             if not os.path.exists(expe_folder):
+                print(f"Expe {expe_name} does not exist")
                 continue
 
             ngpu_bsz_2_n3dgs[str((n_gpu, bsz))] = []
@@ -251,72 +286,91 @@ def draw_memory(scene_name, folder, save_folder):
     json.dump(ngpu_bsz_2_n3dgs, open(os.path.join(save_folder, f"{scene_name}_memory.json"), "w"), indent=4)
 
     # Draw a graph for this; the name is # of 3dgs supported by different # of GPUs
-    df = pd.DataFrame(columns=["#_GPU", "bsz=1", "bsz=4"])
-    for n_gpu in [1, 2, 4, 8, 16]:
+    df = pd.DataFrame(columns=["GPU count", "bsz=1", "bsz=4", "bsz=16"])
+    for n_gpu in [1, 2, 4, 8, 16, 32]:
         row = [str(n_gpu)+"_gpu"]
-        for bsz in [1, 4]:
+        for bsz in [1, 4, 16]:
             if str((n_gpu, bsz)) in ngpu_bsz_2_n3dgs:
                 row.append(str(round(ngpu_bsz_2_n3dgs[str((n_gpu, bsz))][0]/1000000, 2))+" millions gaussian")
             else:
                 row.append(None)
         df.loc[n_gpu] = row
     df.to_csv(os.path.join(save_folder, f"{scene_name}_memory.csv"))
+    convert_df_to_latex(df, os.path.join(save_folder, f"{scene_name}_memory.tex"), drop_first_column=False)
 
     pass
 
 
 def plot_rubble():
-    plot_rubble_folder = "/pscratch/sd/j/jy-nyu/final_expes/plot_rubble/"
+    plot_rubble_folder = "/pscratch/sd/j/jy-nyu/last_scripts/plot_rubble/"
     if not os.path.exists(plot_rubble_folder):
         os.makedirs(plot_rubble_folder)
+    rubble_16g_folder = "/pscratch/sd/j/jy-nyu/last_scripts/rub/"
 
-    rubble_16g_expes = [
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1",
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1_b16",
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_2",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_3",
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_4",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_5",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_6",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_7_c2",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_8",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_9",
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_a",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_b",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_c",
-        # "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_d",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_e",
-        "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_f",
-    ]
+    # list all experiments folders in the rubble_expe_folder
+    rubble_16g_expes = []
+    for expe in os.listdir(rubble_16g_folder):
+        expe_folder = os.path.join(rubble_16g_folder, expe)
+        if os.path.isdir(expe_folder):
+            rubble_16g_expes.append(expe_folder)
+
     # draw_n3dgs_metrics(rubble_16g_expes, plot_rubble_folder)
+    # draw_n3dgs_metrics_table_for_paper(plot_rubble_folder)
 
-    draw_speed("rub",
-                "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_7_speed_saved/",
-               plot_rubble_folder)
+
+    # draw_speed("rub",
+    #             "/pscratch/sd/j/jy-nyu/final_expes/rub_16g_7_speed_saved/",
+    #            plot_rubble_folder)
 
 
     # draw_memory("rub",
     #             "/pscratch/sd/j/jy-nyu/final_expes/rub_memory",
     #             plot_rubble_folder)
 
+def plot_bicycle():
+    plot_bicycle_folder = "/pscratch/sd/j/jy-nyu/last_scripts/plot_bicycle/"
+    if not os.path.exists(plot_bicycle_folder):
+        os.makedirs(plot_bicycle_folder)
+    bicycle_folder = "/pscratch/sd/j/jy-nyu/last_scripts/bicycle/"
+
+    bicycle_expes = []
+    for expe in os.listdir(bicycle_folder):
+        expe_folder = os.path.join(bicycle_folder, expe)
+        if os.path.isdir(expe_folder):
+            bicycle_expes.append(expe_folder)
+    
+    # draw_n3dgs_metrics(bicycle_expes, plot_bicycle_folder)
+    # draw_n3dgs_metrics_table_for_paper(plot_bicycle_folder)
 
 def plot_matrixcity_blockall():
-    plot_mat_folder = "/pscratch/sd/j/jy-nyu/final_expes/plot_mat/"
+    plot_mat_folder = "/pscratch/sd/j/jy-nyu/last_scripts/plot_mat/"
     if not os.path.exists(plot_mat_folder):
         os.makedirs(plot_mat_folder)
+    matrixcity_blockall_folder = "/pscratch/sd/j/jy-nyu/last_scripts/mball2/"
 
-    matrixcity_blockall_expes = [
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_1",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_2",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_3",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_4",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_5",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_6_re",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_7_re",
-        "/pscratch/sd/j/jy-nyu/final_expes/mball2_16g_8",
-    ]
+    # list all experiments folders in the rubble_expe_folder
+    matrixcity_blockall_expes = []
+    for expe in os.listdir(matrixcity_blockall_folder):
+        expe_folder = os.path.join(matrixcity_blockall_folder, expe)
+        if os.path.isdir(expe_folder):
+            matrixcity_blockall_expes.append(expe_folder)
 
-    draw_n3dgs_metrics(matrixcity_blockall_expes, plot_mat_folder)
+    # draw_n3dgs_metrics(matrixcity_blockall_expes, plot_mat_folder)
+    # draw_n3dgs_metrics_table_for_paper(plot_mat_folder)
+
+    # save the n3dgs at the beginning and at the end, in file
+    n3dgs = {}
+    for expe_folder in matrixcity_blockall_expes:
+        n3dgs_at_iterations, iterations = get_n3dgs_list_from_log(expe_folder)
+        # print(f"Expe {expe_folder} has {n3dgs_at_iterations[0]} n3dgs at the beginning")
+        # print(f"Expe {expe_folder} has {n3dgs_at_iterations[-1]} n3dgs at the end")
+        n3dgs[expe_folder] = {
+            "n3dgs_at_beginning": n3dgs_at_iterations[0],
+            "n3dgs_at_end": n3dgs_at_iterations[-1]
+        }
+    json.dump(n3dgs, open(os.path.join(plot_mat_folder, "n3dgs.json"), "w"), indent=4)
+
+
 
 
 def get_end_running_time(expe_folder):
@@ -370,7 +424,7 @@ def get_test_psnr_at_iterations(expe_folder, iterations):
         PSNR = float(line.split("PSNR ")[1])
         for r in range(iteration, iteration+bsz):
             if r in iterations:
-                results.append(round(PSNR, 3))
+                results.append(round(PSNR, 2))
     return results
 
 def get_test_psnr_list_from_logfile(expe_folder):
@@ -387,133 +441,10 @@ def get_test_psnr_list_from_logfile(expe_folder):
         PSNR = float(line.split("PSNR ")[1])
         results.append({
             "iteration": iteration,
-            "L1": round(L1, 3),
-            "PSNR": round(PSNR, 3)
+            "L1": round(L1, 2),
+            "PSNR": round(PSNR, 2)
         })
     return results
-
-
-
-
-def plot_mip360():
-    plot_mip_folder = "/pscratch/sd/j/jy-nyu/final_expes/plot_mip360/"
-    if not os.path.exists(plot_mip_folder):
-        os.makedirs(plot_mip_folder)
-
-    scene_names = [
-        "garden",
-        "bicycle",
-        "counter",
-        "kitchen",
-        "room",
-        "stump",
-    ]
-    expe_name = {
-        "garden":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/ga1080_4g_1_b1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/ga1080_4g_1_b4"
-        },
-        "bicycle":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/bi1080_4g_1_b1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/bi1080_4g_1_b4"
-        },
-        "counter":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_counter_bsz1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_counter_bsz4"
-        },
-        "kitchen":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_kitchen_bsz1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_kitchen_bsz4"
-        },
-        "room":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_room_bsz1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_room_bsz4"
-        },
-        "stump":{
-            1:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_stump_bsz1",
-            4:"/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_stump_bsz4"
-        },
-    }
-    
-    results = {}
-    for scene_name in scene_names:
-        for bsz in [1,4]:
-            expe = expe_name[scene_name][bsz]
-            if not os.path.exists(expe):
-                continue
-            running_time_50k = get_end_running_time(expe)
-            psnr_50k = get_test_psnr_list_from_logfile(expe)[-1]["PSNR"]
-            results[f"{scene_name}_bsz{bsz}"] = {
-                "running_time_50k": running_time_50k,
-                "psnr_50k": psnr_50k
-            }
-    
-    # make a dataframe table to visualize
-    df = pd.DataFrame(columns=["Scene", "bsz=1", "bsz=4"])
-    for scene_name in scene_names:
-        row = [scene_name]
-        for bsz in [1, 4]:
-            result_str = ""
-            if f"{scene_name}_bsz{bsz}" in results:
-                result_str = f"Time: {results[f'{scene_name}_bsz{bsz}']['running_time_50k']}s\nPSNR: {results[f'{scene_name}_bsz{bsz}']['psnr_50k']}"
-            row.append(result_str)
-        df.loc[len(df)] = row
-    df.to_csv(os.path.join(plot_mip_folder, "mip360.csv"))
-
-
-def plot_tan_db():
-    plot_tan_folder = "/pscratch/sd/j/jy-nyu/final_expes/plot_tandb/"
-    if not os.path.exists(plot_tan_folder):
-        os.makedirs(plot_tan_folder)
-    
-    scene_names = [
-        "train",
-        "truck",
-        "playground",
-        "drjohnson"
-    ]
-
-    expe_name = {
-        "train":{
-            4:"/pscratch/sd/j/jy-nyu/final_expes/tra_4g_1",
-        },
-        "truck":{
-            4:"/pscratch/sd/j/jy-nyu/final_expes/tru_4g_1",
-        },
-        "playground":{
-            4:"/pscratch/sd/j/jy-nyu/final_expes/pla_4g_1",
-        },
-        "drjohnson":{
-            4:"/pscratch/sd/j/jy-nyu/final_expes/drj_4g_1",
-        },
-    }
-
-    results = {}
-    for scene_name in scene_names:
-        for bsz in [4]:
-            expe = expe_name[scene_name][bsz]
-            if not os.path.exists(expe):
-                continue
-            running_time_30k = get_end_running_time(expe)
-            psnr_30k = get_test_psnr_list_from_logfile(expe)[-1]["PSNR"]
-            results[f"{scene_name}_bsz{bsz}"] = {
-                "running_time_30k": running_time_30k,
-                "psnr_30k": psnr_30k
-            }
-    
-    # make a dataframe table to visualize
-    df = pd.DataFrame(columns=["Scene", "bsz=4"])
-    for scene_name in scene_names:
-        row = [scene_name]
-        for bsz in [4]:
-            result_str = ""
-            if f"{scene_name}_bsz{bsz}" in results:
-                result_str = f"Time: {results[f'{scene_name}_bsz{bsz}']['running_time_30k']}s\nPSNR: {results[f'{scene_name}_bsz{bsz}']['psnr_30k']}"
-            row.append(result_str)
-        df.loc[len(df)] = row
-    df.to_csv(os.path.join(plot_tan_folder, "tandb.csv"))
-
-
 
 def extract_from_mip360_all9scene(folder):
     if os.path.exists(os.path.join(folder, "mip360_all9scene.json")):
@@ -543,7 +474,8 @@ def extract_from_mip360_all9scene(folder):
         for iteration, running_time, psnr in zip(check_iterations, running_time_all, psnr_all):
             results[scene][iteration] = {
                 "running_time": running_time,
-                "psnr": psnr
+                "psnr": psnr,
+                "throughput": round(iteration/running_time, 2)
             }
 
     json.dump(results, open(os.path.join(folder, "mip360_all9scene.json"), "w"), indent=4)
@@ -551,95 +483,311 @@ def extract_from_mip360_all9scene(folder):
 
 
 
-def compare_mip360():
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_1g_1b/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_1b/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_1b_nobalan/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_1b_nobalangsdist/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_1b_nobalanimgdist/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_4b/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_4b_nobalan/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_4b_nobalangsdist/")
-    extract_from_mip360_all9scene("/pscratch/sd/j/jy-nyu/final_expes/360v21080_4g_4b_nobalanimgdist/")
+def plot_mip360():
 
-    analyze_360v21080_folder = "/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/"
+    expe_sets = [
+        "1g_1b",
+        "4g_1b",
+        "4g_1b_nobalan",
+        "4g_1b_nogsbalan",
+        "4g_1b_noimgbalan",
+        "4g_4b",
+        "4g_4b_nobalan",
+        "4g_4b_noimgbalan",
+    ]
+    for expe_set in expe_sets:
+        extract_from_mip360_all9scene(f"/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p/{expe_set}/")
+
+    all_scenes = ["counter", "kitchen", "room", "stump", "bicycle", "garden", "bonsai", "flowers", "treehill"]
+
+    analyze_360v21080_folder = "/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p_analyze/"
     if not os.path.exists(analyze_360v21080_folder):
         os.makedirs(analyze_360v21080_folder)
     
     # compare_different_gpu_and_different_bsz
     compare_iterations = ["7000", "30000", "50000"]
-    compare_metrics = ["running_time", "psnr"]
+    unit = {
+        "throughput": "its",
+        "psnr": "dB",
+        "running_time": "second"
+    }
 
     for iteration in compare_iterations:
-        for metric in compare_metrics:
-            df = pd.DataFrame(columns=["Scene", "1gpu1bsz", "4gpu1bsz", "4gpu4bsz"])
-            for scene in ["counter", "kitchen", "room", "stump", "bicycle", "garden", "bonsai", "flowers", "treehill"]:
+        for metric in ["throughput", "psnr"]:
+            df = pd.DataFrame(columns=["Scene", "1gpu_bsz=1", "4gpu_bsz=1", "4gpu_bsz=4"])
+            for scene in all_scenes:
                 row = [scene]
-                for expe in ["360v21080_1g_1b", "360v21080_4g_1b", "360v21080_4g_4b"]:
-                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/final_expes/", expe)
+                for expe in ["1g_1b", "4g_1b", "4g_4b_noimgbalan"]:
+                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p/", expe)
                     results = json.load(open(os.path.join(expe_folder, "mip360_all9scene.json"), "r"))
                     row.append(results[scene][iteration][metric])
                 df.loc[len(df)] = row
-            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_comparegpubsz_{metric}_{iteration}.csv"))
+            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_compare_{metric}_{iteration}_{unit[metric]}.csv"))
 
     # check load balance for 4gpu1bsz
     for iteration in compare_iterations:
-        for metric in compare_metrics:
-            df = pd.DataFrame(columns=["Scene", "4gpu1bsz", "4gpu1bsz_no_loadbalance", "4gpu1bsz_only_imagedistribution_loadbalance", "4gpu1bsz_only_gaussiandistribution_loadbalance"])
-            for scene in ["counter", "kitchen", "room", "stump", "bicycle", "garden", "bonsai", "flowers", "treehill"]:
+        for metric in ["throughput", "psnr"]:
+            df = pd.DataFrame(columns=["Scene", "both_gausssian_image_loadbalance", "only_gausssian_loadbalance", "only_image_loadbalance", "no_loadbalance"])
+            for scene in all_scenes:
                 row = [scene]
-                for expe in ["360v21080_4g_1b", "360v21080_4g_1b_nobalan", "360v21080_4g_1b_nobalangsdist", "360v21080_4g_1b_nobalanimgdist"]:
-                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/final_expes/", expe)
+                for expe in ["4g_1b", "4g_1b_noimgbalan", "4g_1b_nogsbalan", "4g_1b_nobalan"]:
+                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p/", expe)
                     results = json.load(open(os.path.join(expe_folder, "mip360_all9scene.json"), "r"))
                     row.append(results[scene][iteration][metric])
                 df.loc[len(df)] = row
-            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_compare_loadbalance_{metric}_{iteration}_4gpu1bsz.csv"))
+            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_compare_4gpu_bsz=1_loadbalance_{metric}_{iteration}_{unit[metric]}.csv"))
 
     # check load balance for 4gpu4bsz
     for iteration in compare_iterations:
-        for metric in compare_metrics:
-            df = pd.DataFrame(columns=["Scene", "4gpu4bsz", "4gpu4bsz_no_loadbalance", "4gpu4bsz_only_imagedistribution_loadbalance", "4gpu4bsz_only_gaussiandistribution_loadbalance"])
-            for scene in ["counter", "kitchen", "room", "stump", "bicycle", "garden", "bonsai", "flowers", "treehill"]:
+        for metric in ["throughput", "psnr"]:
+            df = pd.DataFrame(columns=["Scene", "both_gausssian_image_loadbalance", "only_gausssian_loadbalance", "no_loadbalance"])
+            for scene in all_scenes:
                 row = [scene]
-                for expe in ["360v21080_4g_4b", "360v21080_4g_4b_nobalan", "360v21080_4g_4b_nobalangsdist", "360v21080_4g_4b_nobalanimgdist"]:
-                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/final_expes/", expe)
+                for expe in ["4g_4b", "4g_4b_noimgbalan", "4g_4b_nobalan"]:
+                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p/", expe)
                     results = json.load(open(os.path.join(expe_folder, "mip360_all9scene.json"), "r"))
                     row.append(results[scene][iteration][metric])
                 df.loc[len(df)] = row
-            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_compare_loadbalance_{metric}_{iteration}_4gpu4bsz.csv"))
+            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_compare_4gpu_bsz=4_loadbalance_{metric}_{iteration}_{unit[metric]}.csv"))
 
-
-def convert_mip360_to_latex():
-    psnr_table_source_df = pd.read_csv("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_comparegpubsz_psnr_30000.csv")
-    psnr_table_source_df = psnr_table_source_df.round(2)
-    psnr_table_source_df = psnr_table_source_df.astype(str)
-    # add name of this table in latex
-    psnr_table_source_df.to_latex("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_comparegpubsz_psnr_30000.tex", index=False)
-
-    running_time_table_source_df = pd.read_csv("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_comparegpubsz_running_time_30000.csv")
-    running_time_table_source_df = running_time_table_source_df.astype(str)
-    running_time_table_source_df.to_latex("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_comparegpubsz_running_time_30000.tex", index=False)
-
-    loadbalance_4g1b_source_df = pd.read_csv("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_compare_loadbalance_running_time_30000_4gpu1bsz.csv")
-    running_time_4g4b_source_df = pd.read_csv("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_compare_loadbalance_running_time_30000_4gpu4bsz.csv")
-    # take all columes from loadbalance_4g1b_source_df, and add the `4gpu4bsz` colume from running_time_4g4b_source_df as the first colume after the `scene` colume.
-    running_time_ablation_study_df = pd.concat([running_time_4g4b_source_df[["Scene", "4gpu4bsz"]],
-                                                loadbalance_4g1b_source_df[["4gpu1bsz", "4gpu1bsz_only_imagedistribution_loadbalance", "4gpu1bsz_only_gaussiandistribution_loadbalance", "4gpu1bsz_no_loadbalance"]],
-                                                ], axis=1)
-    running_time_ablation_study_df = running_time_ablation_study_df.astype(str)
-    running_time_ablation_study_df.to_latex("/pscratch/sd/j/jy-nyu/final_expes/360v21080_analyze/mip360_compare_loadbalance_running_time_30000_ablation_study.tex", index=False)
+    # ablation study
+    for iteration in ["50000"]:
+        for metric in ["throughput", "psnr"]:
+            df = pd.DataFrame(columns=["Scene", "1gpu_bsz=1", "Loadbalanced_4gpu_bsz=4", "Loadbalanced_4gpu_bsz=1",  "NoLoadbalance_4gpu_bsz=1",  "OnlyGaussianLoadbalance_4gpu_bsz=1", "OnlyImageLoadbalance_4gpu_bsz=1"])
+            for scene in all_scenes:
+                row = [scene]
+                for expe in ["1g_1b", "4g_4b_noimgbalan", "4g_1b", "4g_1b_nobalan", "4g_1b_noimgbalan", "4g_1b_nogsbalan"]:
+                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p/", expe)
+                    results = json.load(open(os.path.join(expe_folder, "mip360_all9scene.json"), "r"))
+                    row.append(results[scene][iteration][metric])
+                df.loc[len(df)] = row
+            df.to_csv(os.path.join(analyze_360v21080_folder, f"mip360_rawstatistics_{metric}_{iteration}_{unit[metric]}.csv"))
+            
+            to_latex_df = df[["Scene", "1gpu_bsz=1", "Loadbalanced_4gpu_bsz=4", "Loadbalanced_4gpu_bsz=1",  "NoLoadbalance_4gpu_bsz=1",  "OnlyGaussianLoadbalance_4gpu_bsz=1", "OnlyImageLoadbalance_4gpu_bsz=1"]]
+            to_latex_df = to_latex_df.astype(str)
+            to_latex_df.to_latex(os.path.join(analyze_360v21080_folder, f"mip360_rawstatistics_{metric}_{iteration}_{unit[metric]}.tex"), index=False)
     
-    pass
+def extract_from_tandb_all4scene(folder):
+    if os.path.exists(os.path.join(folder, "tandb_all4scene.json")):
+        print("tandb_all4scene.json already exists for ", folder)
+        return
+    # train truck playroom drjohnson
+    scene_names = [
+        "train",
+        "truck",
+        "playroom",
+        "drjohnson"
+    ]
+    check_iterations = [7000, 15000, 30000]
+    results = {}
+    for scene in scene_names:
+        scene_folder = os.path.join(folder, scene)
+        if not os.path.exists(scene_folder):
+            continue
+        running_time_all = get_running_time_at_iterations(scene_folder, check_iterations)
+        psnr_all = get_test_psnr_at_iterations(scene_folder, check_iterations)
+        results[scene] = {}
+        for iteration, running_time, psnr in zip(check_iterations, running_time_all, psnr_all):
+            results[scene][iteration] = {
+                "running_time": running_time,
+                "psnr": psnr,
+                "throughput": round(iteration/running_time, 2)
+            }
+
+    json.dump(results, open(os.path.join(folder, "tandb_all4scene.json"), "w"), indent=4)
+    print("Generated tandb_all4scene.json for ", folder)
+
+def plot_tandb():
+    plot_tan_folder = "/pscratch/sd/j/jy-nyu/last_scripts/plot_tandb/"
+    if not os.path.exists(plot_tan_folder):
+        os.makedirs(plot_tan_folder)
+
+    scene_names = [
+        "train",
+        "truck",
+        "playroom",
+        "drjohnson"
+    ]
+
+    expe_sets = [
+        "1g1b",
+        "4g1b",
+        "4g4b",
+        "4g8b",
+        "4g16b"
+    ]
+
+    for expe_set in expe_sets:
+        extract_from_tandb_all4scene(f"/pscratch/sd/j/jy-nyu/last_scripts/tandb/{expe_set}/")
     
+    analyze_tandb_folder = "/pscratch/sd/j/jy-nyu/last_scripts/tandb_analyze/"
+    if not os.path.exists(analyze_tandb_folder):
+        os.makedirs(analyze_tandb_folder)
     
+    # compare_different_gpu_and_different_bsz
+    compare_iterations = ["7000", "15000", "30000"]
+    unit = {
+        "throughput": "its",
+        "psnr": "dB",
+        "running_time": "second"
+    }
+
+    for iteration in compare_iterations:
+        for metric in ["throughput", "psnr"]:
+            df = pd.DataFrame(columns=["Scene", "1gpu_bsz=1", "4gpu_bsz=1", "4gpu_bsz=4", "4gpu_bsz=8", "4gpu_bsz=16"])
+            for scene in scene_names:
+                row = [scene]
+                for expe in expe_sets:
+                    expe_folder = os.path.join("/pscratch/sd/j/jy-nyu/last_scripts/tandb/", expe)
+                    results = json.load(open(os.path.join(expe_folder, "tandb_all4scene.json"), "r"))
+                    row.append(results[scene][iteration][metric])
+                df.loc[len(df)] = row
+            df.to_csv(os.path.join(analyze_tandb_folder, f"tandb_compare_{metric}_{iteration}_{unit[metric]}.csv"))
+            convert_df_to_latex(df, os.path.join(analyze_tandb_folder, f"tandb_compare_{metric}_{iteration}_{unit[metric]}.tex"), drop_first_column=False)
+
+def extract_from_some_expes(expe_paths, check_iterations):
+    results = {}
+    for expe_folder in expe_paths:
+        results[expe_folder] = {}
+        running_time_all = get_running_time_at_iterations(expe_folder, check_iterations)
+        psnr_all = get_test_psnr_at_iterations(expe_folder, check_iterations)
+        for iteration, running_time, psnr in zip(check_iterations, running_time_all, psnr_all):
+            results[expe_folder][iteration] = {
+                "running_time": running_time,
+                "psnr": psnr,
+                "throughput": round(iteration/running_time, 2)
+            }
+    return results
+    
+
+
+def plot_tandb_train_scalability():
+    folder = "/pscratch/sd/j/jy-nyu/last_scripts/tandb/scalability/"
+    analyze_folder = "/pscratch/sd/j/jy-nyu/last_scripts/tandb_analyze/scalability/"
+    if not os.path.exists(analyze_folder):
+        os.makedirs(analyze_folder)
+
+    all_expes = []
+    for n_g in [1, 4, 8, 16]:
+        for bsz in [1, 2, 4, 8, 16, 32]:
+            # train_16g_16b
+            expe_name = f"train_{n_g}g_{bsz}b"
+            if os.path.exists(os.path.join(folder, expe_name)):
+                all_expes.append(expe_name)
+
+
+    check_iterations = [7000, 15000, 30000]
+    results = extract_from_some_expes([os.path.join(folder, expe) for expe in all_expes], check_iterations)
+    json.dump(results, open(os.path.join(folder, "tandb_train_scalability.json"), "w"), indent=4)
+    
+    compare_iterations = ["7000", "15000", "30000"]
+    unit = {
+        "throughput": "its",
+        "psnr": "dB",
+        "running_time": "second"
+    }
+    columes = []
+
+    for metric in ["throughput", "psnr"]:
+        for iteration in compare_iterations:
+            columes.append(f"{metric}_{iteration}")
+    
+    df = pd.DataFrame(columns=["Expe"] + columes)
+    for expe in all_expes:
+        row = [expe]
+        for metric in ["throughput", "psnr"]:
+            for iteration in compare_iterations:
+                row.append(results[os.path.join(folder, expe)][int(iteration)][metric])
+        df.loc[len(df)] = row
+
+
+    df.to_csv(os.path.join(analyze_folder, "tandb_train_scalability.csv"))
+    convert_df_to_latex(df, os.path.join(analyze_folder, "tandb_train_scalability.tex"), drop_first_column=False)
+
+    df_for_paper = pd.DataFrame(columns=["Experiment", "# GPU", "Batch Size", "Throughput", "PSNR"])
+    for expe in all_expes:
+        row = [expe]
+        # train_1g_1b, train_16g_32b
+        row.append(expe.split("_")[1][:-1])
+        row.append(expe.split("_")[2][:-1])
+        row.append(results[os.path.join(folder, expe)][30000]["throughput"])
+        row.append(results[os.path.join(folder, expe)][30000]["psnr"])
+        df_for_paper.loc[len(df_for_paper)] = row
+    for i in range(df_for_paper.shape[0]):
+        df_for_paper.iat[i, 0] = "EXPE " + str(i+1)
+    # convert to latex
+    convert_df_to_latex(df_for_paper, os.path.join(analyze_folder, "tandb_train_scalability_table_for_paper.tex"), drop_first_column=False)
+
+
+def merge_MipNeRF360_table_for_paper():
+    folder = "/pscratch/sd/j/jy-nyu/last_scripts/mip360_1080p_analyze/"
+
+    # take 30k iteration. 
+    psnr_file = os.path.join(folder, "mip360_compare_psnr_50000_dB.csv")
+    throughput_file = os.path.join(folder, "mip360_compare_throughput_50000_its.csv")
+
+    # write a table for this
+    # 1gpu bsz=1(psnr, thoughput),  4gpu bsz=4(psnr, thoughput)
+
+    df_psnr = pd.read_csv(psnr_file)
+    df_throughput = pd.read_csv(throughput_file)
+
+    # 1gpu bsz=1(psnr, thoughput),  4gpu bsz=4(psnr, thoughput)
+
+    previous_colums = ["Scene", "1gpu_bsz=1","4gpu_bsz=1","4gpu_bsz=4"]
+
+    new_columns = ["Scene", "1gpu_bsz=1_psnr", "1gpu_bsz=1_throughput", "Loadbalanced_4gpu_bsz=4_psnr", "Loadbalanced_4gpu_bsz=4_throughput"]
+
+    df = pd.DataFrame(columns=new_columns)
+    df["Scene"] = df_psnr["Scene"]
+    df["1gpu_bsz=1_psnr"] = df_psnr["1gpu_bsz=1"]
+    df["1gpu_bsz=1_throughput"] = df_throughput["1gpu_bsz=1"]
+    df["Loadbalanced_4gpu_bsz=4_psnr"] = df_psnr["4gpu_bsz=4"]
+    df["Loadbalanced_4gpu_bsz=4_throughput"] = df_throughput["4gpu_bsz=4"]
+    df.to_csv(
+        os.path.join(folder, "mip360_compare_1gpu_bsz=1_4gpu_bsz=4_50000_for_paper.csv")
+    )
+    convert_df_to_latex(df, os.path.join(folder, "mip360_compare_1gpu_bsz=1_4gpu_bsz=4_50000_for_paper.tex"), drop_first_column=False)
+
+def merge_tandb_table_for_paper():
+    folder = "/pscratch/sd/j/jy-nyu/last_scripts/tandb_analyze/"
+
+    # take 30k iteration. 
+    psnr_file = os.path.join(folder, "tandb_compare_psnr_30000_dB.csv")
+    throughput_file = os.path.join(folder, "tandb_compare_throughput_30000_its.csv")
+
+    # write a table for this
+    # 1gpu bsz=1(psnr, thoughput),  4gpu bsz=4(psnr, thoughput)
+
+    df_psnr = pd.read_csv(psnr_file)
+    df_throughput = pd.read_csv(throughput_file)
+
+    # 1gpu bsz=1(psnr, thoughput),  4gpu bsz=4(psnr, thoughput)
+
+    previous_columns = ["Scene", "1gpu_bsz=1","4gpu_bsz=1","4gpu_bsz=4", "4gpu_bsz=8", "4gpu_bsz=16"]
+
+    new_columns = ["Scene", "1gpu_bsz=1_psnr", "1gpu_bsz=1_throughput", "4gpu_bsz=4_psnr", "4gpu_bsz=4_throughput"]
+
+    df = pd.DataFrame(columns=new_columns)
+    df["Scene"] = df_psnr["Scene"]
+    df["1gpu_bsz=1_psnr"] = df_psnr["1gpu_bsz=1"]
+    df["1gpu_bsz=1_throughput"] = df_throughput["1gpu_bsz=1"]
+    df["4gpu_bsz=4_psnr"] = df_psnr["4gpu_bsz=4"]
+    df["4gpu_bsz=4_throughput"] = df_throughput["4gpu_bsz=4"]
+    df.to_csv(
+        os.path.join(folder, "tandb_compare_1gpu_bsz=1_4gpu_bsz=4_30000_for_paper.csv")
+    )
+    convert_df_to_latex(df, os.path.join(folder, "tandb_compare_1gpu_bsz=1_4gpu_bsz=4_30000_for_paper.tex"), drop_first_column=False)
 
 if __name__ == "__main__":
-    plot_rubble()
+    # plot_rubble()
+    # plot_bicycle()
     # plot_mip360()
+    # merge_MipNeRF360_table_for_paper()
     # plot_matrixcity_blockall()
-    # plot_tan_db()
-    # compare_mip360()
-    # convert_mip360_to_latex()
+    # plot_tandb()
+    # merge_tandb_table_for_paper()
+    # plot_tandb_train_scalability()
 
     pass
 

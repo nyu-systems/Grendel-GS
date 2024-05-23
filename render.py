@@ -37,6 +37,91 @@ from arguments import (
 )
 import utils.general_utils as utils
 
+def render_zoom_out(model_path, name, iteration, views, gaussians, pipeline, background, generate_num):
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+
+    makedirs(render_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+
+    set_cur_iter(iteration)
+
+    # idx = 3
+    # view = views[idx]
+    # for (dx, dy, dz) in [(0, 0, 0), (0, -1, 0), (0, -2, 0), (0, -3, 0), (0, -4, 0), (-1, 0, 0), (-2, 0, 0), (-3, 0, 0), (-4, 0, 0)]:
+    # for (dx, dy, dz) in [(0, -3, 0), (-1, -1, 0), (-2, -2, 0), (-1, -2, 0), (-3, -3, 0), (-4, -4, 0)]:
+    # for (dx, dy, dz) in [(-2.5, -6, 0), (-2.5, -6, 1), (-2.5, -6, 2)]:
+    # for (dx, dy, dz) in [(-2.5, -6.5, 1), (-2.5, -7, 1)]:
+    # for (dx, dy, dz) in [(-2.5, -7, 3), (-2.5, -8, 3), (-2.5, -9, 3)]:
+    # for (dx, dy, dz) in [(-2.5, -10, 3), (-2.5, -11, 3), (-2.5, -12, 3)]:
+    # for (dx, dy, dz) in [(-2.5, -15, 3), (-2.5, -18, 3), (-2.5, -20, 3)]:
+    # for (dx, dy, dz) in [(-2, -7, 1), (-2, -6.5, 1)]:
+    # for (dx, dy, dz) in [(-1.5, -7, 1), (-1.5, -6.5, 1), (-1, -7, 1), (-1, -6.5, 1), (-1.25, -7, 1), (-1.25, -6.5, 1)]:
+    # for (dx, dy, dz) in [(-1.5, -7, 2), (-1.5, -7, 2), (-1, -7, 2), (-1, -6.5, 2), (-1.25, -7, 2), (-1.25, -6.5, 2)]:
+
+    (dx, dy, dz) = (0, -6, 0)
+    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        file_name = '{0:05d}'.format(idx) + f"dx={dx}_dy={dy}_dz={dz}"
+        if os.path.exists(os.path.join(render_path, file_name + ".png")):
+            continue
+
+        view.update(dx=dx, dy=dy, dz=dz)
+        cameraId2StrategyHistory = {}
+        strategy_history = get_division_strategy_history(cameraId2StrategyHistory, view, "evaluation")
+        strategy = strategy_history.start_strategy()
+        screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,
+                                                        [strategy],
+                                                        mode="test")
+        rendered_image, _ = render(screenspace_pkg, strategy)
+        gt_image = torch.clamp(view.original_image_cpu[0:3, :, :].cuda() / 255.0, 0, 1.0)
+        torchvision.utils.save_image(rendered_image, os.path.join(render_path, file_name + ".png"))
+
+def render_one(model_path, name, iteration, views, gaussians, pipeline, background, generate_num):
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+
+    makedirs(render_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+
+    set_cur_iter(iteration)
+    cameraId2StrategyHistory = {}
+    idx = 220
+    view = views[idx]
+    # for (dx, dy, dz) in [(0, 0, 0), (0, -1, 0), (0, -2, 0), (0, -3, 0), (0, -4, 0), (-1, 0, 0), (-2, 0, 0), (-3, 0, 0), (-4, 0, 0)]:
+    # for (dx, dy, dz) in [(0, -3, 0), (-1, -1, 0), (-2, -2, 0), (-1, -2, 0), (-3, -3, 0), (-4, -4, 0)]:
+    # for (dx, dy, dz) in [(-2.5, -6, 0), (-2.5, -6, 1), (-2.5, -6, 2)]:
+    # for (dx, dy, dz) in [(-2.5, -6.5, 1), (-2.5, -7, 1)]:
+    # for (dx, dy, dz) in [(-2.5, -7, 3), (-2.5, -8, 3), (-2.5, -9, 3)]:
+    # for (dx, dy, dz) in [(-2.5, -10, 3), (-2.5, -11, 3), (-2.5, -12, 3)]:
+    # for (dx, dy, dz) in [(-2.5, -15, 3), (-2.5, -18, 3), (-2.5, -20, 3)]:
+    # for (dx, dy, dz) in [(-2, -7, 1), (-2, -6.5, 1)]:
+    # for (dx, dy, dz) in [(-1.5, -7, 1), (-1.5, -6.5, 1), (-1, -7, 1), (-1, -6.5, 1), (-1.25, -7, 1), (-1.25, -6.5, 1)]:
+    # for (dx, dy, dz) in [(-1.5, -7, 2), (-1.5, -7, 2), (-1, -7, 2), (-1, -6.5, 2), (-1.25, -7, 2), (-1.25, -6.5, 2)]:
+
+    # for (dx, dy, dz) in [(-1.5, -5.5, 1), (-1.5, -4.5, 1), (-1.5, -3.5, 1), (-1.5, -2.5, 1), (-1.5, -1.5, 1), (-1.5, -0.5, 1), (-1.5, 0, 1)]:
+    # for (dx, dy, dz) in [(-1, -5.5, 2), (-1, -4.5, 1), (-1, -3.5, 1), (-1, -2.5, 1), (-1, -1.5, 1), (-1, -0.5, 1), (-1, 0, 1)]:
+    # for (dx, dy, dz) in [(-0.5, -5.5, 1), (-0.5, -4.5, 1), (-0.5, -3.5, 1), (-0.5, -2.5, 1), (-0.5, -1.5, 1), (-0.5, -0.5, 1), (-0.5, -1, 1), (-0.5, 0, 1)]+[(-1, -5.5, 1), (-1, -4.5, 1), (-1, -3.5, 1), (-1, -2.5, 1), (-1, -1.5, 1), (-1, -0.5, 1), (-1, -1, 1), (-1, 0, 1)]:
+    # for (dx, dy, dz) in [(-0.5, -5.5, 1.5), (-0.5, -4.5, 1.5), (-0.5, -3.5, 1.5), (-0.5, -2.5, 1.5), (-0.5, -1.5, 1.5), (-0.5, -0.5, 1.5), (-0.5, -1, 1.5), (-0.5, 0, 1.5)]:
+    # for (dx, dy, dz) in [(-1, -0, 0), (0, -1, 0), (0, 0, -1), (-2, -0, 0), (0, -2, 0), (0, 0, -2), (-4, -0, 0), (0, -4, 0), (0, 0, -4)]:
+
+    for (dx, dy, dz) in [(-1, 0, 16), (-2, 0, 16), (-4, 0, 16), (-8, 0, 16), (-16, 0, 16), (0, -1, 16), (0, -2, 16), (0, -4, 16), (0, -8, 16), (0, -16, 16),
+                         (0, -12, 16), (-4, -12, 16), (-4, -12, 12), (-4, -12, 10), (-4, -10, 12), (-4, -10, 12), (-4, -8, 12), (-4, -8, 6), (-4, -6, 6), (-4, -4, 4),
+                         (-4, -3, 3), (-4, -2, 2), (-4, -1, 1), (-3, -3, 3), (-5, -3, 3), (-2, -3, 3), (-6, -3, 3), (-2, -2, 2), (-2, -1, 1),
+                         (-2, -2, 1), (-2, -1, 0), (-2, -2, 0), (-2, -1, -1), (-2, -2, -1), (-2.5, -0.5, 0), (-2.5, -1, 0), (-2.5, -1, -1), (-2.5, 0.5, 0),
+                         (-2.5, 0.5, -0.5), (-2.5, 0.5, -1), (-2.5, 0.5, -1.5)]:
+        file_name = '{0:05d}'.format(idx) + f"dx={dx}_dy={dy}_dz={dz}"
+        if os.path.exists(os.path.join(render_path, file_name + ".png")):
+            continue
+
+        view.update(dx=dx, dy=dy, dz=dz)
+        strategy_history = get_division_strategy_history(cameraId2StrategyHistory, view, "evaluation")
+        strategy = strategy_history.start_strategy()
+        screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,
+                                                        [strategy],
+                                                        mode="test")
+        rendered_image, _ = render(screenspace_pkg, strategy)
+        torchvision.utils.save_image(rendered_image, os.path.join(render_path, file_name + ".png"))
+
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, generate_num):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
@@ -63,14 +148,44 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         torchvision.utils.save_image(rendered_image, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt_image, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
+def save_one_radii_distribution(model_path, name, iteration, views, gaussians, pipeline, background):
+    assert len(views) == 1
+    view = views[0]
+
+    strategy_history = get_division_strategy_history({}, view, "evaluation")
+    strategy = strategy_history.start_strategy()
+    screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,
+                                                 [strategy],
+                                                 mode="test")
+    radii = screenspace_pkg["locally_preprocessed_radii"]
+    # visibility_filter = screenspace_pkg["locally_preprocessed_radii"] > 0
+    # radii = radii[visibility_filter]
+
+    import json
+    with open(os.path.join(model_path, "one_radii.json"), "w") as f:
+        json.dump(radii.tolist(), f)
+
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, generate_num : int):
     with torch.no_grad():
         args = utils.get_args()
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(args, gaussians, load_iteration=iteration, shuffle=False)
+        if args.save_catted_gaussian_model:
+            gaussians.save_ply(os.path.join(args.model_path, "catted_point_cloud.ply"))
+            return
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+        if args.save_one_radii_distribution:
+            save_one_radii_distribution(dataset.model_path, "train", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
+            return
+        
+        if args.render_one:
+            render_one(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, generate_num)
+            # render_zoom_out(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, generate_num)
+            return
+        
 
         if not skip_train:
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, generate_num)
@@ -94,6 +209,9 @@ if __name__ == "__main__":
     parser.add_argument("--generate_num", default=-1, type=int)
     parser.add_argument("--sample_freq", default=-1, type=int)
     parser.add_argument("--distributed_load", action="store_true")
+    parser.add_argument("--save_catted_gaussian_model", action="store_true")
+    parser.add_argument("--save_one_radii_distribution", action="store_true")
+    parser.add_argument("--render_one", action="store_true")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
     init_distributed(args)

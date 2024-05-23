@@ -78,9 +78,30 @@ class Camera(nn.Module):
         self.scale = scale
 
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        self.world_view_transform_backup = self.world_view_transform.clone().detach()
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+
+    def get_camera2world(self):
+        return self.world_view_transform_backup.t().inverse()
+
+    def update(self, dx, dy, dz):
+        with torch.no_grad():
+            c2w = self.get_camera2world()
+            c2w[0, 3] += dx
+            c2w[1, 3] += dy
+            c2w[2, 3] += dz
+
+            t_prime = c2w[:3, 3]
+            self.T = (-c2w[:3, :3].t() @ t_prime).cpu().numpy()
+            # import pdb; pdb.set_trace()
+
+            self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1).cuda()
+            self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
+            self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+            self.camera_center = self.world_view_transform.inverse()[3, :3]
+
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
