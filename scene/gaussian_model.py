@@ -198,7 +198,20 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        try:
+            from diff_gaussian_rasterization import FusedAdamSingleTensor, FusedAdamMultiTensor
+            if training_args.adam_version == "fused_single_adam":
+                print("optimizer use FusedAdamSingleTensor.")
+                self.optimizer = FusedAdamSingleTensor(l, lr=0.0, eps=1e-15)
+            elif training_args.adam_version == "fused_multi_adam":
+                print("optimizer use FusedAdamMultiTensor.")
+                self.optimizer = FusedAdamMultiTensor(l, lr=0.0, eps=1e-15)
+            else:
+                self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15) 
+        except ImportError:
+            print("Import FusedAdam Failed! optimizer use PyTorch adam.")
+            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15) 
+
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,

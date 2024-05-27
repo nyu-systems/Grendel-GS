@@ -96,6 +96,8 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
+        # fused_single_adam or fused_multi_adam or pytorch
+        self.adam_version = "fused_single_adam"
         self.iterations = 30_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
