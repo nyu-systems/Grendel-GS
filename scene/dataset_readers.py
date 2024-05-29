@@ -346,10 +346,10 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
-def readCityInfo(path, random_background, white_background, eval, ds, extension=".tif", llffhold=8, undistorted=False):
+def readCityInfo(path, random_background, white_background, extension=".tif", llffhold=8, undistorted=False):
 
-    train_json_path = os.path.join(path, f"transforms_train_my.json")# TODO: fix this.
-    test_json_path = os.path.join(path, f"transforms_test_my.json")
+    train_json_path = os.path.join(path, f"transforms_train.json")
+    test_json_path = os.path.join(path, f"transforms_test.json")
     print("Reading Training Transforms from {} {}".format(train_json_path, test_json_path))
     
     train_cam_infos = readCamerasFromTransformsCity(path, train_json_path, random_background, white_background, extension, undistorted)

@@ -3,6 +3,7 @@ import utils.general_utils as utils
 import torch.distributed as dist
 from utils.loss_utils import pixelwise_l1_with_mask, pixelwise_ssim_with_mask
 import time
+import diff_gaussian_rasterization
 
 def get_touched_tile_rect(touched_locally):
     nonzero_pos = touched_locally.nonzero()
@@ -28,8 +29,6 @@ def get_touched_pixels_rect(touched_locally=None, tile_rect=None):
 
 
 def get_all_pos_send_to_j(compute_locally, touched_locally):
-    # TODO: implement this function using DistributionStrategy Statistics. Could reduce the launching overhead of image distribution.
-
 
     timers = utils.get_timers()
 
@@ -318,7 +317,6 @@ def add_remote_pixels_to_image(image,
                                recv_from_rk_minus_1_part1, recv_from_rk_minus_1_part2, recv_from_rk_minus_1_part3,
                                recv_from_rk_plus_1_part1, recv_from_rk_plus_1_part2, recv_from_rk_plus_1_part3,
                                configs):
-    # TODO: implement this.
     return _AddRemotePixelsToImage.apply(image,
         recv_from_rk_minus_1_part1, recv_from_rk_minus_1_part2, recv_from_rk_minus_1_part3,
         recv_from_rk_plus_1_part1, recv_from_rk_plus_1_part2, recv_from_rk_plus_1_part3,
@@ -355,7 +353,7 @@ def fast_distributed_loss_computation(image, viewpoint_cam, compute_locally, str
 
         if first_pixel_x == 0:
             # recv from rank-1
-            recv_from_rk_minus_1_buffer = torch.empty((3, half_window_size, utils.IMG_W), dtype=torch.float32, device="cuda") #TODO: check whether empty will affect gradient flow?
+            recv_from_rk_minus_1_buffer = torch.empty((3, half_window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
             # send to rank-1
             send_to_rk_minus_1 = image[:, first_pixel_y:first_pixel_y+half_window_size, :].contiguous()
         else:
@@ -644,7 +642,7 @@ def fast_less_comm_distributed_loss_computation(image, viewpoint_cam, compute_lo
 
         if first_pixel_x == 0:
             # recv from rank-1
-            recv_from_rk_minus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda") #TODO: check whether empty will affect gradient flow?
+            recv_from_rk_minus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
             # send to rank-1
             send_to_rk_minus_1 = image[:, first_pixel_y:first_pixel_y+window_size, :].contiguous()
         else:
@@ -848,7 +846,7 @@ def fast_less_comm_noallreduceloss_distributed_loss_computation(image, viewpoint
 
         if first_pixel_x == 0:
             # recv from rank-1
-            recv_from_rk_minus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda") #TODO: check whether empty will affect gradient flow?
+            recv_from_rk_minus_1_buffer = torch.empty((3, window_size, utils.IMG_W), dtype=torch.float32, device="cuda")
             # send to rank-1
             send_to_rk_minus_1 = image[:, first_pixel_y:first_pixel_y+window_size, :].contiguous()
         else:
@@ -1188,7 +1186,7 @@ def avoid_pixel_all2all_loss_computation(image, viewpoint_cam, compute_locally, 
 
     # Loss computation
     timers.start("local_loss_computation")
-    torch.cuda.synchronize()# TODO: improve the time measurement here.
+    torch.cuda.synchronize()
     start_time = time.time()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
                                            local_image_rect_gt,
@@ -1271,7 +1269,7 @@ def avoid_pixel_all2all_loss_computation_adjust_mode6(image, viewpoint_cam, comp
 
     # Loss computation
     timers.start("local_loss_computation")
-    torch.cuda.synchronize()# TODO: improve the time measurement here.
+    torch.cuda.synchronize()
     start_time = time.time()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
                                            local_image_rect_gt,
@@ -1486,7 +1484,7 @@ def final_system_loss_computation(image, viewpoint_cam, compute_locally, strateg
 
     # Loss computation
     timers.start("local_loss_computation")
-    torch.cuda.synchronize()# TODO: improve the time measurement here.
+    torch.cuda.synchronize()
     start_time = time.time()
     pixelwise_Ll1 = pixelwise_l1_with_mask(local_image_rect,
                                            local_image_rect_gt,

@@ -168,7 +168,6 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
 
 
 def all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies):
-    # TODO: fix this. 
     batched_local2j_ids = []
     batched_local2j_ids_bool = []
     for i in range(utils.DP_GROUP.size()):
@@ -198,7 +197,7 @@ def all_to_all_communication(batched_rasterizers, batched_screenspace_params, ba
                 tensor_from_rki.append(torch.zeros((i2j_send_size[i][utils.DEFAULT_GROUP.rank()], ) + batched_tensors[0].shape[1:], 
                                                    dtype=batched_tensors[0].dtype, device="cuda"))
 
-        if use_function_version:# FIXME: there is error if I use torch.distributed.nn.functional to replace dist_func here. So weird. 
+        if use_function_version:
             dist_func.all_to_all(
                 output_tensor_list=tensor_from_rki,
                 input_tensor_list=tensor_to_rki,
@@ -210,7 +209,7 @@ def all_to_all_communication(batched_rasterizers, batched_screenspace_params, ba
                 input_tensor_list=tensor_to_rki,
                 group=utils.DEFAULT_GROUP
             )
-        return torch.cat(tensor_from_rki, dim=0).contiguous()# TODO: I have too many contiguous(), will it cause large overhead?
+        return torch.cat(tensor_from_rki, dim=0).contiguous()
 
     # Merge means2D, rgb, conic_opacity into one functional all-to-all communication call.
     batched_catted_screenspace_states = []
@@ -543,7 +542,6 @@ def all_to_all_communication_final(batched_rasterizers, batched_screenspace_para
         for i in range(utils.DEFAULT_GROUP.size()):
             # -> (world_size, num_cameras, *)
             tensor_from_rki[i] = tensor_from_rki[i].split(gpui_to_gpuj_imgk_size[i][utils.DEFAULT_GROUP.rank()], dim=0)
-            # TODO: whether split over 0 cause error?
 
         tensors_per_camera = []
         for k in range(num_cameras):

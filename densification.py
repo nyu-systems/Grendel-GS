@@ -8,9 +8,6 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
     # Densification
     if not args.disable_auto_densification and iteration <= args.densify_until_iter:
-        # TODO: more check on this: originally the code is < args.densify_until_iter, but for bsz=1 it does not update at densify_until_iter iteration but other bsz>1 updates at densify_until_iter - (bsz - 1) iteration, thus there is different number of densifications for different bsz, which is not fair. 
-        # the same issue for opacity reset, which has more severe implications.
-
         # Keep track of max radii in image-space for pruning
         timers.start("densification")
 
@@ -47,7 +44,6 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             utils.inc_densify_iter()
         
         if utils.check_update_at_this_iter(iteration, args.bsz, args.opacity_reset_interval, 0) and iteration+args.bsz <= args.opacity_reset_until_iter:
-            # TODO: do opacity reset if dataset_args.white_background and iteration == opt_args.densify_from_iter
             timers.start("reset_opacity")
             gaussians.reset_opacity()
             timers.stop("reset_opacity")

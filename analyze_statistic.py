@@ -9,7 +9,6 @@ import ast
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 
-# TODO: delete them later
 folder = None
 file_names = None
 num_render_file_names = None

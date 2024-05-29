@@ -57,8 +57,16 @@ Our default, provided install method is based on Conda package and environment m
 ```shell
 conda env create --file environment.yml
 conda activate gaussian_splatting
-```
+```(I am not able to set up this yet)
 If you want to use other name for this conda environment, you should change the `name:` field in the environment.yml
+
+Dependencies:
+- plyfile
+- pytorch(version>=2.0.1???)
+- torchvision
+- tqdm
+
+
 
 Then, we need to compile two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn`. `diff-gaussian-rasterization` contains render cuda kernels.
 
@@ -66,6 +74,8 @@ Then, we need to compile two dependent cuda repo `diff-gaussian-rasterization` a
 pip install submodules/diff-gaussian-rasterization
 pip install submodules/simple-knn
 ```
+
+
 
 ### Running
 
@@ -93,9 +103,9 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s /pscratc
   #### --eval
   Add this flag to use a MipNeRF360-style training/test split for evaluation.
   #### --bsz
-  The batch size(the number of camera views) in single step training. 
+  The batch size(the number of camera views) in single step training. ```1``` by default.
   #### --lr_scale_mode
-  The mode of scaling learning rate given larger batch size. 
+  The mode of scaling learning rate given larger batch size. ```sqrt``` by default.
   #### --preload_dataset_to_gpu
   Save all groundtruth images from the dataset in GPU, rather than load each image on-the-fly at each training step. 
   If dataset is large, preload_dataset_to_gpu will lead to OOM; when the dataset is small, preload_dataset_to_gpu could 

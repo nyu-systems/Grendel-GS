@@ -226,8 +226,6 @@ def init_args(args):
     if args.auto_start_checkpoint:
         args.start_checkpoint = find_latest_checkpoint(args.log_folder)
     
-    # TODO: handle the warning: https://github.com/pytorch/pytorch/blob/bae409388cfc20cce656bf7b671e45aaf81dd1c8/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1849-L1852
-
     if utils.DEFAULT_GROUP.size() == 1:
         args.gaussians_distribution = False
         args.image_distribution = False
@@ -253,3 +251,4 @@ def init_args(args):
 
     # Set up global args
     utils.set_args(args)
+    # TODO: handle the warning: https://github.com/pytorch/pytorch/blob/bae409388cfc20cce656bf7b671e45aaf81dd1c8/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1849-L1852

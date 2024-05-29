@@ -151,7 +151,7 @@ class GaussianModel:
 
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
-        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
+        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. 
         # Split the point cloud across the ranks. 
         args = utils.get_args()
         if args.gaussians_distribution:# shard 3dgs storage across all GPU including dp and mp groups.
@@ -484,7 +484,7 @@ class GaussianModel:
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         args = utils.get_args()
-        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. TODO: optimize it.
+        # The above computation/memory is replicated on all ranks. Because initialization is small, it's ok. 
         # Split the point cloud across the ranks.
 
         if args.gaussians_distribution and utils.WORLD_SIZE > 1:
@@ -497,7 +497,6 @@ class GaussianModel:
             scales = scales[point_ind_l:point_ind_r].contiguous()
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
-            # TODO: will memory of non-local points be released after finishing this function.
 
         if args.drop_initial_3dgs_p > 0.0:
             # drop each point with probability args.drop_initial_3dgs_p
@@ -633,7 +632,6 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.sum_visible_count_in_one_batch = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        # TODO: if the densification is inside a grad accumulation loop, this should not be reset to 0.
 
         self.send_to_gpui_cnt = torch.cat((self.send_to_gpui_cnt, new_send_to_gpui_cnt), dim=0)
 
@@ -650,7 +648,7 @@ class GaussianModel:
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
         # [N * number of selected points, 3]
-        # TODO: log number of densified gaussian
+
         utils.get_log_file().write("Number of split gaussians: {}\n".format(selected_pts_mask.sum().item()))
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
@@ -731,8 +729,8 @@ class GaussianModel:
         # state: (N, ...) tensor
         state_to_gpuj = []
         state_from_gpuj = []
-        for j in range(comm_group.size()):# ugly implementation. TODO: optimize it.
-            state_to_gpuj.append(state[destination==j,...].contiguous())# This maybe a very time-consuming part.
+        for j in range(comm_group.size()):# ugly implementation. 
+            state_to_gpuj.append(state[destination==j,...].contiguous())
             state_from_gpuj.append(torch.zeros((i2j_send_size[j][comm_group.rank()], *state.shape[1:]), device="cuda"))
 
         # print(f"before all_to_all, ws={comm_group.size()}, rank={comm_group.rank()}")

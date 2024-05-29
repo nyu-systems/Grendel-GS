@@ -223,12 +223,6 @@ class DivisionStrategyDynamicAdjustment(DivisionStrategy):
         return data
 
 
-# TODO: maybe implement this later.
-# class DivisionStrategyFixedByUser(DivisionStrategy):
-#     def __init__(self, camera, world_size, rank, tile_x, tile_y, global_division_pos_str, workloads_division_mode):
-#         division_pos = list(map(int, global_division_pos_str.split(",")))
-#         super().__init__(camera, world_size, rank, tile_x, tile_y, division_pos, workloads_division_mode)
-
 
 class DivisionStrategyAsGrid:
 
@@ -379,7 +373,6 @@ class DivisionStrategyAsGrid:
         assert self.global_running_times is not None, "You should call update_stats first."
         assert self.local_running_time is not None, "You should call update_stats first."
 
-        # TODO: maybe write a kernel to do this. 
         with torch.no_grad():
             self.heuristic = torch.zeros((self.tile_y, self.tile_x), dtype=torch.float32, device="cuda", requires_grad=False)
 
@@ -440,7 +433,7 @@ class DivisionStrategyHistory:
             self.accum_heuristic = self.working_strategy.heuristic
             return
 
-        # TODO: Does gradually increasing heuristic_decay work?  Quick results show it does not. 
+        # Does gradually increasing heuristic_decay work?  Quick results show it does not. 
         # if self.working_iteration < 1500:
         #     heuristic_decay = 0
         # elif self.working_iteration < 3000:
