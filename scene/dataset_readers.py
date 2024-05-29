@@ -25,7 +25,6 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
-from colorama import Fore, init, Style
 import torch
 
 class CameraInfo(NamedTuple):
@@ -231,7 +230,7 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
             c2w = np.array(frame["transform_matrix"])
             
             if idx % 10 == 0:
-                progress_bar.set_postfix({"num": Fore.YELLOW+f"{ct}/{len(frames)}"+Style.RESET_ALL})
+                progress_bar.set_postfix({"num": f"{ct}/{len(frames)}"})
                 progress_bar.update(10)
             if idx == len(frames) - 1:
                 progress_bar.close()
