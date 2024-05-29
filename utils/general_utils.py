@@ -10,6 +10,7 @@
 #
 
 import torch
+from torch import nn
 import sys
 from datetime import datetime
 import numpy as np
@@ -85,6 +86,14 @@ def get_img_size():
     global IMG_H, IMG_W
     return IMG_H, IMG_W
 
+def get_img_width():
+    global IMG_W
+    return IMG_W
+
+def get_img_height():
+    global IMG_H
+    return IMG_H
+
 def get_num_pixels():
     global IMG_H, IMG_W
     return IMG_H * IMG_W
@@ -106,7 +115,7 @@ def print_rank_0(str):
 def check_enable_python_timer():
     args = get_args()
     iteration = get_cur_iter()
-    return args.zhx_python_time and ( check_update_at_this_iter(iteration, args.bsz, args.log_interval, 1) or iteration in args.force_python_timer_iterations)
+    return args.enable_timer and check_update_at_this_iter(iteration, args.bsz, args.log_interval, 1)
 
 def globally_sync_for_timer():
     global DEFAULT_GROUP
@@ -159,61 +168,6 @@ def init_distributed(args):
         assert torch.cuda.is_available(), "Distributed mode requires CUDA"
         assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
 
-        assert WORLD_SIZE % args.dp_size == 0, "World size should be divisible by dp_size"
-        args.mp_size = WORLD_SIZE // args.dp_size
-
-        global DP_GROUP, MP_GROUP
-
-        # mesh_2d = init_device_mesh("cuda", (args.dp_size, args.mp_size), mesh_dim_names=("dp", "mp"))
-        # # Users can access the underlying process group thru `get_group` API.
-        # DP_GROUP = mesh_2d.get_group(mesh_dim="dp")
-        # MP_GROUP = mesh_2d.get_group(mesh_dim="mp")
-        # DEFAULT_GROUP = dist.group.WORLD
-
-        dp_rank = GLOBAL_RANK // args.mp_size
-        mp_rank = GLOBAL_RANK % args.mp_size
-
-        all_DP_GROUP = []
-        for rank in range(args.mp_size):
-            dp_group_ranks = list(range(rank, WORLD_SIZE, args.mp_size))
-            all_DP_GROUP.append(dist.new_group(dp_group_ranks))
-        DP_GROUP = all_DP_GROUP[mp_rank]
-
-        all_MP_GROUP = []
-        for rank in range(args.dp_size):
-            mp_group_ranks = list(range(rank*args.mp_size, (rank+1)*args.mp_size))
-            all_MP_GROUP.append(dist.new_group(mp_group_ranks))
-        MP_GROUP = all_MP_GROUP[dp_rank]
-
-        DEFAULT_GROUP = dist.group.WORLD
-
-        num_gpu_per_node = one_node_device_count()
-        n_of_nodes = WORLD_SIZE // num_gpu_per_node
-        all_in_node_group = []
-        for rank in range(n_of_nodes):
-            in_node_group_ranks = list(range(rank*num_gpu_per_node, (rank+1)*num_gpu_per_node))
-            all_in_node_group.append(dist.new_group(in_node_group_ranks))
-        node_rank = GLOBAL_RANK // num_gpu_per_node
-        IN_NODE_GROUP = all_in_node_group[node_rank]
-        print("Initializing -> "+" world_size: " + str(WORLD_SIZE)+" rank: " + str(DEFAULT_GROUP.rank()) + "     dp_size: " + str(args.dp_size) + " dp_rank: " + str(DP_GROUP.rank()) + "     mp_size: " + str(args.mp_size) + " mp_rank: " + str(MP_GROUP.rank()) + "     in_node_size: " + str(IN_NODE_GROUP.size()) + " in_node_rank: " + str(IN_NODE_GROUP.rank()))
-
-
-    else:
-        DP_GROUP = SingleGPUGroup()
-        MP_GROUP = SingleGPUGroup()
-        DEFAULT_GROUP = SingleGPUGroup()
-        IN_NODE_GROUP = SingleGPUGroup()
-
-def init_distributed_final(args):
-    global GLOBAL_RANK, LOCAL_RANK, WORLD_SIZE, DEFAULT_GROUP, IN_NODE_GROUP
-    GLOBAL_RANK = int(os.environ.get("RANK", 0))
-    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
-    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
-    if WORLD_SIZE > 1:
-        torch.distributed.init_process_group("nccl", rank=GLOBAL_RANK, world_size=WORLD_SIZE)
-        assert torch.cuda.is_available(), "Distributed mode requires CUDA"
-        assert torch.distributed.is_initialized(), "Distributed mode requires init_distributed() to be called first"
-
         DEFAULT_GROUP = dist.group.WORLD
 
         num_gpu_per_node = one_node_device_count()
@@ -231,7 +185,6 @@ def init_distributed_final(args):
         IN_NODE_GROUP = SingleGPUGroup()
 
 def one_node_device_count():
-    # return 4 # HACK: because in perl cluster, it is always 4 GPUs per node. TODO: change it back. 
     global WORLD_SIZE
     return min(torch.cuda.device_count(), WORLD_SIZE)
 
@@ -269,16 +222,45 @@ def get_local_chunk_l_r(array_length, world_size, rank):
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
-def check_memory_usage_logging(prefix):
+def check_initial_gpu_memory_usage(prefix):
     if get_cur_iter() not in [0, 1]:
         return
     args = get_args()
     log_file = get_log_file()
-    if hasattr(args, "check_memory_usage") and args.check_memory_usage and log_file is not None:
-        log_file.write("check_memory_usage["+prefix+"]: Memory usage: {} GB. Max Memory usage: {} GB.\n".format(
+    if hasattr(args, "check_gpu_memory") and args.check_gpu_memory and log_file is not None:
+        log_file.write("check_gpu_memory["+prefix+"]: Memory usage: {} GB. Max Memory usage: {} GB.\n".format(
             torch.cuda.memory_allocated() / 1024 / 1024 / 1024,
             torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024)
         )
+
+def check_memory_usage(log_file, args, iteration, gaussians, before_densification_stop):
+    global DEFAULT_GROUP
+
+    memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
+    max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+    max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
+    now_reserved_memory = torch.cuda.memory_reserved() / 1024 / 1024 / 1024
+    log_str = ""
+    log_str += "iteration[{},{}) {}Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB. Now Reserved Memory: {} GB. \n".format(
+        iteration, iteration+args.bsz,
+        "densify_and_prune. " if not before_densification_stop else "",
+        gaussians.get_xyz.shape[0], 
+        memory_usage, max_memory_usage, max_reserved_memory, now_reserved_memory)
+    if args.log_memory_summary:
+        log_str += "Memory Summary: {} GB \n".format(torch.cuda.memory_summary())
+
+    if args.check_gpu_memory:
+        log_file.write(log_str)
+
+    if before_densification_stop:
+        memory_usage_list = our_allgather_among_cpu_processes_float_list([max_reserved_memory], DEFAULT_GROUP)
+        # TODO: change to > 0.9 * all memory in the GPU
+        # print("total memory: ", torch.cuda.get_device_properties(0).total_memory)
+        total_memory = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024
+        if max([a[0] for a in memory_usage_list]) > args.densify_memory_limit_percentage * total_memory:# If memory usage is reaching the upper bound of GPU memory, stop densification to avoid OOM by fragmentation and etc.
+            print("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
+            log_file.write("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
+            args.disable_auto_densification = True
 
 def PILtoTorch(pil_image, resolution, args, log_file, decompressed_image=None):
     if decompressed_image is not None:
@@ -432,3 +414,146 @@ def log_cpu_memory_usage(position_str):
         psutil.virtual_memory().used / 1024 / 1024 / 1024,
         psutil.virtual_memory().available / 1024 / 1024 / 1024,
         psutil.virtual_memory().total / 1024 / 1024 / 1024))
+
+def merge_multiple_checkpoints(checkpoint_files):
+    global LOCAL_RANK
+
+    all_model_params = []
+    start_from_this_iteration = 0
+    for checkpoint_file in checkpoint_files:
+        (model_params, start_from_this_iteration) = torch.load(checkpoint_file, map_location=f"cuda:{LOCAL_RANK}")
+        all_model_params.append(model_params)
+    
+    active_sh_degree = all_model_params[0][0]
+
+    xyz = torch.cat([model_params[1] for model_params in all_model_params], dim=0)
+    features_dc = torch.cat([model_params[2] for model_params in all_model_params], dim=0)
+    features_rest = torch.cat([model_params[3] for model_params in all_model_params], dim=0)
+    scaling = torch.cat([model_params[4] for model_params in all_model_params], dim=0)
+    rotation = torch.cat([model_params[5] for model_params in all_model_params], dim=0)
+    opacity = torch.cat([model_params[6] for model_params in all_model_params], dim=0)
+    max_radii2D = torch.cat([model_params[7] for model_params in all_model_params], dim=0)
+    xyz_gradient_accum = torch.cat([model_params[8] for model_params in all_model_params], dim=0)
+    denom = torch.cat([model_params[9] for model_params in all_model_params], dim=0)
+    opt_dict = None
+    spatial_lr_scale = all_model_params[0][-1]
+
+    merged_model_params = (active_sh_degree,
+                           nn.Parameter(xyz.requires_grad_(True)),
+                           nn.Parameter(features_dc.requires_grad_(True)),
+                           nn.Parameter(features_rest.requires_grad_(True)),
+                           nn.Parameter(scaling.requires_grad_(True)),
+                           nn.Parameter(rotation.requires_grad_(True)),
+                           nn.Parameter(opacity.requires_grad_(True)),
+                           max_radii2D, 
+                           xyz_gradient_accum, 
+                           denom, 
+                           opt_dict, 
+                           spatial_lr_scale)
+
+    return merged_model_params, start_from_this_iteration
+
+def get_part_of_checkpoints(checkpoint_file, num_parts, part_id):
+    global LOCAL_RANK
+
+    (model_params, start_from_this_iteration) = torch.load(checkpoint_file, map_location=f"cuda:{LOCAL_RANK}")
+
+    num_gaussians = model_params[1].shape[0]
+    num_gaussians_per_part = num_gaussians // num_parts + 1
+    start_idx = part_id * num_gaussians_per_part
+    end_idx = min((part_id+1) * num_gaussians_per_part, num_gaussians)
+
+    active_sh_degree = model_params[0]
+    xyz = model_params[1][start_idx:end_idx]
+    features_dc = model_params[2][start_idx:end_idx]
+    features_rest = model_params[3][start_idx:end_idx]
+    scaling = model_params[4][start_idx:end_idx]
+    rotation = model_params[5][start_idx:end_idx]
+    opacity = model_params[6][start_idx:end_idx]
+    max_radii2D = model_params[7][start_idx:end_idx]
+    xyz_gradient_accum = model_params[8][start_idx:end_idx]
+    denom = model_params[9][start_idx:end_idx]
+    opt_dict = None
+    spatial_lr_scale = model_params[11]
+
+    new_model_params = (active_sh_degree,
+            nn.Parameter(xyz.requires_grad_(True)),
+            nn.Parameter(features_dc.requires_grad_(True)),
+            nn.Parameter(features_rest.requires_grad_(True)),
+            nn.Parameter(scaling.requires_grad_(True)),
+            nn.Parameter(rotation.requires_grad_(True)),
+            nn.Parameter(opacity.requires_grad_(True)),
+            max_radii2D, 
+            xyz_gradient_accum, 
+            denom, 
+            opt_dict, 
+            spatial_lr_scale)
+    return new_model_params, start_from_this_iteration
+
+
+def drop_duplicate_gaussians(model_params, drop_duplicate_gaussians_coeff):
+    if drop_duplicate_gaussians_coeff == 1.0:
+        return model_params
+
+    active_sh_degree = model_params[0]
+    xyz = model_params[1]
+    features_dc = model_params[2]
+    features_rest = model_params[3]
+    scaling = model_params[4]
+    rotation = model_params[5]
+    opacity = model_params[6]
+    max_radii2D = model_params[7]
+    xyz_gradient_accum = model_params[8]
+    denom = model_params[9]
+    opt_dict = None
+    spatial_lr_scale = model_params[11]
+
+    all_indices = torch.arange(int(xyz.shape[0]*drop_duplicate_gaussians_coeff), device=xyz.device)
+    keep_indices = all_indices % xyz.shape[0]
+
+    return (
+        active_sh_degree,
+        nn.Parameter(xyz[keep_indices].requires_grad_(True)),
+        nn.Parameter(features_dc[keep_indices].requires_grad_(True)),
+        nn.Parameter(features_rest[keep_indices].requires_grad_(True)),
+        nn.Parameter(scaling[keep_indices].requires_grad_(True)),
+        nn.Parameter(rotation[keep_indices].requires_grad_(True)),
+        nn.Parameter(opacity[keep_indices].requires_grad_(True)),
+        max_radii2D[keep_indices],
+        xyz_gradient_accum[keep_indices],
+        denom[keep_indices],
+        opt_dict,
+        spatial_lr_scale
+    )
+
+
+def load_checkpoint(args):
+    # TODO: merge these loading functions into a single one.
+
+    global DEFAULT_GROUP
+
+    number_files = len(os.listdir(args.start_checkpoint))
+    if args.start_checkpoint[-1] != "/":
+        args.start_checkpoint += "/"
+    if number_files == DEFAULT_GROUP.size():
+        # file_name = args.start_checkpoint+"chkpnt" + str(DEFAULT_GROUP.rank()) + ".pth"
+        file_name = args.start_checkpoint+"chkpnt_ws="+str(number_files)+"_rk="+str(DEFAULT_GROUP.rank())+".pth"
+        (model_params, start_from_this_iteration) = torch.load(file_name)
+
+    elif number_files > DEFAULT_GROUP.size():
+        assert number_files % DEFAULT_GROUP.size() == 0, "The number of files in the checkpoint folder must be a multiple of the number of processes."
+        local_processed_file_names = []
+        for i in range(DEFAULT_GROUP.rank(), number_files, DEFAULT_GROUP.size()):
+            local_processed_file_names.append(args.start_checkpoint+"chkpnt_ws="+str(number_files)+"_rk="+str(i)+".pth")
+        (model_params, start_from_this_iteration) = merge_multiple_checkpoints(local_processed_file_names)
+        file_name = local_processed_file_names
+    elif number_files < DEFAULT_GROUP.size():
+        assert DEFAULT_GROUP.size() % number_files == 0, "The number of files in the checkpoint folder must be a divisor of the number of processes."
+        # file_name = args.start_checkpoint+"chkpnt" + str(DEFAULT_GROUP.rank() % number_files) + ".pth"
+        file_name = args.start_checkpoint+"chkpnt_ws="+str(number_files)+"_rk="+str(DEFAULT_GROUP.rank() % number_files)+".pth"
+        (model_params, start_from_this_iteration) = get_part_of_checkpoints(file_name, DEFAULT_GROUP.size()//number_files, DEFAULT_GROUP.rank()//number_files)
+
+    if args.drop_duplicate_gaussians_coeff != 1.0:
+        model_params = drop_duplicate_gaussians(model_params, args.drop_duplicate_gaussians_coeff)
+    
+    return model_params, start_from_this_iteration

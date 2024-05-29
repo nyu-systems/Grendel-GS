@@ -130,12 +130,9 @@ class GaussianModel:
             self.active_sh_degree += 1
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+        log_file = utils.get_log_file()
         # loading could replicated on all ranks.
         self.spatial_lr_scale = spatial_lr_scale
-
-        # DEBUG: save pcd.points
-        # log_folder = os.environ["LOG_FOLDER"]
-        # np.savetxt(log_folder+"/pcdpoints_"+str(utils.LOCAL_RANK)+"_"+str(utils.WORLD_SIZE)+".txt", np.asarray(pcd.points))
 
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()# It is not contiguous
         fused_point_cloud = fused_point_cloud.contiguous()# Now it's contiguous
@@ -167,7 +164,8 @@ class GaussianModel:
             scales = scales[point_ind_l:point_ind_r].contiguous()
             rots = rots[point_ind_l:point_ind_r].contiguous()
             opacities = opacities[point_ind_l:point_ind_r].contiguous()
-            print("rank", utils.GLOBAL_RANK, "Number of initialized points after gaussians_distribution : ", fused_point_cloud.shape[0])
+            log_file.write("rank: {}, Number of initialized points: {}\n".format(utils.GLOBAL_RANK, fused_point_cloud.shape[0]))
+            # print("rank", utils.GLOBAL_RANK, "Number of initialized points after gaussians_distribution : ", fused_point_cloud.shape[0])
 
         if args.drop_initial_3dgs_p > 0.0:
             # drop each point with probability args.drop_initial_3dgs_p
@@ -177,7 +175,8 @@ class GaussianModel:
             scales = scales[drop_mask]
             rots = rots[drop_mask]
             opacities = opacities[drop_mask]
-            print("rank", utils.GLOBAL_RANK, "Number of initialized points after random drop : ", fused_point_cloud.shape[0])
+            log_file.write("rank: {}, Number of initialized points after random drop: {}\n".format(utils.GLOBAL_RANK, fused_point_cloud.shape[0]))
+            # print("rank", utils.GLOBAL_RANK, "Number of initialized points after random drop : ", fused_point_cloud.shape[0])
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -200,6 +199,7 @@ class GaussianModel:
         self.send_to_gpui_cnt = torch.zeros((self.get_xyz.shape[0], shard_world_size), dtype=torch.int, device="cuda")
 
         args = utils.get_args()
+        log_file = utils.get_log_file()
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale * args.lr_scale_pos_and_scale, "name": "xyz"},
@@ -224,7 +224,8 @@ class GaussianModel:
                 if "eps" in param_group: # Adam
                     param_group["eps"] /= lr_scale
                     param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
-                    utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
+                    # utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
+                    log_file.write(param_group["name"] + " betas: " + str(param_group["betas"]) + "\n")
             elif training_args.lr_scale_mode == "accumu":
                 lr_scale = 1
             else:
@@ -235,7 +236,7 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
-        utils.check_memory_usage_logging("after training_setup")
+        utils.check_initial_gpu_memory_usage("after training_setup")
     
     def log_gaussian_stats(self):
         # log the statistics of the gaussian model
@@ -372,6 +373,8 @@ class GaussianModel:
             _opacity = self._opacity
             _scaling = self._scaling
             _rotation = self._rotation
+            if path.endswith(".ply"):
+                path = path[:-4] + "_rk" + str(utils.GLOBAL_RANK) + "_ws" + str(utils.WORLD_SIZE) + ".ply"
 
         mkdir_p(os.path.dirname(path))
 
@@ -584,9 +587,6 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
-        # if self.sum_visible_count_in_one_batch is not None:
-        if utils.get_args().clear_floaters:
-            return 
         self.sum_visible_count_in_one_batch = self.sum_visible_count_in_one_batch[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
@@ -873,10 +873,8 @@ class GaussianModel:
         return False
 
     def redistribute_gaussians(self):
-
         args = utils.get_args()
-        if args.redistribute_gaussians_mode == "0":
-            # no redistribution
+        if args.redistribute_gaussians_mode == "no_redistribute":
             return
 
         comm_group_for_redistribution = self.group_for_redistribution()
@@ -884,7 +882,7 @@ class GaussianModel:
             return
 
         # Get each 3dgs' destination GPU.
-        if args.redistribute_gaussians_mode == "1":
+        if args.redistribute_gaussians_mode == "random_redistribute":
             # random redistribution to balance the number of gaussians on each GPU.
             destination = self.get_destination_1(comm_group_for_redistribution.size())
         else:
@@ -994,4 +992,3 @@ def sync_gradients_fused_densely(gaussians, group):
 
 def sync_gradients_fused_sparsely(gaussians, group):
     raise NotImplementedError("Fused sparse sync gradients is not implemented yet.")
-    pass

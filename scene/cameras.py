@@ -20,7 +20,7 @@ import time
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda"
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0
                  ):
         super(Camera, self).__init__()
 
@@ -34,41 +34,22 @@ class Camera(nn.Module):
 
         args = get_args()
         log_file = get_log_file()
-        try:
-            if args.lazy_load_image:
-                self.data_device = torch.device("cpu")
-            else:
-                self.data_device = torch.device(data_device)
-        except Exception as e:
-            print(e)
-            print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
-            self.data_device = torch.device("cuda")
 
         if args.time_image_loading:
-            if not args.lazy_load_image:
-                torch.cuda.synchronize()
             start_time = time.time()
 
         if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
             # load to cpu
-            self.original_image_cpu = image.contiguous()
-            if args.preload_dataset_gpu:
-                self.original_image_cpu = self.original_image_cpu.to("cuda").to(torch.float32)
-            self.image_width = self.original_image_cpu.shape[2]
-            self.image_height = self.original_image_cpu.shape[1]
-            # TODO: fix this later.
-            assert gt_alpha_mask is None, "gt_alpha_mask should be None if image is loaded"
-            # if gt_alpha_mask is not None:
-            #     self.original_image *= gt_alpha_mask.to(self.data_device)
-            # else:
-            #     self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            self.original_image_backup = image.contiguous()
+            if args.preload_dataset_to_gpu:
+                self.original_image_backup = self.original_image_backup.to("cuda")
+            self.image_width = self.original_image_backup.shape[2]
+            self.image_height = self.original_image_backup.shape[1]
         else:
-            self.original_image_cpu = None
+            self.original_image_backup = None
             self.image_height, self.image_width = utils.get_img_size()
 
         if args.time_image_loading:
-            if not args.lazy_load_image:
-                torch.cuda.synchronize()
             log_file.write(f"Image processing in {time.time() - start_time} seconds\n")
 
         self.zfar = 100.0
@@ -87,6 +68,7 @@ class Camera(nn.Module):
         return self.world_view_transform_backup.t().inverse()
 
     def update(self, dx, dy, dz):
+        # Update the position of this camera pose. TODO: support updating rotation of camera pose.
         with torch.no_grad():
             c2w = self.get_camera2world()
             c2w[0, 3] += dx

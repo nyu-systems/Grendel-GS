@@ -496,3 +496,175 @@ def get_division_strategy_history(cameraId2StrategyHistory, viewpoint_cam, workl
         cameraId2StrategyHistory[viewpoint_cam.uid] = DivisionStrategyHistory(viewpoint_cam, utils.MP_GROUP.size(), utils.MP_GROUP.rank(), workloads_division_mode)
     return cameraId2StrategyHistory[viewpoint_cam.uid]
 
+
+########################## Create DivisionStrategyHistory Final ##########################
+class DivisionStrategyFinal:
+
+    def __init__(self, camera, world_size, gpu_ids, division_pos, gpu_for_this_camera_tilelr):
+        assert world_size > 0, "The world_size must be greater than 0."
+        assert len(gpu_ids) == world_size, "The number of gpu_ids must be equal to the world_size."
+        assert len(division_pos) == world_size+1, "The number of division_pos must be equal to the world_size+1."
+        assert division_pos[0] == 0, "The first element of division_pos must be 0."
+        assert division_pos[-1] == utils.TILE_Y, "The last element of division_pos must be equal to the total number of tiles."
+        for i in range(1, len(division_pos)):
+            assert division_pos[i] > division_pos[i-1], "The division_pos must be in ascending order."
+
+        for idx in range(len(gpu_for_this_camera_tilelr)):
+            assert gpu_for_this_camera_tilelr[idx][0] == division_pos[idx] and gpu_for_this_camera_tilelr[idx][1] == division_pos[idx+1], "The division_pos must be consistent with gpu_for_this_camera_tilelr."
+
+        self.camera = camera
+        self.world_size = world_size
+        self.gpu_ids = gpu_ids
+        if utils.GLOBAL_RANK in gpu_ids:
+            self.rank = gpu_ids.index(utils.GLOBAL_RANK)
+        else:
+            self.rank = -1
+
+        self.division_pos = division_pos
+    
+    def get_local2j_ids(self, means2D, radii, raster_settings, cuda_args):
+        dist_global_strategy_tensor = torch.tensor(self.division_pos, dtype=torch.int, device=means2D.device) * utils.TILE_X
+
+        args = (
+            raster_settings.image_height,
+            raster_settings.image_width,
+            self.rank,
+            self.world_size,
+            means2D,
+            radii,
+            dist_global_strategy_tensor,
+            cuda_args
+        )
+
+        local2j_ids_bool = diff_gaussian_rasterization._C.get_local2j_ids_bool(*args)
+
+        local2j_ids = []
+        for rk in range(self.world_size):
+            local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
+
+        return local2j_ids, local2j_ids_bool
+
+    def get_compute_locally(self):
+        if utils.GLOBAL_RANK not in self.gpu_ids:
+            return None
+        rank = self.gpu_ids.index(utils.GLOBAL_RANK)
+
+        tile_ids_l, tile_ids_r = self.division_pos[rank]*utils.TILE_X, self.division_pos[rank+1]*utils.TILE_X
+        compute_locally = torch.zeros(utils.TILE_Y*utils.TILE_X, dtype=torch.bool, device="cuda")
+        compute_locally[tile_ids_l:tile_ids_r] = True
+        compute_locally = compute_locally.view(utils.TILE_Y, utils.TILE_X)
+        return compute_locally
+    
+    def get_extended_compute_locally(self):
+        return None
+
+
+class DivisionStrategyHistoryFinal:
+    def __init__(self, dataset, world_size, rank):
+        self.world_size = world_size
+        self.rank = rank
+        self.accum_heuristic = {}
+        for camera in dataset.cameras:
+            self.accum_heuristic[camera.uid] = torch.ones((utils.TILE_Y, ), dtype=torch.float32, device="cuda", requires_grad=False)
+
+        self.history = []
+
+    def store_stats(self, batched_cameras, gpu_camera_running_time, batched_strategies):
+        batched_camera_info = []
+        all_camera_running_time = [0 for _ in range(len(batched_cameras))]
+        all_gpu_running_time = [0 for _ in range(self.world_size)]
+        for camera_id, camera in enumerate(batched_cameras):
+            each_gpu_running_time = []
+            for gpu_i in batched_strategies[camera_id].gpu_ids:
+                all_camera_running_time[camera_id] += gpu_camera_running_time[gpu_i][camera_id]
+                all_gpu_running_time[gpu_i] += gpu_camera_running_time[gpu_i][camera_id]
+                each_gpu_running_time.append(gpu_camera_running_time[gpu_i][camera_id])
+
+            batched_camera_info.append({
+                "camera_id": camera.uid,
+                "gpu_ids": batched_strategies[camera_id].gpu_ids,
+                "division_pos": batched_strategies[camera_id].division_pos,
+                "each_gpu_running_time": each_gpu_running_time,
+            })
+        self.history.append({
+            "iteration": utils.get_cur_iter(),
+            "all_gpu_running_time": all_gpu_running_time,
+            "all_camera_running_time": all_camera_running_time,
+            "batched_camera_info": batched_camera_info,
+        })
+
+    def to_json(self):
+        return self.history
+
+def start_strategy_final(batched_cameras, strategy_history):
+    args = utils.get_args()
+
+    n_tiles_per_image = utils.TILE_Y
+    total_tiles = n_tiles_per_image * len(batched_cameras)
+
+    batched_accum_heuristic = [strategy_history.accum_heuristic[camera.uid] for camera in batched_cameras] # batch_size * [tile_y* tile_x]
+    catted_accum_heuristic = torch.cat(batched_accum_heuristic, dim=0) # [batch_size * tile_y * tile_x]
+
+    division_pos = division_pos_heuristic(catted_accum_heuristic, total_tiles, utils.DEFAULT_GROUP.size(), right=True)
+    # slightly adjust the division_pos to avoid redundant computation.
+    for i in range(1, len(division_pos)-1):
+        if (division_pos[i] % n_tiles_per_image + args.border_divpos_coeff >= n_tiles_per_image):
+            division_pos[i] = division_pos[i] // n_tiles_per_image * n_tiles_per_image + n_tiles_per_image
+        elif division_pos[i] % n_tiles_per_image - args.border_divpos_coeff <= 0:
+            division_pos[i] = division_pos[i] // n_tiles_per_image * n_tiles_per_image
+    for i in range(0, len(division_pos)-1):
+        assert division_pos[i] + args.border_divpos_coeff < division_pos[i+1], "Each part between division_pos must be large enough."
+
+    batched_strategies = []
+    gpuid2tasks = [[] for _ in range(utils.DEFAULT_GROUP.size())] # map from gpuid to a list of tasks (camera_id, tile_l, tile_r) it should do.
+    for idx, camera in enumerate(batched_cameras):
+        offset = idx * n_tiles_per_image
+        
+        gpu_for_this_camera = []
+        gpu_for_this_camera_tilelr = []
+        for gpu_id in range(utils.DEFAULT_GROUP.size()):
+            gpu_tile_l, gpu_tile_r = division_pos[gpu_id], division_pos[gpu_id+1]
+            if gpu_tile_r <= offset or offset+n_tiles_per_image <= gpu_tile_l:
+                continue
+            gpu_for_this_camera.append(gpu_id)
+            local_tile_l, local_tile_r = max(gpu_tile_l, offset)-offset, min(gpu_tile_r, offset+n_tiles_per_image)-offset
+            gpu_for_this_camera_tilelr.append((local_tile_l, local_tile_r))
+            gpuid2tasks[gpu_id].append((idx, local_tile_l, local_tile_r))
+
+        ws_for_this_camera = len(gpu_for_this_camera)
+        division_pos_for_this_viewpoint = [0] + [tilelr[1] for tilelr in gpu_for_this_camera_tilelr]
+        strategy = DivisionStrategyFinal(camera, ws_for_this_camera, gpu_for_this_camera, division_pos_for_this_viewpoint, gpu_for_this_camera_tilelr)
+        batched_strategies.append(strategy)
+    return batched_strategies, gpuid2tasks
+
+def finish_strategy_final(batched_cameras, strategy_history, batched_strategies, batched_statistic_collector):
+    batched_running_time = []
+    for idx, strategy in enumerate(batched_strategies):
+        if utils.GLOBAL_RANK not in strategy.gpu_ids:
+            batched_running_time.append(-1.0)
+            continue
+
+        batched_running_time.append(batched_statistic_collector[idx]["forward_render_time"]+
+                                    batched_statistic_collector[idx]["backward_render_time"]+
+                                    batched_statistic_collector[idx]["forward_loss_time"]*2)
+    
+    gpu_camera_running_time = utils.our_allgather_among_cpu_processes_float_list(batched_running_time, utils.DEFAULT_GROUP)
+    strategy_history.store_stats(batched_cameras, gpu_camera_running_time, batched_strategies)
+
+    args = utils.get_args()
+
+    if (utils.get_cur_iter() <= args.adjust_strategy_warmp_iterations) or (
+        utils.DEFAULT_GROUP.size() == 1) or (args.no_heuristics_update) or (
+        args.bsz >= utils.DEFAULT_GROUP.size() and (utils.get_img_height() <= 1080 or utils.get_img_width() <= 1920) ) or (
+        utils.get_img_height() <= 600 or utils.get_img_width() <= 1000 ):
+        return
+
+    for camera_id, (camera, strategy) in enumerate(zip(batched_cameras, batched_strategies)):
+        new_heuristic = torch.zeros((utils.TILE_Y, ), dtype=torch.float32, device="cuda")
+        for local_id, gpu_id in enumerate(strategy.gpu_ids):
+            tile_ids_l, tile_ids_r = strategy.division_pos[local_id], strategy.division_pos[local_id+1]
+            new_heuristic[tile_ids_l:tile_ids_r] = gpu_camera_running_time[gpu_id][camera_id] / (tile_ids_r-tile_ids_l)
+        if args.heuristic_decay == 0:
+            strategy_history.accum_heuristic[camera.uid] = new_heuristic
+        else:
+            strategy_history.accum_heuristic[camera.uid] = strategy_history.accum_heuristic[camera.uid] * args.heuristic_decay + new_heuristic * (1-args.heuristic_decay)

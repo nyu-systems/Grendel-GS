@@ -54,8 +54,6 @@ class ParamGroup:
 
 class AuxiliaryParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
-        self.ip = "127.0.0.1"
-        self.port = 6009
         self.debug_from = -1
         self.detect_anomaly = False
         self.test_iterations = [7_000, 30_000]
@@ -64,10 +62,9 @@ class AuxiliaryParams(ParamGroup):
         self.checkpoint_iterations = []
         self.start_checkpoint = ""
         self.auto_start_checkpoint = False
-        self.log_folder = "experiments/default_folder"
-        self.log_interval = 50
-        self.debug_why = False
-        self.llffhold = 10
+        self.log_folder = "/tmp/gaussian_splatting"
+        self.log_interval = 250
+        self.llffhold = 8
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -78,13 +75,9 @@ class ModelParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
         self.sh_degree = 3
         self._source_path = ""
-        self._model_path = "/scratch/hz3496/gs_tmp"
+        self._model_path = "/tmp/gaussian_splatting"
         self._images = "images"
-        self._resolution = 1 # set it to 1 to disable resizing. In current project, we do not resize images because we want to support larger resolution image. 
-        self.train_resolution_scale = 1.0
-        self.test_resolution_scale = 1.0
         self._white_background = False
-        self.data_device = "cuda"
         self.eval = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -95,8 +88,6 @@ class ModelParams(ParamGroup):
 
 class PipelineParams(ParamGroup):
     def __init__(self, parser):
-        self.convert_SHs_python = False
-        self.compute_cov3D_python = False
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")
 
@@ -120,106 +111,65 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
-        self.densify_memory_limit = 17.5
+        self.densify_memory_limit_percentage = 0.9
+        self.disable_auto_densification = False
         self.opacity_reset_until_iter = -1
         self.random_background = False
         self.min_opacity = 0.005
-        self.lr_scale_mode = "linear" # can be "linear", "sqrt", or "accumu"
+        self.lr_scale_mode = "sqrt" # can be "linear", "sqrt", or "accumu"
         super().__init__(parser, "Optimization Parameters")
 
 class DistributionParams(ParamGroup):
     def __init__(self, parser):
-        # Distribution for pixel-wise render computation.
+        # Distribution for pixel-wise workloads.
         self.image_distribution = True
-        self.image_distribution_mode = ""
-        # self.render_distribution_adjust_mode = "1" # render distribution strategy adjustment mode for pixel-wise render: choices are "1", "2", ... ; TODO: rename. 
-        self.heuristic_decay = 0.0 # decay factor for heuristic used in pixel-wise render distribution adjustment. 
-        self.stop_adjust_if_workloads_well_balanced = True # if current strategy is well balanced, we do not have to update strategy. 
-        self.lazy_load_image = True # lazily move image to gpu. Dataset is always large, saving all images on gpu always leads to OOM. 
-        self.dist_global_strategy = "" # if self.render_distribution_adjust_mode == "3", we set the flag `global distribution strategy` for pixel-wise render computation. 
-        self.adjust_strategy_warmp_iterations = -1 # do not use the running statistics in the first self.adjust_strategy_warmp_iterations iterations.
-        # self.render_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
-        self.image_distribution_unbalance_threshold = 0.06 # threshold to adjust distribution ratio for pixel-wise render computation: min*self.render_distribution_unbalance_threshold < max --> redistribute.
+        self.image_distribution_mode = "final"
+        self.heuristic_decay = 0.0
+        self.no_heuristics_update = False
+        self.border_divpos_coeff = 2.0
+        self.adjust_strategy_warmp_iterations = -1
+        self.save_strategy_history = False
 
         # Distribution for 3DGS-wise workloads.
-        # self.memory_distribution_mode = "0"
-        # "0" no shard 3dgs storage. memory_distribution must be false <==> memory_distribution_mode is 0.
-        # "1" is shard 3dgs storage across MP group and gradient sync. 
-        # "2" is shard 3dgs storage across the global group and use all2all to replace the gradient sync. 
-        self.gaussians_distribution = False
-        self.redistribute_gaussians_mode = "no_redistribute" # enable redistribution for 3DGS storage location. "no_redistribute" is no redistribution. 
+        self.gaussians_distribution = True
+        self.redistribute_gaussians_mode = "random_redistribute" # "no_redistribute"
         self.redistribute_gaussians_frequency = 10 # redistribution frequency for 3DGS storage location.
-        self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location: min*self.redistribute_gaussian_threshold < max --> redistribute.
-
-        # Distribution for pixel-wise loss computation.
-        # self.loss_distribution_mode = "general" # "no_distribution", "general", "fast_less_comm", "fast_less_comm_noallreduceloss", "allreduce", "fast" and "functional_allreduce". 
-        self.get_global_exact_loss = False # if True, we recompute loss without redundant border pixel computation to get exact number. This is for debugging.
-
-        # Data Parallel
-        self.bsz = 1 # batch size. currently, our implementation is just gradient accumulation. 
-        self.dp_size = 1 # data parallel degree.
+        self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location
+        self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. Only use when gaussians_distribution is False.
         self.grad_normalization_mode = "none" # "divide_by_visible_count", "square_multiply_by_visible_count", "multiply_by_visible_count", "none" gradient normalization mode. 
-        self.mp_size = -1 # model parallel degree.
-        self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. 
 
-        self.distributed_dataset_storage = False # if True, we store dataset only on rank 0 and broadcast to other ranks.
-        self.async_load_gt_image = False
+        # Dataset and Model save
+        self.bsz = 1 # batch size.
+        self.distributed_dataset_storage = True # if True, we store dataset only on rank 0 and broadcast to other ranks.
+        self.distributed_save = True
+        self.preload_dataset_to_gpu = False # By default, we do not preload dataset to GPU.
+        self.preload_dataset_to_gpu_threshold = 1e10 # unit is byte, by default 10GB memory limit for dataset.
         self.multiprocesses_image_loading = False
         self.num_train_cameras = -1
         self.num_test_cameras = -1
-        self.distributed_save = False
-
-        self.use_final_system = False # if True, we use the final system.
-        self.no_heuristics_update = False
-        self.border_divpos_coeff = 2
-        self.no_avoid_pixel_all2all = False
-
-        self.use_final_system2 = False # if True, we use the final system.
-        self.final_system_bench_time = False
-        self.drop_duplicate_gaussians_coeff = 1.0
-
-        self.preload_dataset_gpu = False
-        self.optimize_loadbalance = False
 
         super().__init__(parser, "Distribution Parameters")
 
 class BenchmarkParams(ParamGroup):
     def __init__(self, parser):
-        self.zhx_time = False # log some steps' running time with cuda events timer.
-        self.zhx_python_time = False # log some steps' running time with python timer.
-        self.end2end_time = False # log end2end training time.
-        self.check_memory_usage = False # check memory usage.
-        self.log_iteration_memory_usage = False # log memory usage for every iteration.
-
+        self.enable_timer = False # Log running time from python side.
+        self.end2end_time = True # Log end2end training time.
+        self.zhx_time = False # Log running time from gpu side.
+        self.check_gpu_memory = False # check gpu memory usage.
         self.check_cpu_memory = False # check cpu memory usage.
-
-        self.benchmark_stats = False # Benchmark mode: it will enable some flags to log detailed statistics to research purposes.
-        self.performance_stats = False # Performance mode: to know its generation quality, it will evaluate/save models at some iterations and use them for render.py and metrics.py .
-
-        self.analyze_3dgs_change = False # log some 3dgs parameters change to analyze 3dgs change.
+        self.log_memory_summary = False
 
         super().__init__(parser, "Benchmark Parameters")
 
 class DebugParams(ParamGroup):
     def __init__(self, parser):
         self.zhx_debug = False # log debug information that zhx needs.
-        self.fixed_training_image = -1 # if not -1, use this image as the training image.
-        self.disable_auto_densification = False # disable auto densification.
         self.stop_update_param = False # stop updating parameters. No optimizer.step() will be called.
-        self.force_python_timer_iterations = [600, 700, 800] # forcibly print timers at these iterations.
-
-        self.save_i2jsend = False # Deprecated. It was used to save i2jsend_size to file for debugging. Now, we save size of communication from gpui to gpuj in strategy_history_ws=4_rk=0.json .
         self.time_image_loading = False # Log image loading time.
-        self.save_send_to_gpui_cnt = False # Save send_to_gpui_cnt to file for debugging. save in send_to_gpui_cnt_ws=4_rk=0.json .
 
         self.nsys_profile = False # profile with nsys.
         self.drop_initial_3dgs_p = 0.0 # profile with nsys.
-
-        self.clear_floaters = False # clear floaters in the image.
-        self.prune_based_on_opacity_interval = 4000
-        self.sync_more = False
-        self.log_memory_summary = False
-        self.empty_cache_more = False
+        self.drop_duplicate_gaussians_coeff = 1.0
 
         super().__init__(parser, "Debug Parameters")
 
@@ -252,11 +202,7 @@ def print_all_args(args, log_file):
     for arg in vars(args):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
     log_file.write("-"*30+"\n\n")
-
-    if args.use_final_system or args.use_final_system2:
-        log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size))
-    else:
-        log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; dp_size: " + str(args.dp_size) + " dp_rank: " + str(utils.DP_GROUP.rank()) + "; mp_size: " + str(args.mp_size) + " mp_rank: " + str(utils.MP_GROUP.rank())+"\n")
+    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; bsz: " + str(args.bsz)+"\n")
 
     # Make sure block size match between python and cuda code.
     cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
@@ -274,93 +220,36 @@ def find_latest_checkpoint(log_folder):
 
 def init_args(args):
 
-    # Check arguments
-    assert not (args.benchmark_stats and args.performance_stats), "benchmark_stats and performance_stats can not be enabled at the same time."
-
-    if args.benchmark_stats:
-        args.zhx_time = True
-        args.zhx_python_time = True
-        args.log_iteration_memory_usage = True
-        args.check_memory_usage = True
-        args.end2end_time = True
-
-        args.save_iterations = []
-        assert args.fixed_training_image == -1, "benchmark mode does not support fixed_training_image."
-        assert not args.disable_auto_densification, "benchmark mode needs auto densification."
-        assert not args.save_i2jsend, "benchmark mode does not support save_i2jsend."
-        assert not args.stop_update_param, "benchmark mode does not support stop_update_param."
-
-    if args.performance_stats:
-        args.eval = True
-        args.zhx_time = False
-        args.zhx_python_time = False
-        args.end2end_time = True
-        args.log_iteration_memory_usage = False
-        args.check_memory_usage = False
-        args.test_iterations = [500]+ [i for i in range(2000, args.iterations+1, 1000)]
-
-        args.lazy_load_image = True
-
-        assert args.fixed_training_image == -1, "performance_stats mode does not support fixed_training_image."
-        assert not args.disable_auto_densification, "performance_stats mode needs auto densification."
-        assert not args.save_i2jsend, "performance_stats mode does not support save_i2jsend."
-        assert not args.stop_update_param, "performance_stats mode does not support stop_update_param."
-
     if args.opacity_reset_until_iter == -1:
         args.opacity_reset_until_iter = args.densify_until_iter + args.bsz
 
     if args.auto_start_checkpoint:
         args.start_checkpoint = find_latest_checkpoint(args.log_folder)
-
-    if args.fixed_training_image != -1:
-        args.test_iterations = [] # disable testing during training.
-        args.disable_auto_densification = True
     
-    if args.log_iteration_memory_usage:
-        args.check_memory_usage = True
+    # TODO: handle the warning: https://github.com/pytorch/pytorch/blob/bae409388cfc20cce656bf7b671e45aaf81dd1c8/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1849-L1852
 
     if utils.DEFAULT_GROUP.size() == 1:
         args.gaussians_distribution = False
         args.image_distribution = False
-        args.image_distribution_mode = "0"
+        args.image_distribution_mode = ""
         args.distributed_dataset_storage = False
         args.distributed_save = False
 
-    assert (not args.use_final_system) or (not args.use_final_system2), "use_final_system and use_final_system2 can not be enabled at the same time."
+    if args.preload_dataset_to_gpu:
+        args.distributed_dataset_storage = False
 
-    if args.use_final_system or args.use_final_system2:
-        args.image_distribution_mode = "3"
-    elif utils.MP_GROUP.size() == 1:
-        args.image_distribution_mode = "0"
-    
+    # Logging are saved with where model is saved.
+    args.log_folder = args.model_path
 
     if not args.gaussians_distribution:
         args.distributed_save = False
 
-    assert args.bsz % args.dp_size == 0, "dp worker should compute equal number of samples, for now."
-
     # sort test_iterations
     args.test_iterations.sort()
-    if len(args.test_iterations) > 0:
-        while args.test_iterations[-1] < args.iterations:
-            args.test_iterations.append(args.test_iterations[-1]+10000)
-
     args.save_iterations.sort()
-    if len(args.save_iterations) > 0:
-        while args.save_iterations[-1] < args.iterations:
-            args.save_iterations.append(args.save_iterations[-1]+20000)
     if len(args.save_iterations) > 0 and args.iterations not in args.save_iterations:
         args.save_iterations.append(args.iterations)
-
     args.checkpoint_iterations.sort()
-    if len(args.checkpoint_iterations) > 0:
-        while args.checkpoint_iterations[-1] < args.iterations:
-            args.checkpoint_iterations.append(args.checkpoint_iterations[-1]+50000)
 
-    if args.final_system_bench_time:
-        args.test_iterations = []
-        args.save_iterations = []
-        args.checkpoint_iterations = []
-        args.disable_auto_densification = True
-
-    init_image_distribution_config(args)
+    # Set up global args
+    utils.set_args(args)

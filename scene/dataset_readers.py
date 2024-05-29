@@ -107,9 +107,6 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path) # this is a lazy load, the image is not loaded yet
 
-        # if hasattr(args, "fixed_training_image") and args.fixed_training_image == -1:
-        #     image.load() # load immediately after open file. 
-
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
@@ -203,6 +200,7 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
     cam_infos = []
     if undistorted:
         print("Undistortion the images!!!")
+        # TODO: Support undistortion here. Please refer to octree-gs implementation. 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         try:
@@ -210,7 +208,6 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
         except:
             fovx = None
 
-        # TODO: for debug, change it back
         frames = contents["frames"]
         # check if filename already contain postfix
         if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
@@ -250,39 +247,8 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
             T = w2c[:3, 3]
 
             image_path = os.path.join(path, cam_name)
-            # if "block_10" in image_path:
-            #     continue
             image_name = cam_name[-17:] #Path(cam_name).stem
             image = Image.open(image_path)
-
-            if undistorted:
-                assert False, "Undistortion not implemented for City"
-                mtx = np.array(
-                    [
-                        [frame["fl_x"], 0, frame["cx"]],
-                        [0, frame["fl_y"], frame["cy"]],
-                        [0, 0, 1.0],
-                    ],
-                    dtype=np.float32,
-                )
-                dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
-                im_data = np.array(image.convert("RGB"))
-                arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
-                image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
-            else:
-                # TODO: because we assume background is black, thus we do not need to use this code
-
-                pass
-                # im_data = np.array(image.convert("RGBA"))
-                # if random_background:
-                #     bg = [np.random.random(),np.random.random(),np.random.random()] 
-                # elif white_background:
-                #     bg = [1.0, 1.0, 1.0]
-                # else:
-                #     bg = [0.0, 0.0, 0.0]
-                # norm_data = im_data / 255.0
-                # arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-                # image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
             if fovx is not None:
                 fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
@@ -383,26 +349,13 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 def readCityInfo(path, random_background, white_background, eval, ds, extension=".tif", llffhold=8, undistorted=False):
 
-    # if ds > 1:
-    #     json_path = glob.glob(os.path.join(path, f"*_{ds}.json"))[0].split('/')[-1]
-    # else:
-    #     json_path = glob.glob(os.path.join(path, f"*.json"))[0].split('/')[-1]
-    train_json_path = os.path.join(path, f"transforms_train_my.json")
+    train_json_path = os.path.join(path, f"transforms_train_my.json")# TODO: fix this.
     test_json_path = os.path.join(path, f"transforms_test_my.json")
     print("Reading Training Transforms from {} {}".format(train_json_path, test_json_path))
     
-    # cam_infos = readCamerasFromTransformsCity(path, json_path, random_background, white_background, extension, undistorted)
-    # print("Load Cameras: ", len(cam_infos))
     train_cam_infos = readCamerasFromTransformsCity(path, train_json_path, random_background, white_background, extension, undistorted)
     test_cam_infos = readCamerasFromTransformsCity(path, test_json_path, random_background, white_background, extension, undistorted)
     print("Load Cameras(train, test): ", len(train_cam_infos), len(test_cam_infos))
-    
-    # if not eval:
-    #     train_cam_infos.extend(cam_infos)
-    #     test_cam_infos = []
-    # else:
-    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
@@ -414,14 +367,7 @@ def readCityInfo(path, random_background, white_background, eval, ds, extension=
             raise ValueError("must have tiepoints!")
     else:
         assert False, "No ply file found!"
-        # las_paths = glob.glob(os.path.join(path, "LAS/*.las"))
-        # las_path = las_paths[0]
-        # print(f'las_path: {las_path}')
-        # try:
-        #     pcd = read_multiple_las_files(las_paths, ply_path)
-        # except:
-        #     raise ValueError("Load LAS failed!")
-    
+
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,

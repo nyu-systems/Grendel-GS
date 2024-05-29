@@ -104,7 +104,6 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
     parser.add_argument('--mode', type=str, choices=["train", "test"], default="train", help="train or test")
-    parser.add_argument('--lazy_load_image', action='store_true', default=False)
     args = parser.parse_args()
 
     set_args(args)

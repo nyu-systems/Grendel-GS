@@ -20,34 +20,14 @@ import multiprocessing
 from multiprocessing import shared_memory
 import torch
 
-WARNED = False
-
-def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, return_image=False):
-    if id == 0:
-        orig_w, orig_h = cam_info.image.size
-        utils.set_img_size(orig_h, orig_w)
-    orig_h, orig_w = utils.get_img_size()
+def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
+    orig_w, orig_h = cam_info.image.size
+    assert orig_w == utils.get_img_width() and orig_h == utils.get_img_height(), "All images should have the same size. "
 
     args = get_args()
     log_file = get_log_file()
-    if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
-    else:  # should be a type that converts to float
-        if args.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
-            else:
-                global_down = 1
-        else:
-            global_down = orig_w / args.resolution
-
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
+    resolution = orig_w, orig_h
+    # NOTE: we do not support downsampling here. 
 
     if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
         if args.time_image_loading:
@@ -59,10 +39,6 @@ def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, retur
         # assert resized_image_rgb.shape[0] == 3, "Image should have exactly 3 channels!"
         gt_image = resized_image_rgb[:3, ...].contiguous()
         loaded_mask = None
-
-        # TODO: change this back.
-        # if resized_image_rgb.shape[1] == 4:
-        #     loaded_mask = resized_image_rgb[3:4, ...]
 
         # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory. 
         cam_info.image.close()
@@ -77,7 +53,7 @@ def loadCam(args, id, cam_info, resolution_scale, decompressed_image=None, retur
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+                  image_name=cam_info.image_name, uid=id)
 
 def load_decompressed_image(params):
     args, id, cam_info, resolution_scale = params
@@ -98,7 +74,6 @@ def decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, 
         # results = pool.map(load_decompressed_image, tasks)
         results = list(tqdm(pool.imap(load_decompressed_image, tasks), total=total_cameras))
 
-        # Build the camera list considering 'fixed_training_image'
         for id, result in enumerate(results):
             decompressed_images.append(result)
 
@@ -118,8 +93,6 @@ def decompress_and_scale_image(cam_info):
         return resized_image[..., np.newaxis].transpose(2, 0, 1)
 
 def load_decompressed_image_shared(params):
-    print("For shared memory loading, I currently disable any computation to test the speed.")
-    return 
     shared_mem_name, args, id, cam_info, resolution_scale = params
     # Retrieve the shared memory block
     existing_shm = shared_memory.SharedMemory(name=shared_mem_name)
@@ -178,24 +151,20 @@ def decompressed_images_from_camInfos_multiprocess_sharedmem(cam_infos, resoluti
 
     return decompressed_images
 
-def cameraList_from_camInfos(cam_infos, resolution_scale, args):
+def cameraList_from_camInfos(cam_infos, args):
     args = get_args()
 
     if args.multiprocesses_image_loading:
-        # print("start multiprocesses_image_loading")
-        decompressed_images = decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, args)
+        decompressed_images = [None for _ in cam_infos]
+        # FIXME: current multiprocess implementations do not have any speed up. 
+        # decompressed_images = decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, args)
         # decompressed_images = decompressed_images_from_camInfos_multiprocess_sharedmem(cam_infos, resolution_scale, args)
     else:
         decompressed_images = [None for _ in cam_infos]
 
-    # print("finish multiprocesses_image_loading")
-
     camera_list = []
     for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos), disable=(utils.LOCAL_RANK != 0)):
-        if not hasattr(args, "fixed_training_image") or args.fixed_training_image == -1 or id == args.fixed_training_image:
-            camera_list.append(loadCam(args, id, c, resolution_scale, decompressed_image=decompressed_images[id], return_image=False))
-        else:
-            camera_list.append(None)
+        camera_list.append(loadCam(args, id, c, decompressed_image=decompressed_images[id], return_image=False))
 
     if utils.DEFAULT_GROUP.size() > 1:
         torch.distributed.barrier(group=utils.DEFAULT_GROUP)

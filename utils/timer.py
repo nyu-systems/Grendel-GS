@@ -6,7 +6,8 @@ class Timer:
     def __init__(self, args, file=None):
         self.timers = {}
         self.args = args
-        if args.zhx_python_time:
+        if args.enable_timer:
+            # Enable time measure evaluated on python side.
             self.file = open(args.log_folder+"/python_time_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".log", 'w')
         else:
             self.file = None

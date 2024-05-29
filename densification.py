@@ -1,16 +1,10 @@
 import torch
-from torch.cuda import nvtx
 import utils.general_utils as utils
 
 def densification(iteration, scene, gaussians, batched_screenspace_pkg):
     args = utils.get_args()
     timers = utils.get_timers()
     log_file = utils.get_log_file()
-
-    # Update Statistics for redistribution
-    # if args.gaussians_distribution:
-    #     for local2j_ids_bool in batched_screenspace_pkg["batched_local2j_ids_bool"]:
-    #         gaussians.send_to_gpui_cnt += local2j_ids_bool
 
     # Densification
     if not args.disable_auto_densification and iteration <= args.densify_until_iter:
@@ -38,7 +32,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
             timers.stop("densify_and_prune")
 
             # redistribute after densify_and_prune, because we have new gaussians to distribute evenly.
-            if args.redistribute_gaussians_mode != "no_redistribute" and ( utils.get_denfify_iter() % args.redistribute_gaussians_frequency == 0 ):
+            if utils.get_denfify_iter() % args.redistribute_gaussians_frequency == 0:
                 num_3dgs_before_redistribute = gaussians.get_xyz.shape[0]
                 timers.start("redistribute_gaussians")
                 gaussians.redistribute_gaussians()
@@ -48,29 +42,7 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
                 log_file.write("iteration[{},{}) redistribute. Now num of 3dgs before redistribute: {}. Now num of 3dgs after redistribute: {}. \n".format(
                     iteration, iteration+args.bsz, num_3dgs_before_redistribute, num_3dgs_after_redistribute))
 
-            # torch.cuda.empty_cache()
-            memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
-            max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
-            max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
-            now_reserved_memory = torch.cuda.memory_reserved() / 1024 / 1024 / 1024
-            log_file.write("iteration[{},{}) densify_and_prune. Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB. Now Reserved Memory: {} GB. \n".format(
-                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory, now_reserved_memory))
-            if args.log_memory_summary:
-                log_file.write("Memory Summary: {} GB \n".format(torch.cuda.memory_summary()))
-
-            # all_gather the memory usage and log it.
-            # memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([memory_usage], utils.DEFAULT_GROUP)
-            # if max([a[0] for a in memory_usage_list]) > args.densify_memory_limit:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
-            #     print("Memory usage is over 18GB per GPU. stop densification.\n")
-            #     log_file.write("Memory usage is over 20GB per GPU. stop densification.\n")
-            #     args.disable_auto_densification = True
-
-            memory_usage_list = utils.our_allgather_among_cpu_processes_float_list([max_reserved_memory], utils.DEFAULT_GROUP)
-            if max([a[0] for a in memory_usage_list]) > 36:# In expe `rubble_2k_mp_9`, memory_usage>18GB leads to OOM.
-                print("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
-                log_file.write("Reserved Memory usage is reaching the upper bound of GPU memory. stop densification.\n")
-                args.disable_auto_densification = True
-
+            utils.check_memory_usage(log_file, args, iteration, gaussians, before_densification_stop=True)
 
             utils.inc_densify_iter()
         
@@ -82,23 +54,8 @@ def densification(iteration, scene, gaussians, batched_screenspace_pkg):
 
         timers.stop("densification")
     else:
-
-        if args.clear_floaters and iteration > args.densify_until_iter:
-            # clear floaters
-            if utils.check_update_at_this_iter(iteration, args.bsz, args.prune_based_on_opacity_interval, 0):
-                gaussians.prune_based_on_opacity(args.min_opacity)
-                # if iteration == 240001 or iteration == 210001 or iteration == 220001 or iteration == 230001:
-                #     gaussians.reset_opacity()
-
         if iteration > args.densify_from_iter and utils.check_update_at_this_iter(iteration, args.bsz, args.densification_interval, 0):
-            # measue the memory usage.
-            # torch.cuda.empty_cache()
-            memory_usage = torch.cuda.memory_allocated() / 1024 / 1024 / 1024
-            max_memory_usage = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
-            max_reserved_memory = torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024
-            now_reserved_memory = torch.cuda.memory_reserved() / 1024 / 1024 / 1024
-            log_file.write("iteration[{},{}) Now num of 3dgs: {}. Now Memory usage: {} GB. Max Memory usage: {} GB. Max Reserved Memory: {} GB. Now Reserved Memory: {} GB. \n".format(
-                iteration, iteration+args.bsz, gaussians.get_xyz.shape[0], memory_usage, max_memory_usage, max_reserved_memory, now_reserved_memory))
+            utils.check_memory_usage(log_file, args, iteration, gaussians, before_densification_stop=False)
 
 
 

@@ -126,7 +126,7 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
     if timers is not None:
         timers.stop("forward_prepare_gaussians")
 
-    utils.check_memory_usage_logging("after forward_prepare_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_prepare_gaussians")
     ########## [END] Prepare Gaussians for rendering ##########
 
 
@@ -148,7 +148,7 @@ def replicated_preprocess3dgs(viewpoint_camera, pc : GaussianModel, pipe, bg_col
         means2D.retain_grad()
     if timers is not None:
         timers.stop("forward_preprocess_gaussians")
-    utils.check_memory_usage_logging("after forward_preprocess_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_preprocess_gaussians")
 
     screenspace_pkg = {
                 "rasterizer": rasterizer,
@@ -264,7 +264,7 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
     shs = pc.get_features
     if timers is not None:
         timers.stop("forward_prepare_gaussians")
-    utils.check_memory_usage_logging("after forward_prepare_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_prepare_gaussians")
     ########## [END] Prepare Gaussians for rendering ##########
 
     if timers is not None:
@@ -317,7 +317,7 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
         batched_rasterizers.append(rasterizer)
         batched_screenspace_params.append(screenspace_params)
         batched_radii.append(radii)
-    utils.check_memory_usage_logging("after forward_preprocess_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_preprocess_gaussians")
     if timers is not None:
         timers.stop("forward_preprocess_gaussians")
 
@@ -326,7 +326,7 @@ def distributed_preprocess3dgs_and_all2all(batched_viewpoint_cameras, pc : Gauss
         timers.start("forward_all_to_all_communication")
     means2D_redistributed, rgb_redistributed, conic_opacity_redistributed, radii_redistributed, depths_redistributed, i2j_send_size, local2j_ids_bool = \
         all_to_all_communication(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies)
-    utils.check_memory_usage_logging("after forward_all_to_all_communication")
+    utils.check_initial_gpu_memory_usage("after forward_all_to_all_communication")
     if timers is not None:
         timers.stop("forward_all_to_all_communication")
     
@@ -387,7 +387,7 @@ def render(screenspace_pkg, strategy=None):
     extended_compute_locally = strategy.get_extended_compute_locally()
     if timers is not None:
         timers.stop("forward_compute_locally")
-    utils.check_memory_usage_logging("after forward_compute_locally")
+    utils.check_initial_gpu_memory_usage("after forward_compute_locally")
 
     # render
     if timers is not None:
@@ -414,7 +414,7 @@ def render(screenspace_pkg, strategy=None):
         )
     if timers is not None:
         timers.stop("forward_render_gaussians")
-    utils.check_memory_usage_logging("after forward_render_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_render_gaussians")
 
     ########## [END] CUDA Rasterization Call ##########
     return rendered_image, compute_locally
@@ -462,19 +462,14 @@ def get_cuda_args_final(strategy, mode="train"):
     iteration = utils.get_cur_iter()
 
     if mode == "train":
-        for x in range(args.bsz):# This is to make sure we will get the 
+        for x in range(args.bsz):
             if (iteration+x) % args.log_interval == 1:
                 iteration += x
                 break
-        avoid_pixel_all2all = True
     elif mode == "test":
         iteration = -1
-        avoid_pixel_all2all = False
     else:
         raise ValueError("mode should be train or test.")
-
-    if args.no_avoid_pixel_all2all:
-        avoid_pixel_all2all = False
 
     cuda_args = {
             "mode": mode,
@@ -488,7 +483,7 @@ def get_cuda_args_final(strategy, mode="train"):
             "iteration": str(iteration),
             "zhx_debug": str(args.zhx_debug),
             "zhx_time": str(args.zhx_time),
-            "avoid_pixel_all2all": avoid_pixel_all2all,
+            "avoid_pixel_all2all": False,
             "stats_collector": {},
         }
     return cuda_args
@@ -607,6 +602,9 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
     distribute gaussians parameters across all GPUs.
     """
     timers = utils.get_timers()
+    args = utils.get_args()
+
+    assert utils.DEFAULT_GROUP.size() == 1 or (args.gaussians_distribution and args.image_distribution), "Ensure distributed training given multiple GPU. "
 
     ########## [START] Prepare Gaussians for rendering ##########
     if timers is not None:
@@ -618,7 +616,7 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
     shs = pc.get_features
     if timers is not None:
         timers.stop("forward_prepare_gaussians")
-    utils.check_memory_usage_logging("after forward_prepare_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_prepare_gaussians")
     ########## [END] Prepare Gaussians for rendering ##########
 
     if timers is not None:
@@ -671,7 +669,7 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
         batched_rasterizers.append(rasterizer)
         batched_screenspace_params.append(screenspace_params)
         batched_radii.append(radii)
-    utils.check_memory_usage_logging("after forward_preprocess_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_preprocess_gaussians")
     if timers is not None:
         timers.stop("forward_preprocess_gaussians")
 
@@ -697,7 +695,7 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
         timers.start("forward_all_to_all_communication")
     batched_means2D_redistributed, batched_rgb_redistributed, batched_conic_opacity_redistributed, batched_radii_redistributed, batched_depths_redistributed, gpui_to_gpuj_imgk_size = \
         all_to_all_communication_final(batched_rasterizers, batched_screenspace_params, batched_cuda_args, batched_strategies)
-    utils.check_memory_usage_logging("after forward_all_to_all_communication")
+    utils.check_initial_gpu_memory_usage("after forward_all_to_all_communication")
     if timers is not None:
         timers.stop("forward_all_to_all_communication")
     
@@ -771,7 +769,7 @@ def render_final(batched_screenspace_pkg, batched_strategies):
         batched_compute_locally.append(compute_locally)
         if timers is not None:
             timers.stop("forward_render_gaussians")
-    utils.check_memory_usage_logging("after forward_render_gaussians")
+    utils.check_initial_gpu_memory_usage("after forward_render_gaussians")
 
     ########## [END] CUDA Rasterization Call ##########
     return batched_rendered_image, batched_compute_locally
