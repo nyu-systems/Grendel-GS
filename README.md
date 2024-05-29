@@ -29,7 +29,7 @@ Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruct
 The repository contains submodules, thus please check it out with 
 ```shell
 # SSH
-git clone git@github.com:TarzanZhao/gaussian-splatting.git --recursive
+git clone -b release4neurips git@github.com:TarzanZhao/gaussian-splatting.git --recursive
 ```
 
 ## Overview
@@ -53,44 +53,31 @@ We only tested this repo on linux with nvidia GPU; Instructions for setting up a
 
 #### Setup
 
-Our default, provided install method is based on Conda package and environment management:
-```shell
-conda env create --file environment.yml
-conda activate gaussian_splatting
-```(I am not able to set up this yet)
-If you want to use other name for this conda environment, you should change the `name:` field in the environment.yml
-
-Dependencies:
+To use our repository, we should have a pytorch environment and install the following dependencies:
 - plyfile
 - pytorch(version>=2.0.1???)
 - torchvision
 - tqdm
 
-
-
-Then, we need to compile two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn`. `diff-gaussian-rasterization` contains render cuda kernels.
+Then, we need to compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
 
 ```shell
 pip install submodules/diff-gaussian-rasterization
 pip install submodules/simple-knn
 ```
 
-
-
 ### Running
 
-To run the optimizer, simply use
-
-For single-GPU non-distributed training,
+For single-GPU non-distributed training with batch size of 1,
 ```shell
 python train.py -s <path to COLMAP dataset>
-python train.py -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./expe/train_1gpu
+python train.py -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./one_experiment
 ```
 
 For 4 GPU distributed training and batch size of 4,
 ```shell
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to COLMAP dataset>
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./expe/train_4gpu
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./one_experiment
 ```
 
 <details>
@@ -160,12 +147,7 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s /pscratc
 </details>
 <br>
 
-### Rendering Trained point cloud
-
-#### NOTE
-
-
-### Rendering
+### Render Trained point cloud
 
 
 ### Evaluating metrics
