@@ -47,8 +47,6 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["City"](args.source_path,
                                                         args.random_background,
                                                         args.white_background,
-                                                        args.eval,
-                                                        ds=1,
                                                         llffhold=args.llffhold)
         else:
             raise ValueError("No valid dataset found in the source path")
@@ -87,25 +85,27 @@ class Scene:
         utils.print_rank_0("Decoding Training Cameras")
         self.train_cameras = None
         self.test_cameras = None
-        if args.num_train_cameras > 0:
+        if args.num_train_cameras >= 0:
             train_cameras = scene_info.train_cameras[:args.num_train_cameras]
         else:
             train_cameras = scene_info.train_cameras
         self.train_cameras = cameraList_from_camInfos(train_cameras, args)
         # output the number of cameras in the training set and image size to the log file
         log_file.write("Number of local training cameras: {}\n".format(len(self.train_cameras)))
-        log_file.write("Image size: {}x{}\n".format(self.train_cameras[0].image_height, self.train_cameras[0].image_width))
+        if len(self.train_cameras) > 0:
+            log_file.write("Image size: {}x{}\n".format(self.train_cameras[0].image_height, self.train_cameras[0].image_width))
 
         if args.eval:
             utils.print_rank_0("Decoding Test Cameras")
-            if args.num_test_cameras > 0:
+            if args.num_test_cameras >= 0:
                 test_cameras = scene_info.test_cameras[:args.num_test_cameras]
             else:
                 test_cameras = scene_info.test_cameras
             self.test_cameras = cameraList_from_camInfos(test_cameras, args)
             # output the number of cameras in the training set and image size to the log file
             log_file.write("Number of local test cameras: {}\n".format(len(self.test_cameras)))
-            log_file.write("Image size: {}x{}\n".format(self.test_cameras[0].image_height, self.test_cameras[0].image_width))
+            if len(self.test_cameras) > 0:
+                log_file.write("Image size: {}x{}\n".format(self.test_cameras[0].image_height, self.test_cameras[0].image_width))
 
         utils.check_initial_gpu_memory_usage("after Loading all images")
         utils.log_cpu_memory_usage("after decoding images")
@@ -115,6 +115,8 @@ class Scene:
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
+        elif hasattr(args, "load_ply_path"):
+            self.gaussians.load_ply(args.load_ply_path)
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 

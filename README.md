@@ -36,24 +36,11 @@ git clone -b release4neurips git@github.com:TarzanZhao/gaussian-splatting.git --
 
 The codebase contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models.  I delete other functions of original 3DGS repository to make this repo focused. 
 
-
 We only tested this repo on linux with nvidia GPU; Instructions for setting up and running are found in the section below. 
-
-### Hardware Requirements
-
-- CUDA-ready GPU with Compute Capability 7.0+
-- 24 GB VRAM (to train to paper evaluation quality)
-- Please see FAQ for smaller VRAM configurations
-
-### Software Requirements
-- Conda (recommended for easy setup)
-- C++ Compiler for PyTorch extensions (we used Visual Studio 2019 for Windows)
-- CUDA SDK 11 for PyTorch extensions, install *after* Visual Studio (we used 11.8, **known issues with 11.6**)
-- C++ Compiler and CUDA SDK must be compatible
 
 #### Setup
 
-To use our repository, we should have a pytorch environment and install the following dependencies:
+To use our repository, we should install the following dependencies and have a pytorch environment:
 - plyfile
 - pytorch(version>=2.0.1???)
 - torchvision
@@ -71,13 +58,11 @@ pip install submodules/simple-knn
 For single-GPU non-distributed training with batch size of 1,
 ```shell
 python train.py -s <path to COLMAP dataset>
-python train.py -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./one_experiment
 ```
 
 For 4 GPU distributed training and batch size of 4,
 ```shell
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to COLMAP dataset>
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s /pscratch/sd/j/jy-nyu/datasets/tandt_db/tandt/train --model_path ./one_experiment
 ```
 
 <details>

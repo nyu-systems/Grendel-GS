@@ -412,7 +412,7 @@ class GaussianModel:
         self.prune_points(prune_mask)
 
     def distributed_load_ply(self, path):
-        folder = os.path.dirname(path)
+        folder = path
         # count the number of files like "point_cloud_rk0_ws4.ply"
         num_files = len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)) and f.endswith(".ply")])
         world_size = num_files
