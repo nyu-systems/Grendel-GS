@@ -411,11 +411,14 @@ class GaussianModel:
         utils.LOG_FILE.write("Pruning based on opacity. Percent: {:.2f}\n".format(100 * prune_mask.sum().item() / prune_mask.shape[0]))
         self.prune_points(prune_mask)
 
-    def distributed_load_ply(self, path):
-        folder = path
+    def distributed_load_ply(self, folder):
         # count the number of files like "point_cloud_rk0_ws4.ply"
-        num_files = len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)) and f.endswith(".ply")])
-        world_size = num_files
+        world_size = -1
+        for f in os.listdir(folder):
+            if "_ws" in f:
+                world_size = int(f.split("_ws")[1].split(".")[0])
+                break
+        assert world_size > 0, "world_size should be greater than 1."
 
         catted_xyz = []
         catted_features_dc = []
@@ -510,7 +513,8 @@ class GaussianModel:
         
         return xyz, features_dc, features_extra, opacities, scales, rots
 
-    def one_file_load_ply(self, path):
+    def one_file_load_ply(self, folder):
+        path = os.path.join(folder, "point_cloud.ply")
         xyz, features_dc, features_extra, opacities, scales, rots = self.load_raw_ply(path)
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -523,12 +527,10 @@ class GaussianModel:
         self.active_sh_degree = self.max_sh_degree
 
     def load_ply(self, path):
-        args = utils.get_args()
-        if args.distributed_load:
-            self.distributed_load_ply(path)
-        else:
+        if os.path.exists(os.path.join(path, "point_cloud.ply")):
             self.one_file_load_ply(path)
-        # remark: max_radii2D, xyz_gradient_accum and denom are not loaded here; they are loaded from the self.restore()
+        else:
+            self.distributed_load_ply(path)
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}

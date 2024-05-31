@@ -113,8 +113,8 @@ class Scene:
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+                                                           "iteration_" + str(self.loaded_iter)
+                                                           ))
         elif hasattr(args, "load_ply_path"):
             self.gaussians.load_ply(args.load_ply_path)
         else:
