@@ -42,7 +42,7 @@ We only tested this repo on linux with nvidia GPU; Instructions for setting up a
 
 To use our repository, simply do:
 ```
-// module load conda; module load gcc/11.2.0 (If you are using nersc permultter)
+// module load conda; module load cudatoolkit/11.7; module load gcc/11.2.0 (If you are using nersc permultter)
 conda env create --file environment.yml
 conda activate gaussian_splatting
 ```
