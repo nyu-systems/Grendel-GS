@@ -76,8 +76,11 @@ class Scene:
         # Set image size to global variable
         orig_w, orig_h = scene_info.train_cameras[0].image.size
         utils.set_img_size(orig_h, orig_w)
-        if 1.0 * (len(scene_info.train_cameras)+len(scene_info.test_cameras)) * orig_w * orig_h * 3  < \
-            args.preload_dataset_to_gpu_threshold:# 10GB memory limit for dataset
+        # Dataset size in GB
+        dataset_size_in_GB = 1.0 * (len(scene_info.train_cameras)+len(scene_info.test_cameras)) * orig_w * orig_h * 3 / 1e9
+        log_file.write(f"Dataset size in GB: {dataset_size_in_GB}")
+        if dataset_size_in_GB  < args.preload_dataset_to_gpu_threshold:# 10GB memory limit for dataset
+            log_file.write("Preloading dataset to GPU.\n")
             args.preload_dataset_to_gpu = True
             args.distributed_dataset_storage = False
 

@@ -17,7 +17,6 @@ import numpy as np
 import random
 import os
 import torch.distributed as dist
-# from torch.distributed.device_mesh import init_device_mesh
 import time
 from argparse import Namespace
 import psutil
@@ -254,7 +253,6 @@ def check_memory_usage(log_file, args, iteration, gaussians, before_densificatio
 
     if before_densification_stop:
         memory_usage_list = our_allgather_among_cpu_processes_float_list([max_reserved_memory], DEFAULT_GROUP)
-        # TODO: change to > 0.9 * all memory in the GPU
         # print("total memory: ", torch.cuda.get_device_properties(0).total_memory)
         total_memory = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024
         if max([a[0] for a in memory_usage_list]) > args.densify_memory_limit_percentage * total_memory:# If memory usage is reaching the upper bound of GPU memory, stop densification to avoid OOM by fragmentation and etc.

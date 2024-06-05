@@ -1,13 +1,21 @@
 name: gaussian_splatting
 channels:
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
 dependencies:
   - cudatoolkit=11.7
   - plyfile
-  - python=3.9.16
+  - python=3.8
   - pip=23.0.1
-  - pytorch=2.0.1
-  - torchvision=0.15.2
   - tqdm
+  - psutil
+  - pytorch=2.0.1
+  - pytorch-cuda=11.7
+  - torchvision=0.15.2
+  - setuptools=69.1.1
+  - mkl==2024.0
+  - pip:
+    - submodules/diff-gaussian-rasterization
+    - submodules/simple-knn

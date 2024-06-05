@@ -143,7 +143,7 @@ class DistributionParams(ParamGroup):
         self.distributed_dataset_storage = True # if True, we store dataset only on rank 0 and broadcast to other ranks.
         self.distributed_save = True
         self.preload_dataset_to_gpu = False # By default, we do not preload dataset to GPU.
-        self.preload_dataset_to_gpu_threshold = 1e10 # unit is byte, by default 10GB memory limit for dataset.
+        self.preload_dataset_to_gpu_threshold = 10 # unit is GB, by default 10GB memory limit for dataset.
         self.multiprocesses_image_loading = False
         self.num_train_cameras = -1
         self.num_test_cameras = -1

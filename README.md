@@ -40,18 +40,14 @@ We only tested this repo on linux with nvidia GPU; Instructions for setting up a
 
 #### Setup
 
-To use our repository, we should install the following dependencies and have a pytorch environment:
-- plyfile
-- pytorch(version>=2.0.1???)
-- torchvision
-- tqdm
-
-Then, we need to compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
-
-```shell
-pip install submodules/diff-gaussian-rasterization
-pip install submodules/simple-knn
+To use our repository, simply do:
 ```
+// module load conda; module load gcc/11.2.0 (If you are using nersc permultter)
+conda env create --file environment.yml
+conda activate gaussian_splatting
+```
+
+It worth mentioning that this process will compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
 
 ### Running
 

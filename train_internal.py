@@ -204,7 +204,8 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         log_file.flush()
 
     # Finish training
-    end2end_timers.print_time(log_file, opt_args.iterations)
+    if opt_args.iterations not in args.save_iterations:
+        end2end_timers.print_time(log_file, opt_args.iterations)
     log_file.write("Max Memory usage: {} GB.\n".format(torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024))
     progress_bar.close()
 
