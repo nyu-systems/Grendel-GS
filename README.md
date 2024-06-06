@@ -1,6 +1,6 @@
 # On Scaling Up 3D Gaussian Splatting Training
 Hexu Zhao, Haoyang Weng*, Daohan Lu*, Ang Li, Jinyang Li, Aurojit Panda, Saining Xie (* indicates equal contribution)<br>
-| [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) | [FUNGRAPH project page](https://fungraph.inria.fr) |<br>
+| [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) |<br>
 | [Pre-trained Models (14 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/pretrained/models.zip) | [Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip) |<br>
 ![Teaser image](assets/teaser.png)
 
