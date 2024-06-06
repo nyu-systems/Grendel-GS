@@ -1,12 +1,31 @@
-# On Scaling Up 3D Gaussian Splatting Training
-Hexu Zhao, Haoyang Weng*, Daohan Lu*, Ang Li, Jinyang Li, Aurojit Panda, Saining Xie (* indicates equal contribution)<br>
-| [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) |<br>
-| [Pre-trained Models (14 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/pretrained/models.zip) | [Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip) |<br>
-![Teaser image](assets/teaser.png)
+<div align="center">
 
-This repository contains the official implementation associated with the paper "On Scaling Up 3D Gaussian Splatting Training", which is developed base on the official implementation of "3D Gaussian Splatting for Real-Time Radiance Field Rendering". We also release the two pretrained models and evaluation images reported in our paper for the two large-scale Rubble and MatrixCity Block_All scenes. 
+Grendel-GS
+===========================
+<h3>Gaussian Splatting At Scale by Distributed Training</h3>
 
-Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruction because of its superior visual quality and rendering speed. However, training is currently done on a single GPU, and thus cannot handle high-resolution and large-scale 3D reconstruction tasks due to the GPU's memory capacity limit. We build a distributed system, called Grendel, to partition 3DGS' parameters and parallelize its computation across multiple GPUs. As each Gaussian affects a small and changing subset of rendered pixels, Grendel relies on sparse all-to-all communication to transfer each required Gaussian to a pixel partition and performs dynamic load balancing. Unlike existing 3DGS systems that train using one camera view image at a time, Grendel supports batched training using multiple views. We explore different learning rate scaling strategies and identify the simple sqrt(batch size) scaling rule to be highly effective. Evaluation using large-scale high-resolution scenes show that Grendel can improve rendering quality by scaling up 3DGS quantity using multiple GPUs. On the "Rubble" dataset, we achieve a test PSNR of 27.28 by distributing 40.4 million Gaussians across 16 GPUs. By comparison, one achieves a PSNR of 26.28 when using 11.2 million Gaussians in order to fit in a single GPU's memory.*
+<div align="left">
+
+## Latest News - June 2024
+
+Explore our latest advancements in our new paper, access pre-trained models, and download evaluation images.
+
+### [On Scaling Up 3D Gaussian Splatting Training](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024)
+_Team: **Hexu Zhao**, **Haoyang Weng\***, **Daohan Lu\***, **Ang Li**, **Jinyang Li**, **Aurojit Panda**, **Saining Xie**_  (\* *Indicates equal contribution*)
+- **[Arxiv Paper](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)**
+- **[Pre-trained Models (14 GB)](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)**
+- **[Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip)**
+
+
+<div align="center">
+    <img src="assets/teaser.png" width="900">
+</div>
+
+
+---
+
+# Grendel-GS Overview
+Grendel-GS serves as a ressearch-oriented framework for large scale gaussian splatting training. Its core idea is to leverage more GPU by distributed computation during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussians primitive in large-scale and high resolution scenes, and speed up at the same time. This codebase is developed from original gaussian splatting implementation and serves as the official implementation associated with our paper "On Scaling Up 3D Gaussian Splatting Training". It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models. 
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
@@ -22,41 +41,35 @@ Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruct
       url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
 }</code></pre>
   </div>
-</section>
+(TODO:change it to our bib)
+</section> 
+
 
 ## Cloning the Repository
 
 The repository contains submodules, thus please check it out with 
 ```shell
-# SSH
 git clone -b release4neurips git@github.com:TarzanZhao/gaussian-splatting.git --recursive
 ```
 
-## Overview
+## Setup
 
-The codebase contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models.  I delete other functions of original 3DGS repository to make this repo focused. 
-
-We only tested this repo on linux with nvidia GPU; Instructions for setting up and running are found in the section below. 
-
-#### Setup
-
-To use our repository, simply do:
+To use our repository, you should have GPU with compatible driver and cuda environment and simply do:
 ```
-// module load conda; module load cudatoolkit/11.7; module load gcc/11.2.0 (If you are using nersc permultter)
 conda env create --file environment.yml
 conda activate gaussian_splatting
 ```
 
 It worth mentioning that this process will compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
 
-### Running
+### Training
 
-For single-GPU non-distributed training with batch size of 1,
+For single-GPU non-distributed training with batch size of 1:
 ```shell
 python train.py -s <path to COLMAP dataset>
 ```
 
-For 4 GPU distributed training and batch size of 4,
+For 4 GPU distributed training and batch size of 4:
 ```shell
 torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to COLMAP dataset>
 ```
@@ -128,7 +141,64 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to
 </details>
 <br>
 
-### Render Trained point cloud
+### Render Trained Model
 
+```shell
+python render.py -s <path to COLMAP dataset> --model_path <path to trained model directory> 
+```
+
+<details>
+<summary><span style="font-weight: bold;">Command Line Arguments for render.py</span></summary>
+
+  #### --model_path / -m 
+  Path to the trained model directory you want to create renderings for.
+  #### --skip_train
+  Flag to skip rendering the training set.
+  #### --skip_test
+  Flag to skip rendering the test set.
+  #### --distributed_load
+  If point cloud models are saved distributedly during training, we should set this flag to load all of them.
+  #### --quiet 
+  Flag to omit any text written to standard out pipe. 
+
+  **The below parameters will be read automatically from the model path, based on what was used for training. However, you may override them by providing them explicitly on the command line.** 
+
+  #### --source_path / -s
+  Path to the source directory containing a COLMAP or Synthetic NeRF data set.
+  #### --images / -i
+  Alternative subdirectory for COLMAP images (```images``` by default).
+  #### --eval
+  Add this flag to use a MipNeRF360-style training/test split for evaluation.
+  #### --llffhold
+  The training/test split ratio in the whole dataset for evaluation. llffhold=8 means 1/8 is used as test set and others are used as train set.
+  #### --white_background / -w
+  Add this flag to use white background instead of black (default), e.g., for evaluation of NeRF Synthetic dataset.
+
+</details>
 
 ### Evaluating metrics
+
+```shell
+python metrics.py --model_path <path to folder of saving model> 
+```
+
+<details>
+<summary><span style="font-weight: bold;">Command Line Arguments for metrics.py</span></summary>
+
+  #### --model_paths / -m 
+  Space-separated list of model paths for which metrics should be computed.
+</details>
+<br>
+
+---
+
+# Results
+
+TODO: put the table of PSNR and throughput of mip360 dataset here.
+
+---
+
+# New features [Please check regularly!]
+
+- We will release our optimized cuda kernels within gaussian splatting soon for further speed up. 
+
