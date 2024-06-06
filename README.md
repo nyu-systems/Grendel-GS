@@ -49,7 +49,7 @@ Grendel-GS serves as a ressearch-oriented framework for large scale gaussian spl
 
 The repository contains submodules, thus please check it out with 
 ```shell
-git clone -b release4neurips git@github.com:TarzanZhao/gaussian-splatting.git --recursive
+git clone -b main git@github.com:TarzanZhao/gaussian-splatting.git --recursive
 ```
 
 ## Setup
