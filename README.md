@@ -11,12 +11,13 @@ Grendel-GS
 Explore our latest advancements in our new paper, access pre-trained models, and download evaluation images.
 
 ### [On Scaling Up 3D Gaussian Splatting Training](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024)
-_Team: **Hexu Zhao**, **Haoyang Weng\***, **Daohan Lu\***, **Ang Li**, **Jinyang Li**, **Aurojit Panda**, **Saining Xie**_  (\* *Indicates equal contribution*)
+_Authors: [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)_  (\* *Indicates equal contribution*)
+_Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), [**²Pacific Northwest National Laboratory**](https://www.pnnl.gov)_
 - **[Arxiv Paper](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)**
 - **[Pre-trained Models (14 GB)](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)**
 - **[Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip)**
 
-
+(TODO: check all the links here before releasing)
 <div align="center">
     <img src="assets/teaser.png" width="900">
 </div>
@@ -49,7 +50,7 @@ Grendel-GS serves as a ressearch-oriented framework for large scale gaussian spl
 
 The repository contains submodules, thus please check it out with 
 ```shell
-git clone -b main git@github.com:TarzanZhao/gaussian-splatting.git --recursive
+git clone git@github.com:TarzanZhao/Dist-GS.git --recursive
 ```
 
 ## Setup
