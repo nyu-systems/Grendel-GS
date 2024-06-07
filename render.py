@@ -56,6 +56,12 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             continue
         if generated_cnt == args.generate_num:
             break
+        if os.path.exists(os.path.join(render_path, '{0:05d}'.format(idx) + ".png")):
+            continue
+        if args.l != -1 and args.r != -1:
+            if idx < args.l or idx >= args.r:
+                continue
+
         generated_cnt += 1
 
         strategy_history = DivisionStrategyHistoryFinal(dataset, utils.DEFAULT_GROUP.size(), utils.DEFAULT_GROUP.rank())
@@ -66,16 +72,11 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
                                                                                 batched_strategies=batched_strategies,
                                                                                 mode="test")
         rendered_image, _ = render_final(batched_screenspace_pkg, batched_strategies)
-        # strategy_history = get_division_strategy_history(cameraId2StrategyHistory, view, "evaluation")
-        # strategy = strategy_history.start_strategy()
-        # screenspace_pkg = preprocess3dgs_and_all2all([view], gaussians, pipeline, background,
-        #                                              [strategy],
-        #                                              mode="test")
-        # rendered_image, _ = render(screenspace_pkg, strategy)
 
         gt_image = torch.clamp(view.original_image_backup[0:3, :, :].cuda() / 255.0, 0, 1.0)
         torchvision.utils.save_image(rendered_image, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt_image, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        view.original_image = None
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
@@ -108,6 +109,8 @@ if __name__ == "__main__":
     parser.add_argument("--generate_num", default=-1, type=int)
     parser.add_argument("--sample_freq", default=-1, type=int)
     parser.add_argument("--distributed_load", action="store_true")# TODO: delete this.
+    parser.add_argument("--l", default=-1, type=int)
+    parser.add_argument("--r", default=-1, type=int)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
     init_distributed(args)# This script only supports single-gpu rendering. 

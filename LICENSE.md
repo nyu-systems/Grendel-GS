@@ -1,7 +1,7 @@
-Gaussian-Splatting License  
+Dist-GS License
 ===========================  
 
-**Inria** and **the Max Planck Institut for Informatik (MPII)** hold all the ownership rights on the *Software* named **gaussian-splatting**.  
+**New York University** hold all the ownership rights on the *Software* named **Dist-GS**.  
 The *Software* is in the process of being registered with the Agence pour la Protection des  
 Programmes (APP).  
 
