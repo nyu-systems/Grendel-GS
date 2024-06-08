@@ -56,13 +56,13 @@ git clone git@github.com:TarzanZhao/Dist-GS.git --recursive
 
 ## Setup
 
-To use our repository, you should have GPU with compatible driver and cuda environment and simply do:
+Ensure you have Conda, GPU with compatible driver and cuda environment installed on your machine, as prerequisites. Then please install `PyTorch`, `Torchvision`, `Plyfile`, `tqdm` which are essential packages. Finally, compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
+
+We provide a yml file for easy environment setup. However, you should choose the versions to match your local running environment. 
 ```
 conda env create --file environment.yml
 conda activate gaussian_splatting
 ```
-
-It worth mentioning that this process will compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
 
 ### Training
 
