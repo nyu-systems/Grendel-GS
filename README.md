@@ -203,4 +203,4 @@ TODO: put the table of PSNR and throughput of mip360 dataset here.
 # New features [Please check regularly!]
 
 - We will release our optimized cuda kernels within gaussian splatting soon for further speed up. 
-
+- We will support gsplat later as another choice of our cuda kernel backend. 
