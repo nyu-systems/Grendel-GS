@@ -1,16 +1,13 @@
 <div align="center">
 
-Grendel-GS
+On Scaling Up 3D Gaussian Splatting Training
 ===========================
-<h3>Gaussian Splatting At Scale by Distributed Training</h3>
+_<h4>Gaussian Splatting At Scale by Distributed Training</h4>_
 
 <div align="left">
 
-## Latest News - June 2024
 
-Explore our latest advancements in our new paper, access pre-trained models, and download evaluation images.
 
-### [On Scaling Up 3D Gaussian Splatting Training](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024)
 _Authors: [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)_  (\* *Indicates equal contribution*)
 
 _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), [**²Pacific Northwest National Laboratory**](https://www.pnnl.gov)_
@@ -23,11 +20,7 @@ _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), 
     <img src="assets/teaser.png" width="900">
 </div>
 
-
----
-
-# Grendel-GS Overview
-Grendel-GS serves as a ressearch-oriented framework for large scale gaussian splatting training. Its core idea is to leverage more GPU by distributed computation during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussians primitive in large-scale and high resolution scenes, and speed up at the same time. This codebase is developed from original gaussian splatting implementation and serves as the official implementation associated with our paper "On Scaling Up 3D Gaussian Splatting Training". It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models. 
+Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruction because of its superior visual quality and rendering speed. However, training is currently done on a single GPU, and thus cannot handle high-resolution and large-scale 3D reconstruction tasks due to the GPU's memory capacity limit. We build a distributed system, called Grendel, to partition 3DGS' parameters and parallelize its computation across multiple GPUs. As each Gaussian affects a small and changing subset of rendered pixels, Grendel relies on sparse all-to-all communication to transfer each required Gaussian to a pixel partition and performs dynamic load balancing. Unlike existing 3DGS systems that train using one camera view image at a time, Grendel supports batched training using multiple views. We explore different learning rate scaling strategies and identify the simple sqrt(batch size) scaling rule to be highly effective. Evaluation using large-scale high-resolution scenes show that Grendel can improve rendering quality by scaling up 3DGS quantity using multiple GPUs. On the "Rubble" dataset, we achieve a test PSNR of 27.28 by distributing 40.4 million Gaussians across 16 GPUs. By comparison, one achieves a PSNR of 26.28 when using 11.2 million Gaussians in order to fit in a single GPU's memory.*
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
@@ -47,6 +40,13 @@ Grendel-GS serves as a ressearch-oriented framework for large scale gaussian spl
 </section> 
 
 
+---
+
+# Repository Overview
+Our repository is a research-focused framework for distributed Gaussian Splatting training, as detailed in the paper. Its core idea is to leverage more GPU by distributed computation during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussian primitives in large-scale and high resolution scenes, and speed up at the same time. It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models. 
+
+
+
 ## Cloning the Repository
 
 The repository contains submodules, thus please check it out with 
@@ -56,7 +56,7 @@ git clone git@github.com:TarzanZhao/Dist-GS.git --recursive
 
 ## Setup
 
-Ensure you have Conda, GPU with compatible driver and cuda environment installed on your machine, as prerequisites. Then please install `PyTorch`, `Torchvision`, `Plyfile`, `tqdm` which are essential packages. Finally, compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
+Ensure you have Conda, GPU with compatible driver and cuda environment installed on your machine, as prerequisites. Then please install `PyTorch`, `Torchvision`, `Plyfile`, `tqdm` which are essential packages. Make sure PyTorch version >= 1.10 to have torchrun for distributed training. Finally, compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
 
 We provide a yml file for easy environment setup. However, you should choose the versions to match your local running environment. 
 ```
