@@ -20,15 +20,12 @@ from densification import densification
 
 
 def training(dataset_args, opt_args, pipe_args, args, log_file):
-    # dataset_args, opt_args, pipe_args, args contain arguments containing all kinds of settings and configurations. 
 
     # Init auxiliary tools
     timers = Timer(args)
     utils.set_timers(timers)
-    utils.set_log_file(log_file)
     prepare_output_and_logger(dataset_args)
     utils.log_cpu_memory_usage("at the beginning of training")
-
     start_from_this_iteration = 1
 
     # Init parameterized scene
@@ -40,7 +37,6 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
         if args.start_checkpoint != "":
             model_params, start_from_this_iteration = utils.load_checkpoint(args)
             gaussians.restore(model_params, opt_args)
-            start_from_this_iteration += args.bsz
             utils.print_rank_0("Restored from checkpoint: {}".format(args.start_checkpoint))
             log_file.write("Restored from checkpoint: {}\n".format(args.start_checkpoint))
 
@@ -175,7 +171,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
                         torch.distributed.barrier(group=utils.DEFAULT_GROUP)
                 elif utils.DEFAULT_GROUP.size() > 1:
                     torch.distributed.barrier(group=utils.DEFAULT_GROUP)
-                torch.save((gaussians.capture(), iteration), save_folder + "/chkpnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".pth")
+                torch.save((gaussians.capture(), iteration+args.bsz), save_folder + "/chkpnt_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".pth")
                 end2end_timers.start()
 
             # Optimizer step

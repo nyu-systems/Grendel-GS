@@ -64,6 +64,7 @@ if __name__ == "__main__":
 
     # Initialize log file and print all args
     log_file = open(args.log_folder+"/python_ws="+str(utils.WORLD_SIZE)+"_rk="+str(utils.GLOBAL_RANK)+".log", 'a' if args.auto_start_checkpoint else 'w')
+    utils.set_log_file(log_file)
     print_all_args(args, log_file)
 
     train_internal.training(lp.extract(args), op.extract(args), pp.extract(args), args, log_file)

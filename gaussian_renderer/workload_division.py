@@ -595,11 +595,11 @@ def start_strategy_final(batched_cameras, strategy_history):
     n_tiles_per_image = utils.TILE_Y
     total_tiles = n_tiles_per_image * len(batched_cameras)
 
-    batched_accum_heuristic = [strategy_history.accum_heuristic[camera.uid] for camera in batched_cameras] # batch_size * [tile_y* tile_x]
-    catted_accum_heuristic = torch.cat(batched_accum_heuristic, dim=0) # [batch_size * tile_y * tile_x]
+    batched_accum_heuristic = [strategy_history.accum_heuristic[camera.uid] for camera in batched_cameras] # batch_size * tile_y
+    catted_accum_heuristic = torch.cat(batched_accum_heuristic, dim=0) # batch_size * tile_y
 
     division_pos = division_pos_heuristic(catted_accum_heuristic, total_tiles, utils.DEFAULT_GROUP.size(), right=True)
-    # slightly adjust the division_pos to avoid redundant computation.
+    # slightly adjust the division_pos to avoid redundant kernel launch overheads.
     for i in range(1, len(division_pos)-1):
         if (division_pos[i] % n_tiles_per_image + args.border_divpos_coeff >= n_tiles_per_image):
             division_pos[i] = division_pos[i] // n_tiles_per_image * n_tiles_per_image + n_tiles_per_image

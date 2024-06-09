@@ -673,19 +673,19 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
 
     if utils.DEFAULT_GROUP.size() == 1:
         batched_screenspace_pkg = {
-                "batched_locally_preprocessed_mean2D": batched_means2D,
-                "batched_locally_preprocessed_visibility_filter": [radii > 0 for radii in batched_radii],
-                "batched_locally_preprocessed_radii": batched_radii,
-                "batched_rasterizers": batched_rasterizers,
-                "batched_cuda_args": batched_cuda_args,
-                "batched_means2D_redistributed": [screenspace_params[0] for screenspace_params in batched_screenspace_params],
-                "batched_rgb_redistributed": [screenspace_params[1] for screenspace_params in batched_screenspace_params],
-                "batched_conic_opacity_redistributed": [screenspace_params[2] for screenspace_params in batched_screenspace_params],
-                "batched_radii_redistributed": [screenspace_params[3] for screenspace_params in batched_screenspace_params],
-                "batched_depths_redistributed": [screenspace_params[4] for screenspace_params in batched_screenspace_params],
-                "gpui_to_gpuj_imgk_size": [
-                    [[batched_means2D[i].shape[0] for i in range(len(batched_means2D))]]
-                ],
+            "batched_locally_preprocessed_mean2D": batched_means2D,
+            "batched_locally_preprocessed_visibility_filter": [radii > 0 for radii in batched_radii],
+            "batched_locally_preprocessed_radii": batched_radii,
+            "batched_rasterizers": batched_rasterizers,
+            "batched_cuda_args": batched_cuda_args,
+            "batched_means2D_redistributed": [screenspace_params[0] for screenspace_params in batched_screenspace_params],
+            "batched_rgb_redistributed": [screenspace_params[1] for screenspace_params in batched_screenspace_params],
+            "batched_conic_opacity_redistributed": [screenspace_params[2] for screenspace_params in batched_screenspace_params],
+            "batched_radii_redistributed": [screenspace_params[3] for screenspace_params in batched_screenspace_params],
+            "batched_depths_redistributed": [screenspace_params[4] for screenspace_params in batched_screenspace_params],
+            "gpui_to_gpuj_imgk_size": [
+                [[batched_means2D[i].shape[0] for i in range(len(batched_means2D))]]
+            ],
         }
         return batched_screenspace_pkg
 
@@ -698,17 +698,17 @@ def distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_cameras, pc :
         timers.stop("forward_all_to_all_communication")
     
     batched_screenspace_pkg = {
-                "batched_locally_preprocessed_mean2D": batched_means2D,
-                "batched_locally_preprocessed_visibility_filter": [radii > 0 for radii in batched_radii],
-                "batched_locally_preprocessed_radii": batched_radii,
-                "batched_rasterizers": batched_rasterizers,
-                "batched_cuda_args": batched_cuda_args,
-                "batched_means2D_redistributed": batched_means2D_redistributed,
-                "batched_rgb_redistributed": batched_rgb_redistributed,
-                "batched_conic_opacity_redistributed": batched_conic_opacity_redistributed,
-                "batched_radii_redistributed": batched_radii_redistributed,
-                "batched_depths_redistributed": batched_depths_redistributed,
-                "gpui_to_gpuj_imgk_size": gpui_to_gpuj_imgk_size,
+        "batched_locally_preprocessed_mean2D": batched_means2D,
+        "batched_locally_preprocessed_visibility_filter": [radii > 0 for radii in batched_radii],
+        "batched_locally_preprocessed_radii": batched_radii,
+        "batched_rasterizers": batched_rasterizers,
+        "batched_cuda_args": batched_cuda_args,
+        "batched_means2D_redistributed": batched_means2D_redistributed,
+        "batched_rgb_redistributed": batched_rgb_redistributed,
+        "batched_conic_opacity_redistributed": batched_conic_opacity_redistributed,
+        "batched_radii_redistributed": batched_radii_redistributed,
+        "batched_depths_redistributed": batched_depths_redistributed,
+        "gpui_to_gpuj_imgk_size": gpui_to_gpuj_imgk_size,
     }
     return batched_screenspace_pkg
 
@@ -748,6 +748,7 @@ def render_final(batched_screenspace_pkg, batched_strategies):
         if timers is not None:
             timers.start("forward_render_gaussians")
         if means2D_redistributed.shape[0] < 10:
+            # That means we do not have enough gaussians locally for rendering, that mainly happens because of insufficient initial points.
             rendered_image = means2D_redistributed.sum()+conic_opacity_redistributed.sum()+rgb_redistributed.sum()
             cuda_args["stats_collector"]["forward_render_time"] = 0.0
             cuda_args["stats_collector"]["backward_render_time"] = 0.0

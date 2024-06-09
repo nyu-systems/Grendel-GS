@@ -223,6 +223,9 @@ def init_args(args):
     if args.opacity_reset_until_iter == -1:
         args.opacity_reset_until_iter = args.densify_until_iter + args.bsz
 
+    # Logging are saved with where model is saved.
+    args.log_folder = args.model_path
+
     if args.auto_start_checkpoint:
         args.start_checkpoint = find_latest_checkpoint(args.log_folder)
     
@@ -235,9 +238,6 @@ def init_args(args):
 
     if args.preload_dataset_to_gpu:
         args.distributed_dataset_storage = False
-
-    # Logging are saved with where model is saved.
-    args.log_folder = args.model_path
 
     if not args.gaussians_distribution:
         args.distributed_save = False

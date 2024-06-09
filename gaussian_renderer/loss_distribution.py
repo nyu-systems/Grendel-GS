@@ -1518,7 +1518,6 @@ def batched_loss_computation(batched_image, batched_cameras, batched_compute_loc
         elif len(image.shape) == 0:# This image is not rendered locally.
             loss = image*0
             batched_losses.append([loss, 0.0])
-            print("[WARNING]: The image is a scalar tensor.")
         else:
             Ll1, ssim_loss = final_system_loss_computation(image,
                                                            camera,
