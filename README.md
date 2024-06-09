@@ -196,8 +196,19 @@ python metrics.py --model_path <path to folder of saving model>
 
 # Results
 
-TODO: put the table of PSNR and throughput of mip360 dataset here.
+### Significantly Faster Training Without Compromising Reconstruction Quality
 
+| 30k Train Time(min)   |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
+|:----------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
+| 1 GPU + Batch Size=1  |   24.03 |     30.18 |     25.58 |  22.45 |     21.6  |    30.15 |    19.18 |
+| 4 GPU + Batch Size=1  |    9.07 |     11.67 |      9.53 |   8.93 |      8.82 |    10.85 |     8.03 |
+| 4 GPU + Batch Size=4  |    5.22 |      6.47 |      6.98 |   6.18 |      5.98 |     6.48 |     5.28 |
+
+| 30k Test PSNR        |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
+|:---------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
+| 1 GPU + Batch Size=1 |   26.61 |     25.21 |     31.4  |  31.4  |     28.93 |    27.27 |    32.01 |
+| 4 GPU + Batch Size=1 |   26.65 |     25.19 |     31.41 |  31.38 |     28.98 |    27.28 |    31.92 |
+| 4 GPU + Batch Size=4 |   26.59 |     25.17 |     31.37 |  31.32 |     28.98 |    27.2  |    31.94 |
 ---
 
 # New features [Please check regularly!]
