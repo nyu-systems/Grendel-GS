@@ -148,7 +148,7 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to
 ### Render Trained Model
 
 ```shell
-python render.py -s <path to COLMAP dataset> --model_path <path to trained model directory> 
+python render.py -s <path to COLMAP dataset> --model_path <path to folder of saving model> 
 ```
 
 <details>
