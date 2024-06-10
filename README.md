@@ -196,7 +196,7 @@ python metrics.py --model_path <path to folder of saving model>
 
 ---
 
-# Results
+# Results and Usages of our repository
 
 ### Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
 
@@ -217,12 +217,6 @@ python metrics.py --model_path <path to folder of saving model>
 | 4 GPU + Batch Size=4 |   26.59 |     25.17 |     31.37 |  31.32 |     28.98 |    27.2  |    31.94 |
 ---
 
-
-#### Experimental Setup
-
-- **Hardware**: 4x 40GB NVIDIA A100 GPUs
-- **Interconnect**: Fully-connected Bidirectional 25GB/s NVLINK
-
 #### Reproduction Instructions
 
 1. Download and unzip the [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip).
@@ -232,7 +226,30 @@ python metrics.py --model_path <path to folder of saving model>
    bash examples/mip360/eval_all_mip360.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
    ```
 
+### Significantly Speed up and Reduce per-GPU memmory usage on Mip360 at *4K Resolution*
+
+| Configuration                  | 50k Training Time   |   Memory Per GPU |   PSNR |
+|:-------------------------------|:--------------------|-----------------:|-------:|
+| bicycle + 1 GPU + Batch Size=1 | 2h 38min            |            37.18 |  23.78 |
+| bicycle + 4 GPU + Batch Size=1 | 0h 50min            |            10.39 |  23.79 |
+| garden + 1 GPU + Batch Size=1  | 2h 49min            |            29.87 |  26.06 |
+| garden + 4 GPU + Batch Size=1  | 0h 50min            |             7.88 |  26.06 |
+
+Unlike the typical approach of downsampling the Mip360 dataset by a factor of four before training, our system can train directly at full resolution. The bicycle and garden images have resolutions of 4946x3286 and 5187x3361, respectively. Our distributed system demonstrates that we can significantly accelerate and reduce memory usage per GPU by several folds without sacrificing quality.
+
+#### Reproduction Instructions
+
+Set up the dataset and Python environment as outlined previously, then execute the following:
+```bash
+   bash examples/mip360_4k/eval_mip360_4k.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
+   ```
+
 (TODO: check these scripts have no side-effects)
+
+### Experimental Setup for all experiments statistics above
+
+- **Hardware**: 4x 40GB NVIDIA A100 GPUs
+- **Interconnect**: Fully-connected Bidirectional 25GB/s NVLINK
 
 ---
 
