@@ -229,7 +229,7 @@ python metrics.py --model_path <path to folder of saving model>
    bash examples/mip360/eval_all_mip360.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
    ```
 
-### Significantly Speed up and Reduce per-GPU memmory usage on Mip360 at *4K Resolution*
+### Significantly Speed up and Reduce per-GPU memory usage on Mip360 at *4K Resolution*
 
 | Configuration                  | 50k Training Time   |   Memory Per GPU |   PSNR |
 |:-------------------------------|:--------------------|-----------------:|-------:|
@@ -245,6 +245,22 @@ Unlike the typical approach of downsampling the Mip360 dataset by a factor of fo
 Set up the dataset and Python environment as outlined previously, then execute the following:
 ```bash
    bash examples/mip360_4k/eval_mip360_4k.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
+   ```
+
+### Train in 45 Seconds on Tanks&Temple at *1K Resolution*
+
+| Configuration                | 7k Training Time   |   7k test PSNR | 30k Training Time   |   30k test PSNR |
+|:-----------------------------|:-------------------|---------------:|:--------------------|----------------:|
+| train + 4 GPU + Batch Size=8 | 44s                |          19.37 | 3min 30s            |           21.87 |
+| truck + 4 GPU + Batch Size=8 | 45s                |          23.79 | 3min 39s            |           25.35 |
+
+Tanks&Temples dataset includes train and truck scenes with resolutions of 980x545 and 979x546, respectively. Utilizing 4 GPUs, we've managed to train on these small scenes to a reasonable quality in just 45 seconds(7k iterations). In the original Gaussian splatting papers, achieving a test PSNR of 18.892 and 23.506 at 7K resolution was considered good on train and truck, respectively. Our results are comparable to these benchmarks.
+
+#### Reproduction Instructions
+
+Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip) and Python environment as outlined previously, then execute the following:
+```bash
+   bash examples/train_truck_1k/eval_train_truck_1k.sh <path_to_save_experiment_results> <path_to_tandb_dataset>
    ```
 
 (TODO: check these scripts have no side-effects)
