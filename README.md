@@ -49,6 +49,7 @@ Advantages of using our distributed implementation for gaussians splatting:
 1. Train at higher resolution.
 2. Train larger scenes.
 3. Train the same scene dozens of times faster.
+4. Increased PSNR with the same training time.
 
 ## Cloning the Repository
 
