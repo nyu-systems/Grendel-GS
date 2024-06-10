@@ -64,6 +64,8 @@ conda env create --file environment.yml
 conda activate gaussian_splatting
 ```
 
+Before trainning, please download and unzip colmap datasets [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip) and 4 scenes from [Tanks&Temple and DeepBlending](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip). 
+
 ### Training
 
 For single-GPU non-distributed training with batch size of 1:
