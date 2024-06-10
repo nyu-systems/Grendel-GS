@@ -45,7 +45,10 @@ Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruct
 # Repository Overview
 Our repository is a research-focused framework for distributed Gaussian Splatting training, as detailed in the paper. Its core idea is to leverage more GPU by distributed computation during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussian primitives in large-scale and high resolution scenes, and speed up at the same time. It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models. 
 
-
+Advantages of using our distributed implementation for gaussians splatting:
+1. Train at higher resolution.
+2. Train larger scenes.
+3. Train the same scene dozens of times faster.
 
 ## Cloning the Repository
 
