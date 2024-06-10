@@ -15,6 +15,7 @@ dependencies:
   - torchvision=0.15.2
   - setuptools=69.1.1
   - mkl==2024.0
+  - pandas
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn

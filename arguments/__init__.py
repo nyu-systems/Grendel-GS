@@ -126,7 +126,7 @@ class DistributionParams(ParamGroup):
         self.image_distribution_mode = "final"
         self.heuristic_decay = 0.0
         self.no_heuristics_update = False
-        self.border_divpos_coeff = 2.0
+        self.border_divpos_coeff = 1.0
         self.adjust_strategy_warmp_iterations = -1
         self.save_strategy_history = False
 
@@ -173,13 +173,20 @@ class DebugParams(ParamGroup):
 
         super().__init__(parser, "Debug Parameters")
 
-def get_combined_args(parser : ArgumentParser):
+def get_combined_args(parser : ArgumentParser, auto_find_cfg_args_path=False):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"
     args_cmdline = parser.parse_args(cmdlne_string)
 
     try:
-        cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
+        if auto_find_cfg_args_path:
+            if hasattr(args_cmdline, "load_ply_path"):
+                path = args_cmdline.load_ply_path
+                while not os.path.exists(os.path.join(path, "cfg_args")) and os.path.exists(path):
+                    path = os.path.join(path, "..")
+                cfgfilepath = os.path.join(path, "cfg_args")
+        else:
+            cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
         print("Looking for config file in", cfgfilepath)
         with open(cfgfilepath) as cfg_file:
             print("Config file found: {}".format(cfgfilepath))

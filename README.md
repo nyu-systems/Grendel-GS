@@ -196,7 +196,9 @@ python metrics.py --model_path <path to folder of saving model>
 
 # Results
 
-### Significantly Faster Training Without Compromising Reconstruction Quality
+### Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
+
+#### Training Time
 
 | 30k Train Time(min)   |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
 |:----------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
@@ -204,12 +206,35 @@ python metrics.py --model_path <path to folder of saving model>
 | 4 GPU + Batch Size=1  |    9.07 |     11.67 |      9.53 |   8.93 |      8.82 |    10.85 |     8.03 |
 | 4 GPU + Batch Size=4  |    5.22 |      6.47 |      6.98 |   6.18 |      5.98 |     6.48 |     5.28 |
 
+#### Test PSNR
+
 | 30k Test PSNR        |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
 |:---------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
 | 1 GPU + Batch Size=1 |   26.61 |     25.21 |     31.4  |  31.4  |     28.93 |    27.27 |    32.01 |
 | 4 GPU + Batch Size=1 |   26.65 |     25.19 |     31.41 |  31.38 |     28.98 |    27.28 |    31.92 |
 | 4 GPU + Batch Size=4 |   26.59 |     25.17 |     31.37 |  31.32 |     28.98 |    27.2  |    31.94 |
 ---
+
+
+#### Experimental Setup
+
+- **Hardware**: 4x 40GB NVIDIA A100 GPUs
+- **Interconnect**: Fully-connected Bidirectional 25GB/s NVLINK
+
+#### Reproduction Instructions
+
+1. Download and unzip the [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip).
+2. Activate the appropriate conda/python environment.
+3. To execute all experiments and generate this table, run the following command:
+   ```bash
+   bash examples/mip360/eval_all_mip360.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
+   ```
+
+(TODO: check these scripts have no side-effects)
+
+---
+
+
 
 # New features [Please check regularly!]
 
