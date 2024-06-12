@@ -1,3 +1,25 @@
+<p align="center">
+    <!-- license badge -->
+    <a href="https://github.com/nerfstudio-project/nerfstudio/blob/master/LICENSE">
+        <img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg"></a>
+    <!-- stars badge -->
+    <a href="https://github.com/TarzanZhao/Dist-GS/stargazers">
+        <img alt="GitHub stars" src="https://img.shields.io/github/stars/TarzanZhao/Dist-GS?style=social"/>
+    </a>
+    <!-- community badges -->
+<!--     <a href="https://discord.gg/uMbNqcraFc"><img src="https://dcbadge.vercel.app/api/server/uMbNqcraFc?style=plastic"/></a> -->
+    <!-- last commit badge -->
+<!--     <a href="https://github.com/TarzanZhao/Dist-GS/commits/master">
+        <img alt="Last Commit" src="https://img.shields.io/github/last-commit/TarzanZhao/Dist-GS"/>
+    </a> -->
+    <!-- pull requests badge -->
+    <a href="https://github.com/TarzanZhao/Dist-GS/pulls">
+        <img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/TarzanZhao/Dist-GS"/>
+    </a>
+
+</p>
+
+
 <div align="center">
 
 Grendal-GS
