@@ -32,7 +32,7 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
 We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* the with support from distributed systems, just as the achievements of current LLMs rely on distributed training. 
 
-By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for the 3DGS implementation in any Gaussian Splatting workflow or application.
+By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
 
 <!-- 
 *Many more new features are developing now, following us!*
@@ -44,11 +44,11 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 -----
 - [How to use Grendal-GS](#how-to-use-grendal-gs)
     - [Setup](#setup)
-    - [Training](#train)
-    - [Render Pretrained-Model](#render)
+    - [Training](#training)
+    - [Render Pretrained-Model](#rendering)
     - [Calculate Metrics](#evaluating-metrics)
-    - [Migrating from original 3DGS codebase](#migrating-from-orginal-3dgs-codebase)
-- [Benefits and Examples of using Grendal-GS](#examples-and-benefits)
+    - [Migrating from original 3DGS codebase](#migrating-from-original-3dgs-codebase)
+- [Benefits and Examples](#benefits-and-examples)
 - [Paper](#paper-and-citation)
 - [Reference](#reference)
 ------
@@ -147,7 +147,7 @@ Advantages of using our distributed implementation for gaussians splatting:
 
 
 
-### Train
+## Training
 
 For single-GPU non-distributed training with batch size of 1:
 ```shell
@@ -226,7 +226,7 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to
 </details>
 <br>
 
-### Render
+## Rendering
 
 ```shell
 python render.py -s <path to COLMAP dataset> --model_path <path to folder of saving model> 
@@ -261,7 +261,7 @@ python render.py -s <path to COLMAP dataset> --model_path <path to folder of sav
 
 </details>
 
-### Evaluating metrics
+## Evaluating metrics
 
 ```shell
 python metrics.py --model_path <path to folder of saving model> 
@@ -275,7 +275,7 @@ python metrics.py --model_path <path to folder of saving model>
 </details>
 <br>
 
-### Migrating from original 3DGS codebase
+## Migrating from original 3DGS codebase
 
 If you are currently using the original 3DGS codebase for training in your application, you can effortlessly switch to our codebase because we haven't made any algorithmic changes. This will allow you to train faster and successfully train larger, higher-precision scenes without running out of memory (OOM) within a reasonable time frame. 
 
@@ -287,9 +287,9 @@ It is worth noting that we only support the training functionality; this reposit
 
 # Benefits and Examples
 
-### Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
+## Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
 
-#### Training Time
+### Training Time
 
 | 30k Train Time(min)   |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
 |:----------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
@@ -297,7 +297,7 @@ It is worth noting that we only support the training functionality; this reposit
 | 4 GPU + Batch Size=1  |    9.07 |     11.67 |      9.53 |   8.93 |      8.82 |    10.85 |     8.03 |
 | 4 GPU + Batch Size=4  |    5.22 |      6.47 |      6.98 |   6.18 |      5.98 |     6.48 |     5.28 |
 
-#### Test PSNR
+### Test PSNR
 
 | 30k Test PSNR        |   stump |   bicycle |   kitchen |   room |   counter |   garden |   bonsai |
 |:---------------------|--------:|----------:|----------:|-------:|----------:|---------:|---------:|
@@ -306,7 +306,7 @@ It is worth noting that we only support the training functionality; this reposit
 | 4 GPU + Batch Size=4 |   26.59 |     25.17 |     31.37 |  31.32 |     28.98 |    27.2  |    31.94 |
 ---
 
-#### Reproduction Instructions
+### Reproduction Instructions
 
 1. Download and unzip the [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip).
 2. Activate the appropriate conda/python environment.
@@ -315,7 +315,7 @@ It is worth noting that we only support the training functionality; this reposit
    bash examples/mip360/eval_all_mip360.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
    ```
 
-### Significantly Speed up and Reduce per-GPU memory usage on Mip360 at *4K Resolution*
+## Significantly Speed up and Reduce per-GPU memory usage on Mip360 at *4K Resolution*
 
 | Configuration                  | 50k Training Time   |   Memory Per GPU |   PSNR |
 |:-------------------------------|:--------------------|-----------------:|-------:|
@@ -326,14 +326,14 @@ It is worth noting that we only support the training functionality; this reposit
 
 Unlike the typical approach of downsampling the Mip360 dataset by a factor of four before training, our system can train directly at full resolution. The bicycle and garden images have resolutions of 4946x3286 and 5187x3361, respectively. Our distributed system demonstrates that we can significantly accelerate and reduce memory usage per GPU by several folds without sacrificing quality.
 
-#### Reproduction Instructions
+### Reproduction Instructions
 
 Set up the dataset and Python environment as outlined previously, then execute the following:
 ```bash
    bash examples/mip360_4k/eval_mip360_4k.sh <path_to_save_experiment_results> <path_to_mip360_dataset>
    ```
 
-### Train in 45 Seconds on Tanks&Temple at *1K Resolution*
+## Train in 45 Seconds on Tanks&Temple at *1K Resolution*
 
 | Configuration                | 7k Training Time   |   7k test PSNR | 30k Training Time   |   30k test PSNR |
 |:-----------------------------|:-------------------|---------------:|:--------------------|----------------:|
@@ -342,7 +342,7 @@ Set up the dataset and Python environment as outlined previously, then execute t
 
 Tanks&Temples dataset includes train and truck scenes with resolutions of 980x545 and 979x546, respectively. Utilizing 4 GPUs, we've managed to train on these small scenes to a reasonable quality in just 45 seconds(7k iterations). In the original Gaussian splatting papers, achieving a test PSNR of 18.892 and 23.506 at 7K resolution was considered good on train and truck, respectively. Our results are comparable to these benchmarks.
 
-#### Reproduction Instructions
+### Reproduction Instructions
 
 Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip) and Python environment as outlined previously, then execute the following:
 ```bash
@@ -351,7 +351,7 @@ Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fun
 
 (TODO: check these scripts have no side-effects)
 
-### Experimental Setup for all experiments statistics above
+## Experimental Setup for all experiments statistics above
 
 - **Hardware**: 4x 40GB NVIDIA A100 GPUs
 - **Interconnect**: Fully-connected Bidirectional 25GB/s NVLINK
