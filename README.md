@@ -44,11 +44,11 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 -----
 - [How to use Grendal-GS](#how-to-use-grendal-gs)
     - [Setup](#setup)
-    - [Train on single/multiple GPU](#rotation)
-    - [Render Pretrained-Model](#rotation)
-    - [Calculate metrics](#rotation)
-    - [Notes on mitigating from original gaussian splatting codebase](#rotation)
-- [Benefits of using Grendal-GS](#running-our-images)
+    - [Train on single/multiple GPU](#train)
+    - [Render Pretrained-Model](#render)
+    - [Calculate metrics](#evaluating-metrics)
+    - [Notes on mitigating from original gaussian splatting codebase](#Mitigating-from-3dgs)
+- [Examples and Benefits of using Grendal-GS](#Examples-and-benefits)
 - [Paper and Citation](#paper-and-citation)
 - [Reference](#reference)
 ------
@@ -147,7 +147,7 @@ Advantages of using our distributed implementation for gaussians splatting:
 
 
 
-### Training
+### Train
 
 For single-GPU non-distributed training with batch size of 1:
 ```shell
@@ -226,7 +226,7 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to
 </details>
 <br>
 
-### Render Trained Model
+### Render
 
 ```shell
 python render.py -s <path to COLMAP dataset> --model_path <path to folder of saving model> 
@@ -277,7 +277,8 @@ python metrics.py --model_path <path to folder of saving model>
 
 ---
 
-# Results and Usages of our repository
+
+# Examples-and-benefits
 
 ### Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
 
