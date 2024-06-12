@@ -28,12 +28,71 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
 
 
-# About
+# Overview
 
-Grendal-GS allows for distributed training of Gaussian Splatting on multiple GPU. By leveraging multiple GPUs' capability, Grendal-GS enables significantly faster training, supports a substantially larger number of Gaussians in memory, and ultimately allows for the reconstruction of larger-area, higher-resolution scenes to better PSNR. Grendal-GS doesn't change the algorithm at all, it's purely system optimization; so it can safely replace the original 3DGS implementation in any gaussian splatting workflow and applications. 
+We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* the with support from distributed systems, just as the achievements of current LLMs rely on distributed training. 
+
+By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for the 3DGS implementation in any Gaussian Splatting workflow or application.
+
+<!-- 
+*Many more new features are developing now, following us!*
+-->
+
+Grendal-GS is continuously adding new features. Follow us for updates! Interested in contributing? [Email us!](mailto:hz3496@nyu.edu)
+
+**Table of contents**
+-----
+- [How to use Grendal-GS](#how-to-use-grendal-gs)
+    - [Setup](#setup)
+    - [Train on single/multiple GPU](#rotation)
+    - [Render Pretrained-Model](#rotation)
+    - [Calculate metrics](#rotation)
+    - [Notes on mitigating from original gaussian splatting codebase](#rotation)
+- [Benefits of using Grendal-GS](#running-our-images)
+- [Paper and Citation](#paper-and-citation)
+- [Reference](#reference)
+------
+
+# How to use Grendal-GS
+
+This repo and its dependency, render cuda code([diff-gaussian-rasterization](https://github.com/TarzanZhao/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
+
+The two main differences are:
+
+1. We support training on multiple GPUs, using the `torchrun` command-line utility provided by PyTorch to launch jobs.
+2. We support batch sizes greater than 1, with the `--bsz` argument flag used to specify the batch size.
 
 
-TODO: table of contents
+<!-- 
+Our repository contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions to produce trained models. 
+-->
+
+## Setup
+
+### Cloning the Repository
+
+The repository contains submodules, thus please check it out with 
+```shell
+git clone git@github.com:TarzanZhao/Dist-GS.git --recursive
+```
+
+### Pytorch Environment
+
+Ensure you have Conda, GPU with compatible driver and cuda environment installed on your machine, as prerequisites. Then please install `PyTorch`, `Torchvision`, `Plyfile`, `tqdm` which are essential packages. Make sure PyTorch version >= 1.10 to have torchrun for distributed training. Finally, compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
+
+We provide a yml file for easy environment setup. However, you should choose the versions to match your local running environment. 
+```
+conda env create --file environment.yml
+conda activate gaussian_splatting
+```
+
+NOTES: We kept additional dependencies minimal compared to the original 3DGS. For environment setup issues, maybe you could refer to the [original 3DGS repo issue section](https://github.com/graphdeco-inria/gaussian-splatting/issues) first.
+
+### Dataset
+
+We use colmap format to load dataset. Therefore, please download and unzip colmap datasets before trainning, for example [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip) and 4 scenes from [Tanks&Temple and DeepBlending](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip). 
+
+
 
 <!-- Its core idea is to leverage more GPU's capability during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussian primitives in large-scale and high resolution scenes, and speed up at the same time. It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models.  -->
 
@@ -41,7 +100,7 @@ TODO: table of contents
 
 
 
-    
+<!--     
 _Authors: [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)_  (\* *Indicates equal contribution*)
 
 _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), [**²Pacific Northwest National Laboratory**](https://www.pnnl.gov)_
@@ -49,9 +108,11 @@ _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), 
 - **[Pre-trained Models (14 GB)](https://github.com/microsoft/DeepSpeed/tree/master/blogs/deepspeed-fp6/03-05-2024/README.md)**
 - **[Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip)**
 
+
 (TODO: check all the links here before releasing)
 
 Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruction because of its superior visual quality and rendering speed. However, training is currently done on a single GPU, and thus cannot handle high-resolution and large-scale 3D reconstruction tasks due to the GPU's memory capacity limit. We build a distributed system, called Grendel, to partition 3DGS' parameters and parallelize its computation across multiple GPUs. As each Gaussian affects a small and changing subset of rendered pixels, Grendel relies on sparse all-to-all communication to transfer each required Gaussian to a pixel partition and performs dynamic load balancing. Unlike existing 3DGS systems that train using one camera view image at a time, Grendel supports batched training using multiple views. We explore different learning rate scaling strategies and identify the simple sqrt(batch size) scaling rule to be highly effective. Evaluation using large-scale high-resolution scenes show that Grendel can improve rendering quality by scaling up 3DGS quantity using multiple GPUs. On the "Rubble" dataset, we achieve a test PSNR of 27.28 by distributing 40.4 million Gaussians across 16 GPUs. By comparison, one achieves a PSNR of 26.28 when using 11.2 million Gaussians in order to fit in a single GPU's memory.*
+
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
@@ -69,8 +130,9 @@ Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruct
   </div>
 (TODO:change it to our bib)
 </section> 
+-->
 
-
+<!--     
 ---
 
 # Repository Overview
@@ -81,25 +143,9 @@ Advantages of using our distributed implementation for gaussians splatting:
 2. Train larger scenes.
 3. Train the same scene dozens of times faster.
 4. Increased PSNR with the same training time.
+-->
 
-## Cloning the Repository
 
-The repository contains submodules, thus please check it out with 
-```shell
-git clone git@github.com:TarzanZhao/Dist-GS.git --recursive
-```
-
-## Setup
-
-Ensure you have Conda, GPU with compatible driver and cuda environment installed on your machine, as prerequisites. Then please install `PyTorch`, `Torchvision`, `Plyfile`, `tqdm` which are essential packages. Make sure PyTorch version >= 1.10 to have torchrun for distributed training. Finally, compile and install two dependent cuda repo `diff-gaussian-rasterization` and `simple-knn` containing our customized cuda kernels for rendering and etc.
-
-We provide a yml file for easy environment setup. However, you should choose the versions to match your local running environment. 
-```
-conda env create --file environment.yml
-conda activate gaussian_splatting
-```
-
-Before trainning, please download and unzip colmap datasets, for example [Mip360 dataset](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip) and 4 scenes from [Tanks&Temple and DeepBlending](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip). 
 
 ### Training
 
@@ -311,7 +357,13 @@ Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fun
 - We will release our optimized cuda kernels within gaussian splatting soon for further speed up. 
 - We will support gsplat later as another choice of our cuda kernel backend. 
 
-# Reference 
+# Paper and Citation
+
+> [**On Scaling Up 3D Gaussian Splatting Training**](https://www.wpeebles.com/DiT)<br>
+> [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)  (\* *co-second authors*)
+> <br>¹New York University, ²Pacific Northwest National Laboratory <br>
+
+# Reference
 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
