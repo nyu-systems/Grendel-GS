@@ -30,7 +30,7 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
 # Overview
 
-We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* the with support from distributed systems, just as the achievements of current LLMs rely on distributed training. 
+We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* with distributed system support, just as the achievements of current LLMs rely on distributed system. 
 
 By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
 
