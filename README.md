@@ -44,12 +44,12 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 -----
 - [How to use Grendal-GS](#how-to-use-grendal-gs)
     - [Setup](#setup)
-    - [Train on single/multiple GPU](#train)
+    - [Training](#train)
     - [Render Pretrained-Model](#render)
-    - [Calculate metrics](#evaluating-metrics)
-    - [Notes on mitigating from original gaussian splatting codebase](#Mitigating-from-3dgs)
-- [Examples and Benefits of using Grendal-GS](#Examples-and-benefits)
-- [Paper and Citation](#paper-and-citation)
+    - [Calculate Metrics](#evaluating-metrics)
+    - [Migrating from original 3DGS codebase](#migrating-from-orginal-3dgs-codebase)
+- [Benefits and Examples of using Grendal-GS](#examples-and-benefits)
+- [Paper](#paper-and-citation)
 - [Reference](#reference)
 ------
 
@@ -275,10 +275,17 @@ python metrics.py --model_path <path to folder of saving model>
 </details>
 <br>
 
+### Migrating from original 3DGS codebase
+
+If you are currently using the original 3DGS codebase for training in your application, you can effortlessly switch to our codebase because we haven't made any algorithmic changes. This will allow you to train faster and successfully train larger, higher-precision scenes without running out of memory (OOM) within a reasonable time frame. 
+
+It is worth noting that we only support the training functionality; this repository does not include the interactive viewer, network viewer, or colmap features from the original 3DGS. We are actively developing to support more features. Please let us know your needs or directly contribute to our project. Thank you!
+
 ---
 
 
-# Examples-and-benefits
+
+# Benefits and Examples
 
 ### Significantly Faster Training Without Compromising Reconstruction Quality On Mip360 Dataset
 
@@ -360,9 +367,28 @@ Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fun
 
 # Paper and Citation
 
+Our system design, analysis of large-batch training dynamics, and insights from scaling up are all documented in the paper below: 
+
 > [**On Scaling Up 3D Gaussian Splatting Training**](https://www.wpeebles.com/DiT)<br>
 > [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)  (\* *co-second authors*)
 > <br>¹New York University, ²Pacific Northwest National Laboratory <br>
+
+TODO: change to our own bibtex
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>@Article{kerbl3Dgaussians,
+      author       = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
+      title        = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
+      journal      = {ACM Transactions on Graphics},
+      number       = {4},
+      volume       = {42},
+      month        = {July},
+      year         = {2023},
+      url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
+}</code></pre>
+  </div>
+</section> 
 
 # Reference
 
