@@ -1,13 +1,25 @@
 <div align="center">
 
-On Scaling Up 3D Gaussian Splatting Training
+Grendal-GS
 ===========================
 _<h4>Gaussian Splatting At Scale by Distributed Training</h4>_
 
 <div align="left">
 
+<div align="center">
+    <img src="assets/teaser.png" width="900">
+</div>
+
+Grendal-GS is a research-oriented system designed for distributed training of Gaussian Splatting, leveraging multiple GPUs' capability. This approach enables significantly faster training, supports a substantially larger number of Gaussians in memory, and ultimately allows for the reconstruction of larger, higher-resolution scenes to better PSNR. Grendal-GS doesn't change the algorithm at all, it's purely system optimization; so it can safely replace the original 3DGS implementation in any gaussian splatting workflow and applications.
 
 
+<!-- Its core idea is to leverage more GPU's capability during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussian primitives in large-scale and high resolution scenes, and speed up at the same time. It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models.  -->
+
+
+
+
+
+    
 _Authors: [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)_  (\* *Indicates equal contribution*)
 
 _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), [**²Pacific Northwest National Laboratory**](https://www.pnnl.gov)_
@@ -16,9 +28,6 @@ _Affiliations: [**¹New York University**](https://cs.nyu.edu/home/index.html), 
 - **[Evaluation Images (7 GB)](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/evaluation/images.zip)**
 
 (TODO: check all the links here before releasing)
-<div align="center">
-    <img src="assets/teaser.png" width="900">
-</div>
 
 Abstract: *3D Gaussian Splatting (3DGS) is gaining popularity for 3D reconstruction because of its superior visual quality and rendering speed. However, training is currently done on a single GPU, and thus cannot handle high-resolution and large-scale 3D reconstruction tasks due to the GPU's memory capacity limit. We build a distributed system, called Grendel, to partition 3DGS' parameters and parallelize its computation across multiple GPUs. As each Gaussian affects a small and changing subset of rendered pixels, Grendel relies on sparse all-to-all communication to transfer each required Gaussian to a pixel partition and performs dynamic load balancing. Unlike existing 3DGS systems that train using one camera view image at a time, Grendel supports batched training using multiple views. We explore different learning rate scaling strategies and identify the simple sqrt(batch size) scaling rule to be highly effective. Evaluation using large-scale high-resolution scenes show that Grendel can improve rendering quality by scaling up 3DGS quantity using multiple GPUs. On the "Rubble" dataset, we achieve a test PSNR of 27.28 by distributing 40.4 million Gaussians across 16 GPUs. By comparison, one achieves a PSNR of 26.28 when using 11.2 million Gaussians in order to fit in a single GPU's memory.*
 
