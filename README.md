@@ -2,7 +2,9 @@
 
 Grendal-GS
 ===========================
-_<h4>Gaussian Splatting At Scale by Distributed Training</h4>_
+_<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
+
+### [Paper](http://arxiv.org/abs/2212.09748) | [Project Page](https://www.wpeebles.com/DiT)
 
 <div align="left">
 
@@ -10,8 +12,28 @@ _<h4>Gaussian Splatting At Scale by Distributed Training</h4>_
     <img src="assets/teaser.png" width="900">
 </div>
 
-Grendal-GS is a research-oriented system designed for distributed training of Gaussian Splatting, leveraging multiple GPUs' capability. This approach enables significantly faster training, supports a substantially larger number of Gaussians in memory, and ultimately allows for the reconstruction of larger, higher-resolution scenes to better PSNR. Grendal-GS doesn't change the algorithm at all, it's purely system optimization; so it can safely replace the original 3DGS implementation in any gaussian splatting workflow and applications.
+<details>
+  <summary> <strong> Click Here to Download Pre-trained Models behind the above visualizations </strong> </summary>
+  
+  - [Pre-trained Rubble Model (On the left)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
+  - [Pre-trained MatrixCity Model (On the right)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
 
+</details>
+
+<!-- 
+### [Rubble Model ](https://www.wpeebles.com/DiT) | [Rubble Evaluation Images](https://www.wpeebles.com/DiT) | [MatrixCity Model](https://www.wpeebles.com/DiT) |  [MatrixCity Evaluation Images](https://www.wpeebles.com/DiT) 
+
+### [Pre-trained Rubble Model(the left one)](https://www.wpeebles.com/DiT) | [Rubble Evaluation Images(the left one)](https://www.wpeebles.com/DiT) | [Pre-trained MatrixCity Model(the right one)](https://www.wpeebles.com/DiT) |  [MatrixCity Evaluation Images](https://www.wpeebles.com/DiT) 
+-->
+
+
+
+# About
+
+Grendal-GS allows for distributed training of Gaussian Splatting on multiple GPU. By leveraging multiple GPUs' capability, Grendal-GS enables significantly faster training, supports a substantially larger number of Gaussians in memory, and ultimately allows for the reconstruction of larger-area, higher-resolution scenes to better PSNR. Grendal-GS doesn't change the algorithm at all, it's purely system optimization; so it can safely replace the original 3DGS implementation in any gaussian splatting workflow and applications. 
+
+
+TODO: table of contents
 
 <!-- Its core idea is to leverage more GPU's capability during training and to increase the batch size to utilize these GPU better. Therefore, we could accommodate much more gaussian primitives in large-scale and high resolution scenes, and speed up at the same time. It contains a distributed PyTorch-based optimizer to produce a 3D Gaussian model from SfM inputs. The optimizer uses PyTorch and CUDA extensions in a Python environment to produce trained models.  -->
 
