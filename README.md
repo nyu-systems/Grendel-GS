@@ -50,6 +50,7 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
     - [Migrating from original 3DGS codebase](#migrating-from-original-3dgs-codebase)
 - [Benefits and Examples](#benefits-and-examples)
 - [Paper](#paper-and-citation)
+- [License](#license)
 - [Reference](#reference)
 ------
 
@@ -390,20 +391,10 @@ TODO: change to our own bibtex
   </div>
 </section> 
 
+# License
+
+Distributed under the Apache License Version 2.0 License. See `LICENSE.txt` for more information.
+
 # Reference
 
-<section class="section" id="BibTeX">
-  <div class="container is-max-desktop content">
-    <h2 class="title">BibTeX</h2>
-    <pre><code>@Article{kerbl3Dgaussians,
-      author       = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
-      title        = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
-      journal      = {ACM Transactions on Graphics},
-      number       = {4},
-      volume       = {42},
-      month        = {July},
-      year         = {2023},
-      url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
-}</code></pre>
-  </div>
-</section> 
+1. Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and George Drettakis. 3d gaussian splatting for real-time radiance field rendering. ACM Transactions on Graphics, July 2023. URL: https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/.
