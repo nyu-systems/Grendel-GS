@@ -78,7 +78,7 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 
 # How to use Grendal-GS
 
-This repo and its dependency, render cuda code([diff-gaussian-rasterization](https://github.com/TarzanZhao/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
+This repo and its dependency, our customized distributed version of rendering cuda code([diff-gaussian-rasterization](https://github.com/TarzanZhao/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
 
 The two main differences are:
 
