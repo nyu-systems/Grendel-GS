@@ -56,6 +56,12 @@ We design and implement **Grendal-GS**, which serves as a distributed implementa
 
 By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
 
+For examples, with 4 GPU, Grendal-GS allows you to:
+- Train Mip360 >3.5 times faster.
+- Support directly training large-scale 4K scenes(Mega-NeRF Rubble) using >40 millions gaussians without OOM.
+- Train the Temple\&Tanks Truck scene to PSNR 23.79 within merely 45 seconds (on 7000 images)
+
+
 <!-- 
 *Many more new features are developing now, following us!*
 -->
