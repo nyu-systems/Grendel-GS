@@ -57,7 +57,7 @@ class AuxiliaryParams(ParamGroup):
         self.debug_from = -1
         self.detect_anomaly = False
         self.test_iterations = [7_000, 30_000]
-        self.save_iterations = []
+        self.save_iterations = [7_000, 30_000]
         self.quiet = False
         self.checkpoint_iterations = []
         self.start_checkpoint = ""
