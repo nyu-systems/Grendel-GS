@@ -70,6 +70,7 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 
 **Table of contents**
 -----
+- [Why use Grendal-GS](#why-use-grendal-gs)
 - [How to use Grendal-GS](#how-to-use-grendal-gs)
     - [Setup](#setup)
     - [Training](#training)
@@ -81,6 +82,14 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 - [License](#license)
 - [Reference](#reference)
 ------
+
+# Why use Grendal-GS
+
+Here is a diagram showing why you may need distributed gaussian splatting training like our Grendal-GS' techniques:
+
+![whydistributed](https://github.com/TarzanZhao/Grendal-GS/assets/45677459/189e11b5-ad5a-4d01-ba9e-5fccee315a49)
+
+
 
 # How to use Grendal-GS
 
