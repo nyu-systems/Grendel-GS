@@ -26,7 +26,7 @@ Grendal-GS
 ===========================
 _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
-### [Paper](http://arxiv.org/abs/2212.09748) | [Project Page](https://www.wpeebles.com/DiT)
+### [Paper](http://arxiv.org/abs/2212.09748) | [Project Page](https://daohanlu.github.io/scaling-up-3dgs/)
 
 <div align="left">
 
@@ -411,20 +411,10 @@ Our system design, analysis of large-batch training dynamics, and insights from 
 > [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)  (\* *co-second authors*)
 > <br>¹New York University, ²Pacific Northwest National Laboratory <br>
 
-TODO: change to our own bibtex
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
     <h2 class="title">BibTeX</h2>
-    <pre><code>@Article{kerbl3Dgaussians,
-      author       = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
-      title        = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
-      journal      = {ACM Transactions on Graphics},
-      number       = {4},
-      volume       = {42},
-      month        = {July},
-      year         = {2023},
-      url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
-}</code></pre>
+    <pre><code>TBD</code></pre>
   </div>
 </section> 
 
