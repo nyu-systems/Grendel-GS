@@ -111,7 +111,7 @@ Our repository contains a distributed PyTorch-based optimizer to produce a 3D Ga
 
 The repository contains submodules, thus please check it out with 
 ```shell
-git clone git@github.com:TarzanZhao/Grendal-GS.git --recursive
+git clone git@github.com:nyu-systems/Grendal-GS.git --recursive
 ```
 
 ### Pytorch Environment
