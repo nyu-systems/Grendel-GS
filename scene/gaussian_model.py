@@ -223,7 +223,7 @@ class GaussianModel:
                 param_group["lr"] *= lr_scale
                 if "eps" in param_group: # Adam
                     param_group["eps"] /= lr_scale
-                    param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
+                    param_group["betas"] = [beta ** bsz for beta in param_group["betas"]]
                     # utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
                     log_file.write(param_group["name"] + " betas: " + str(param_group["betas"]) + "\n")
             elif training_args.lr_scale_mode == "accumu":
