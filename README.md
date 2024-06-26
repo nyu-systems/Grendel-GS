@@ -3,8 +3,8 @@
     <a href="https://github.com/nerfstudio-project/nerfstudio/blob/master/LICENSE">
         <img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg"></a>
     <!-- stars badge -->
-    <a href="https://github.com/nyu-systems/Grendal-GS/stargazers">
-        <img alt="GitHub stars" src="https://img.shields.io/github/stars/nyu-systems/Grendal-GS?style=social"/>
+    <a href="https://github.com/nyu-systems/Grendel-GS/stargazers">
+        <img alt="GitHub stars" src="https://img.shields.io/github/stars/nyu-systems/Grendel-GS?style=social"/>
     </a>
     <!-- community badges -->
 <!--     <a href="https://discord.gg/uMbNqcraFc"><img src="https://dcbadge.vercel.app/api/server/uMbNqcraFc?style=plastic"/></a> -->
@@ -13,8 +13,8 @@
         <img alt="Last Commit" src="https://img.shields.io/github/last-commit/TarzanZhao/Dist-GS"/>
     </a> -->
     <!-- pull requests badge -->
-    <a href="https://github.com/nyu-systems/Grendal-GS/pulls">
-        <img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/nyu-systems/Grendal-GS"/>
+    <a href="https://github.com/nyu-systems/Grendel-GS/pulls">
+        <img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/nyu-systems/Grendel-GS"/>
     </a>
 
 </p>
@@ -22,7 +22,7 @@
 
 <div align="center">
 
-Grendal-GS
+Grendel-GS
 ===========================
 _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
@@ -52,11 +52,11 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
 # Overview
 
-We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* with distributed system support, just as the achievements of current LLMs rely on distributed system. 
+We design and implement **Grendel-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* with distributed system support, just as the achievements of current LLMs rely on distributed system. 
 
-By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
+By using Grendel, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendel-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
 
-For examples, with 4 GPU, Grendal-GS allows you to:
+For examples, with 4 GPU, Grendel-GS allows you to:
 - Train Mip360 >3.5 times faster.
 - Support directly training large-scale 4K scenes(Mega-NeRF Rubble) using >40 millions gaussians without OOM.
 - Train the Temple\&Tanks Truck scene to PSNR 23.79 within merely 45 seconds (on 7000 images)
@@ -66,12 +66,12 @@ For examples, with 4 GPU, Grendal-GS allows you to:
 *Many more new features are developing now, following us!*
 -->
 
-Grendal-GS is continuously adding new features. Follow us for updates! Interested in contributing? [Email us!](mailto:hz3496@nyu.edu)
+Grendel-GS is continuously adding new features. Follow us for updates! Interested in contributing? [Email us!](mailto:hz3496@nyu.edu)
 
 **Table of contents**
 -----
-- [Why use Grendal-GS](#why-use-grendal-gs)
-- [How to use Grendal-GS](#how-to-use-grendal-gs)
+- [Why use Grendel-GS](#why-use-Grendel-gs)
+- [How to use Grendel-GS](#how-to-use-Grendel-gs)
     - [Setup](#setup)
     - [Training](#training)
     - [Render Pretrained-Model](#rendering)
@@ -83,17 +83,17 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 - [Reference](#reference)
 ------
 
-# Why use Grendal-GS
+# Why use Grendel-GS
 
-Here is a diagram showing why you may need distributed gaussian splatting training like our Grendal-GS' techniques:
+Here is a diagram showing why you may need distributed gaussian splatting training like our Grendel-GS' techniques:
 
-![whydistributed](https://github.com/TarzanZhao/Grendal-GS/assets/45677459/189e11b5-ad5a-4d01-ba9e-5fccee315a49)
+![whydistributed](https://github.com/TarzanZhao/Grendel-GS/assets/45677459/189e11b5-ad5a-4d01-ba9e-5fccee315a49)
 
 
 
-# How to use Grendal-GS
+# How to use Grendel-GS
 
-This repo and its dependency, our customized distributed version of rendering cuda code([diff-gaussian-rasterization](https://github.com/TarzanZhao/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
+This repo and its dependency, our customized distributed version of rendering cuda code([diff-gaussian-rasterization](https://github.com/nyu-systems/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
 
 The two main differences are:
 
@@ -111,7 +111,7 @@ Our repository contains a distributed PyTorch-based optimizer to produce a 3D Ga
 
 The repository contains submodules, thus please check it out with 
 ```shell
-git clone git@github.com:nyu-systems/Grendal-GS.git --recursive
+git clone git@github.com:nyu-systems/Grendel-GS.git --recursive
 ```
 
 ### Pytorch Environment
