@@ -87,7 +87,8 @@ Grendel-GS is continuously adding new features. Follow us for updates! Intereste
 
 Here is a diagram showing why you may need distributed gaussian splatting training like our Grendel-GS' techniques:
 
-![whydistributed](https://github.com/TarzanZhao/Grendel-GS/assets/45677459/189e11b5-ad5a-4d01-ba9e-5fccee315a49)
+
+![whydistributed](https://github.com/nyu-systems/Grendel-GS/assets/45677459/4237777e-662c-4611-9196-f60fcae927d6)
 
 
 
