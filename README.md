@@ -408,7 +408,7 @@ Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fun
 
 Our system design, analysis of large-batch training dynamics, and insights from scaling up are all documented in the paper below: 
 
-> [**On Scaling Up 3D Gaussian Splatting Training**](https://www.wpeebles.com/DiT)<br>
+> [**On Scaling Up 3D Gaussian Splatting Training**](https://arxiv.org/abs/2406.18533)<br>
 > [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)  (\* *co-second authors*)
 > <br>¹New York University, ²Pacific Northwest National Laboratory <br>
 
