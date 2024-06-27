@@ -37,8 +37,8 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 <details>
   <summary> <strong> Click Here to Download Pre-trained Models behind the above visualizations </strong> </summary>
   
-  - [Pre-trained Rubble Model (On the left)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
-  - [Pre-trained MatrixCity Model (On the right)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
+  - [Pre-trained Rubble Model (On the left)](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr273-rubble-pointcloud.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240627%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240627T043747Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=1f8148c3ae0a01643c8162f19a785580af568883ce98136dfc16914a5eaf0017), [Corresponding Evaluation Images](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr273-rubble-image.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240627%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240627T043653Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=b46dd16c8f92d6a5252fceed3bdcddc08b3e2d30d95ebb6b95d545b915fccafb)
+  - [Pre-trained MatrixCity Model (On the right)](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr270-matrixcity-blockall-pointcloud.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240627%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240627T043604Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=33aa35db23db900879f25fbed05dec5e05bae6d9f0fe7f6fc4ae2d1730fa0698), [Corresponding Evaluation Images](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr270-matrixcity-blockall-images.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240627%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240627T043359Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=3fb1467cf50eb74a433c2a23d7dbc2306abe96120607f6b2bbb83ae726e2211b)
 
 </details>
 
@@ -66,7 +66,7 @@ For examples, with 4 GPU, Grendel-GS allows you to:
 *Many more new features are developing now, following us!*
 -->
 
-Grendel-GS is continuously adding new features. Follow us for updates! Interested in contributing? [Email us!](mailto:hz3496@nyu.edu)
+> ### 🌟 Follow us for future updates! Interested in collaborating or contributing? [**Email us!**](mailto:hz3496@nyu.edu)
 
 **Table of contents**
 -----
@@ -415,7 +415,15 @@ Our system design, analysis of large-batch training dynamics, and insights from 
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
     <h2 class="title">BibTeX</h2>
-    <pre><code>TBD</code></pre>
+    <pre><code>@misc{zhao2024scaling3dgaussiansplatting,
+      title={On Scaling Up 3D Gaussian Splatting Training}, 
+      author={Hexu Zhao and Haoyang Weng and Daohan Lu and Ang Li and Jinyang Li and Aurojit Panda and Saining Xie},
+      year={2024},
+      eprint={2406.18533},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2406.18533}, 
+}</code></pre>
   </div>
 </section> 
 
