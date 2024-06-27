@@ -26,7 +26,7 @@ Grendel-GS
 ===========================
 _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
-### [Paper](http://arxiv.org/abs/2212.09748) | [Project Page](https://daohanlu.github.io/scaling-up-3dgs/)
+### [Paper](https://arxiv.org/abs/2406.18533) | [Project Page](https://daohanlu.github.io/scaling-up-3dgs/)
 
 <div align="left">
 
