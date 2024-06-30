@@ -260,8 +260,6 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
-            if utils.get_args().distributed_dataset_storage and utils.LOCAL_RANK != 0:
-                image.close()
 
 
             if is_debug and idx > 50:
