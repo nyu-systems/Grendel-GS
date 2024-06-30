@@ -300,6 +300,8 @@ python render.py -s <path to COLMAP dataset> --model_path <path to folder of sav
 
 </details>
 
+For interactive rendering, please refer to [GaussFusion](https://github.com/EGalahad/GaussFusion), which also support rendering two checkpoints with interactive controls.
+
 ## Evaluating metrics
 
 ```shell
