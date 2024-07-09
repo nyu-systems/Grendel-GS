@@ -716,6 +716,14 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):# the :2] is a weird implementation. It is because viewspace_point_tensor is (N, 3) tensor.
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+    
+    def gsplat_add_densification_stats(self, viewspace_point_tensor_grad, update_filter, width, height):# the :2] is a weird implementation. It is because viewspace_point_tensor is (N, 3) tensor.
+        grad = viewspace_point_tensor_grad # (N, 2)
+        # Normalize the gradients to [-1, 1] screen size
+        grad[:, 0] *= width * 0.5
+        grad[:, 1] *= height * 0.5
+        self.xyz_gradient_accum[update_filter] += torch.norm(grad[update_filter,:2], dim=-1, keepdim=True)
+        self.denom[update_filter] += 1
 
     def group_for_redistribution(self):
         args = utils.get_args()

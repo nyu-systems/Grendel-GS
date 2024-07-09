@@ -65,6 +65,7 @@ class AuxiliaryParams(ParamGroup):
         self.log_folder = "/tmp/gaussian_splatting"
         self.log_interval = 250
         self.llffhold = 8
+        self.backend = "diff"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
