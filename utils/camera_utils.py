@@ -45,7 +45,8 @@ def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
     else:
         gt_image = None
         loaded_mask = None
-    
+        # Maybe we can do cam_info.image.close() here. TODO: double check and optimize it here.
+
 
     if return_image:
         return gt_image

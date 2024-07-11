@@ -223,7 +223,7 @@ class GaussianModel:
                 param_group["lr"] *= lr_scale
                 if "eps" in param_group: # Adam
                     param_group["eps"] /= lr_scale
-                    param_group["betas"] = [max(0.5, 1 - (1 - beta) * bsz) for beta in param_group["betas"]]
+                    param_group["betas"] = [beta ** bsz for beta in param_group["betas"]]
                     # utils.print_rank_0(param_group["name"] + " betas: " + str(param_group["betas"]))
                     log_file.write(param_group["name"] + " betas: " + str(param_group["betas"]) + "\n")
             elif training_args.lr_scale_mode == "accumu":
@@ -494,12 +494,19 @@ class GaussianModel:
             chunk = xyz.shape[0] // utils.WORLD_SIZE + 1
             point_ind_l = chunk*utils.LOCAL_RANK
             point_ind_r = min(chunk*(utils.LOCAL_RANK+1), xyz.shape[0])
-            xyz = xyz[point_ind_l:point_ind_r].contiguous()
-            features_dc = features_dc[point_ind_l:point_ind_r].contiguous()
-            features_extra = features_extra[point_ind_l:point_ind_r].contiguous()
-            scales = scales[point_ind_l:point_ind_r].contiguous()
-            rots = rots[point_ind_l:point_ind_r].contiguous()
-            opacities = opacities[point_ind_l:point_ind_r].contiguous()
+            # xyz = xyz[point_ind_l:point_ind_r].contiguous()
+            # features_dc = features_dc[point_ind_l:point_ind_r].contiguous()
+            # features_extra = features_extra[point_ind_l:point_ind_r].contiguous()
+            # scales = scales[point_ind_l:point_ind_r].contiguous()
+            # rots = rots[point_ind_l:point_ind_r].contiguous()
+            # opacities = opacities[point_ind_l:point_ind_r].contiguous()
+            
+            xyz = np.ascontiguousarray(xyz[point_ind_l:point_ind_r])
+            features_dc = np.ascontiguousarray(features_dc[point_ind_l:point_ind_r])
+            features_extra = np.ascontiguousarray(features_extra[point_ind_l:point_ind_r])
+            scales = np.ascontiguousarray(scales[point_ind_l:point_ind_r])
+            rots = np.ascontiguousarray(rots[point_ind_l:point_ind_r])
+            opacities = np.ascontiguousarray(opacities[point_ind_l:point_ind_r])
 
         if args.drop_initial_3dgs_p > 0.0:
             # drop each point with probability args.drop_initial_3dgs_p

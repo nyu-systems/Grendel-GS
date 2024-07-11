@@ -3,8 +3,8 @@
     <a href="https://github.com/nerfstudio-project/nerfstudio/blob/master/LICENSE">
         <img alt="License" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg"></a>
     <!-- stars badge -->
-    <a href="https://github.com/TarzanZhao/Dist-GS/stargazers">
-        <img alt="GitHub stars" src="https://img.shields.io/github/stars/TarzanZhao/Dist-GS?style=social"/>
+    <a href="https://github.com/nyu-systems/Grendel-GS/stargazers">
+        <img alt="GitHub stars" src="https://img.shields.io/github/stars/nyu-systems/Grendel-GS?style=social"/>
     </a>
     <!-- community badges -->
 <!--     <a href="https://discord.gg/uMbNqcraFc"><img src="https://dcbadge.vercel.app/api/server/uMbNqcraFc?style=plastic"/></a> -->
@@ -13,8 +13,8 @@
         <img alt="Last Commit" src="https://img.shields.io/github/last-commit/TarzanZhao/Dist-GS"/>
     </a> -->
     <!-- pull requests badge -->
-    <a href="https://github.com/TarzanZhao/Dist-GS/pulls">
-        <img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/TarzanZhao/Dist-GS"/>
+    <a href="https://github.com/nyu-systems/Grendel-GS/pulls">
+        <img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/nyu-systems/Grendel-GS"/>
     </a>
 
 </p>
@@ -22,11 +22,11 @@
 
 <div align="center">
 
-Grendal-GS
+Grendel-GS
 ===========================
-_<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
+_<h4>Gaussian Splatting at Scale with Distributed Training System</h4>_
 
-### [Paper](http://arxiv.org/abs/2212.09748) | [Project Page](https://www.wpeebles.com/DiT)
+### [Paper](https://arxiv.org/abs/2406.18533) | [Project Page](https://daohanlu.github.io/scaling-up-3dgs/)
 
 <div align="left">
 
@@ -37,8 +37,8 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 <details>
   <summary> <strong> Click Here to Download Pre-trained Models behind the above visualizations </strong> </summary>
   
-  - [Pre-trained Rubble Model (On the left)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
-  - [Pre-trained MatrixCity Model (On the right)](https://www.wpeebles.com/DiT), [Corresponding Evaluation Images](https://www.wpeebles.com/DiT)
+  - [Pre-trained Rubble Model (On the left)](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr273-rubble-pointcloud.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240707%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240707T053805Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=74f9dc5c0346a1b68c05b8bb7da0dbe430a7cdda1c9732f2e17e3c72ab1e13ba), [Corresponding Evaluation Images](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr273-rubble-image.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240707%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240707T053756Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=751f3236b3657acc09e7ed6bddb6e5493103fc4184165d2304abc9821535a5d3)
+  - [Pre-trained MatrixCity Model (On the right)](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr270-matrixcity-blockall-pointcloud.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240707%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240707T053813Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=784b1211e89a4c525a44ebf5bfd53d0ceb0370fc2aa9bf32546545e79b8f23d3), [Corresponding Evaluation Images](https://3dgs-public.s3.amazonaws.com/Grendal-GS-checkpoints-and-evalutation-images/psnr270-matrixcity-blockall-images.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAXBPATLFWQSADNSG5%2F20240707%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240707T053809Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=72598685d26b557bca4df653053368d1fc15b9b8cb1d094e0fad89460a5b8d8d)
 
 </details>
 
@@ -52,11 +52,11 @@ _<h4>Gaussian Splatting At Scale by Distributed Training System</h4>_
 
 # Overview
 
-We design and implement **Grendal-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* with distributed system support, just as the achievements of current LLMs rely on distributed system. 
+We design and implement **Grendel-GS**, which serves as a distributed implementation of 3D Gaussian Splatting training. We aim to help 3DGS achieve its *scaling laws* with distributed system support, just as the achievements of current LLMs rely on distributed system. 
 
-By using Grendal, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendal-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
+By using Grendel, your 3DGS training could leverage multiple GPUs' capability to achieve significantly ***faster training***, supports a substantially ***more Gaussians*** in GPU memory, and ultimately allows for the reconstruction of ***larger-area***, ***higher-resolution*** scenes to better PSNR. Grendel-GS retains the original algorithm, making it a ***direct and safe replacement*** for original 3DGS implementation in any Gaussian Splatting workflow or application.
 
-For examples, with 4 GPU, Grendal-GS allows you to:
+For examples, with 4 GPU, Grendel-GS allows you to:
 - Train Mip360 >3.5 times faster.
 - Support directly training large-scale 4K scenes(Mega-NeRF Rubble) using >40 millions gaussians without OOM.
 - Train the Temple\&Tanks Truck scene to PSNR 23.79 within merely 45 seconds (on 7000 images)
@@ -66,11 +66,12 @@ For examples, with 4 GPU, Grendal-GS allows you to:
 *Many more new features are developing now, following us!*
 -->
 
-Grendal-GS is continuously adding new features. Follow us for updates! Interested in contributing? [Email us!](mailto:hz3496@nyu.edu)
+> ### 🌟 Follow us for future updates! Interested in collaborating or contributing? [**Email us!**](mailto:hz3496@nyu.edu)
 
 **Table of contents**
 -----
-- [How to use Grendal-GS](#how-to-use-grendal-gs)
+- [Why use Grendel-GS](#why-use-Grendel-gs)
+- [How to use Grendel-GS](#how-to-use-Grendel-gs)
     - [Setup](#setup)
     - [Training](#training)
     - [Render Pretrained-Model](#rendering)
@@ -82,9 +83,18 @@ Grendal-GS is continuously adding new features. Follow us for updates! Intereste
 - [Reference](#reference)
 ------
 
-# How to use Grendal-GS
+# Why use Grendel-GS
 
-This repo and its dependency, our customized distributed version of rendering cuda code([diff-gaussian-rasterization](https://github.com/TarzanZhao/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
+Here is a diagram showing why you may need distributed gaussian splatting training like our Grendel-GS' techniques:
+
+
+![whydistributed](https://github.com/nyu-systems/Grendel-GS/assets/45677459/4237777e-662c-4611-9196-f60fcae927d6)
+
+
+
+# How to use Grendel-GS
+
+This repo and its dependency, our customized distributed version of rendering cuda code([diff-gaussian-rasterization](https://github.com/nyu-systems/diff-gaussian-rasterization)), are both forks from the [original 3DGS implementation](https://github.com/graphdeco-inria/gaussian-splatting). Therefore, the usage is generally very similar to the original 3DGS. 
 
 The two main differences are:
 
@@ -102,7 +112,7 @@ Our repository contains a distributed PyTorch-based optimizer to produce a 3D Ga
 
 The repository contains submodules, thus please check it out with 
 ```shell
-git clone git@github.com:TarzanZhao/Grendal-GS.git --recursive
+git clone git@github.com:nyu-systems/Grendel-GS.git --recursive
 ```
 
 ### Pytorch Environment
@@ -290,6 +300,8 @@ python render.py -s <path to COLMAP dataset> --model_path <path to folder of sav
 
 </details>
 
+For interactive rendering, please refer to [GaussFusion](https://github.com/EGalahad/GaussFusion), which also support rendering two checkpoints with interactive controls.
+
 ## Evaluating metrics
 
 ```shell
@@ -398,23 +410,21 @@ Set up the [Tanks&Temple and DeepBlending Dataset](https://repo-sam.inria.fr/fun
 
 Our system design, analysis of large-batch training dynamics, and insights from scaling up are all documented in the paper below: 
 
-> [**On Scaling Up 3D Gaussian Splatting Training**](https://www.wpeebles.com/DiT)<br>
+> [**On Scaling Up 3D Gaussian Splatting Training**](https://arxiv.org/abs/2406.18533)<br>
 > [**Hexu Zhao¹**](https://tarzanzhao.github.io), [**Haoyang Weng¹\***](https://egalahad.github.io), [**Daohan Lu¹\***](https://daohanlu.github.io), [**Ang Li²**](https://www.angliphd.com), [**Jinyang Li¹**](https://www.news.cs.nyu.edu/~jinyang/), [**Aurojit Panda¹**](https://cs.nyu.edu/~apanda/), [**Saining Xie¹**](https://www.sainingxie.com)  (\* *co-second authors*)
 > <br>¹New York University, ²Pacific Northwest National Laboratory <br>
 
-TODO: change to our own bibtex
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
     <h2 class="title">BibTeX</h2>
-    <pre><code>@Article{kerbl3Dgaussians,
-      author       = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
-      title        = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
-      journal      = {ACM Transactions on Graphics},
-      number       = {4},
-      volume       = {42},
-      month        = {July},
-      year         = {2023},
-      url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
+    <pre><code>@misc{zhao2024scaling3dgaussiansplatting,
+      title={On Scaling Up 3D Gaussian Splatting Training}, 
+      author={Hexu Zhao and Haoyang Weng and Daohan Lu and Ang Li and Jinyang Li and Aurojit Panda and Saining Xie},
+      year={2024},
+      eprint={2406.18533},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2406.18533}, 
 }</code></pre>
   </div>
 </section> 
