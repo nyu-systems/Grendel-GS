@@ -848,7 +848,7 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
     batched_screenspace_params = []
     
     N = means3D.shape[0] # number of gaussians
-    C = len(batched_viewpoint_cameras) # number of cameras (aka batch size)
+    B = len(batched_viewpoint_cameras) # number of cameras (aka batch size)
     
     Ks = []
     viewmats = []
@@ -874,8 +874,8 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
         Ks.append(K)
         viewmats.append(viewmat)
     
-    batched_Ks = torch.stack(Ks) # (C, 3, 3)
-    batched_viewmats = torch.stack(viewmats) # (C, 4, 4)
+    batched_Ks = torch.stack(Ks) # (B, 3, 3)
+    batched_viewmats = torch.stack(viewmats) # (B, 4, 4)
     image_width = int(batched_viewpoint_cameras[0].image_width)
     image_height = int(batched_viewpoint_cameras[0].image_height)
     
@@ -891,13 +891,13 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
         height=image_height,
         packed=False
     )
-    batched_opacities = opacities.squeeze(1).repeat(C, 1) # (N, 1) -> (C, N)
+    batched_opacities = opacities.squeeze(1).repeat(B, 1) # (N, 1) -> (B, N)
         
     if mode == "train":
         batched_means2D.retain_grad()
         
     # Compute colors(shs) for each camera view.
-    shs = shs.expand(C, *([-1] * shs.dim()))
+    shs = shs.expand(B, *([-1] * shs.dim()))
             
     camtoworlds = torch.inverse(batched_viewmats)
     dirs = means3D[None, :, :] - camtoworlds[:, None, :3, 3]
@@ -907,7 +907,7 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
         coeffs=shs,
         masks=(batched_radiis > 0)
     )
-    batched_colors = torch.clamp_min(batched_colors + 0.5, 0.0) # (C, N, 3)
+    batched_colors = torch.clamp_min(batched_colors + 0.5, 0.0) # (B, N, 3)
         
     utils.check_initial_gpu_memory_usage("after forward_preprocess_gaussians")
     if timers is not None:
@@ -924,12 +924,12 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
             "batched_cuda_args": batched_cuda_args,
             "batched_means2D_redistributed": batched_means2D,
             "batched_colors_redistributed": batched_colors,
-            "batched_conics_redistributed": batched_conics, # Inverse of the projected covariances. Flattened upper triangle with (C, N, 3).
+            "batched_conics_redistributed": batched_conics, # Inverse of the projected covariances. Flattened upper triangle with (B, N, 3).
             "batched_opacities_redistributed": batched_opacities,
             "batched_radiis_redistributed": batched_radiis,
             "batched_depths_redistributed": batched_depths,
             "gpui_to_gpuj_imgk_size": [
-                [[batched_means2D[i].shape[0] for i in range(C)]]
+                [[batched_means2D[i].shape[0] for i in range(B)]]
             ],
         }
         
@@ -938,12 +938,12 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
     batched_screenspace_params = [
         image_height,
         image_width, 
-        batched_means2D, # (C, N, 2)
-        batched_colors, # (C, N, 3)
-        batched_conics, # (C, N, 3)
-        batched_opacities, # (C, N)
-        batched_radiis, # (C, N)
-        batched_depths # (C, N)
+        batched_means2D, # (B, N, 2)
+        batched_colors, # (B, N, 3)
+        batched_conics, # (B, N, 3)
+        batched_opacities, # (B, N)
+        batched_radiis, # (B, N)
+        batched_depths # (B, N)
     ]
     
     if timers is not None:
@@ -964,7 +964,7 @@ def gsplat_distributed_preprocess3dgs_and_all2all_final(batched_viewpoint_camera
         "batched_cuda_args": batched_cuda_args,
         "batched_means2D_redistributed": batched_means2D_redistributed,
         "batched_colors_redistributed": batched_colors_redistributed,
-        "batched_conics_redistributed": batched_conics_redistributed, # Inverse of the projected covariances. Flattened upper triangle with (C, N, 3).
+        "batched_conics_redistributed": batched_conics_redistributed, # Inverse of the projected covariances. Flattened upper triangle with (B, N, 3).
         "batched_opacities_redistributed": batched_opacities_redistributed,
         "batched_radiis_redistributed": batched_radiis_redistributed,
         "batched_depths_redistributed": batched_depths_redistributed,
@@ -1040,12 +1040,11 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
     Render the scene. 
     """
     timers = utils.get_timers()
-    C = len(batched_strategies)
+    B = len(batched_strategies)
     
     # If there's only one gpu, use batched kernel.
     if utils.DEFAULT_GROUP.size() == 1:           
         means2D = batched_screenspace_pkg["batched_means2D_redistributed"]
-        # C = means2D.shape[0]
         radiis = batched_screenspace_pkg["batched_radiis_redistributed"]
         depths = batched_screenspace_pkg["batched_depths_redistributed"]
         conics = batched_screenspace_pkg["batched_conics_redistributed"]
@@ -1053,7 +1052,7 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
         opacities = batched_screenspace_pkg["batched_opacities_redistributed"]
         image_width = batched_screenspace_pkg["image_width"]
         image_height = batched_screenspace_pkg["image_height"]
-        backgrounds = batched_screenspace_pkg["backgrounds"].repeat(C, 1) if batched_screenspace_pkg["backgrounds"] is not None else None
+        backgrounds = batched_screenspace_pkg["backgrounds"].repeat(B, 1) if batched_screenspace_pkg["backgrounds"] is not None else None
         batched_cuda_args = batched_screenspace_pkg["batched_cuda_args"]
 
         # Identify intersecting tiles.
@@ -1070,12 +1069,12 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
             tile_height=tile_height,
             packed=False
         )
-        isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height) # (C, tile_height, tile_width)
+        isect_offsets = isect_offset_encode(isect_ids, B, tile_width, tile_height) # (B, tile_height, tile_width)
         
         # TODO: One way to do load balancing: Add two timer operators before and after `rasterize_to_pixels`
         # record_time_start : torch operator(torch.autograd.func) 
           
-        # Rasterize to pixels. batched_rendered_image: (C, image_height, image_width, 3)
+        # Rasterize to pixels. batched_rendered_image: (B, image_height, image_width, 3)
         rendered_images, _ = rasterize_to_pixels(
             means2d=means2D,
             conics=conics,
@@ -1111,7 +1110,7 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
         image_width = batched_screenspace_pkg["image_width"]
         image_height = batched_screenspace_pkg["image_height"]
 
-        for cam_id in range(C):
+        for cam_id in range(B):
             strategy = batched_strategies[cam_id]
             if utils.GLOBAL_RANK not in strategy.gpu_ids:
                 batched_rendered_image.append(None)
@@ -1165,9 +1164,9 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
                     tile_height=tile_height,
                     packed=False
                 )
-                isect_offsets = isect_offset_encode(isect_ids, 1, tile_width, tile_height) # (C, tile_height, tile_width)
+                isect_offsets = isect_offset_encode(isect_ids, 1, tile_width, tile_height) # (B, tile_height, tile_width)
                     
-                # Rasterize to pixels. batched_rendered_image: (C, image_height, image_width, 3)
+                # Rasterize to pixels. batched_rendered_image: (B, image_height, image_width, 3)
                 rendered_image, _ = rasterize_to_pixels(
                     means2d=means2D_redistributed,
                     conics=conics_redistributed,
