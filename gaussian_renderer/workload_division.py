@@ -764,28 +764,6 @@ class DivisionStrategyFinal:
             local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
         
         return local2j_ids, local2j_ids_bool
-
-    def gsplat_get_local2j_ids(self, means2D, radii, image_height, image_width, cuda_args):
-        dist_global_strategy_tensor = torch.tensor(self.division_pos, dtype=torch.int, device=means2D.device) * utils.TILE_X
-
-        args = (
-            image_height,
-            image_width,
-            self.rank,
-            self.world_size,
-            means2D,
-            radii,
-            dist_global_strategy_tensor,
-            cuda_args
-        )
-
-        local2j_ids_bool = diff_gaussian_rasterization._C.get_local2j_ids_bool(*args)
-
-        local2j_ids = []
-        for rk in range(self.world_size):
-            local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
-        
-        return local2j_ids, local2j_ids_bool
     
     def get_compute_locally(self):
         if utils.GLOBAL_RANK not in self.gpu_ids:

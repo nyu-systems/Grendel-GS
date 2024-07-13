@@ -2,7 +2,12 @@ import os
 import torch
 import json
 from utils.loss_utils import l1_loss
-from gaussian_renderer import distributed_preprocess3dgs_and_all2all_final, render_final
+from gaussian_renderer import (
+    distributed_preprocess3dgs_and_all2all_final,
+    render_final,
+    gsplat_distributed_preprocess3dgs_and_all2all_final,
+    gsplat_render_final,
+)
 from torch.cuda import nvtx
 from scene import Scene, GaussianModel, SceneDataset
 from gaussian_renderer.workload_division import (
@@ -21,7 +26,7 @@ from utils.timer import Timer, End2endTimer
 from tqdm import tqdm
 from utils.image_utils import psnr
 import torch.distributed as dist
-from densification import densification
+from densification import densification, gsplat_densification
 
 
 def training(dataset_args, opt_args, pipe_args, args, log_file):
@@ -66,8 +71,14 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
     )
 
     # Init background
-    bg_color = [1, 1, 1] if dataset_args.white_background else [0, 0, 0]
-    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    background = None
+    if args.backend == "gsplat":
+        bg_color = [1, 1, 1] if dataset_args.white_background else None
+    else:
+        bg_color = [1, 1, 1] if dataset_args.white_background else [0, 0, 0]
+
+    if bg_color is not None:
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     # Training Loop
     end2end_timers = End2endTimer(args)
@@ -137,21 +148,40 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             )
             timers.stop("load_cameras")
 
-        batched_screenspace_pkg = distributed_preprocess3dgs_and_all2all_final(
-            batched_cameras,
-            gaussians,
-            pipe_args,
-            background,
-            batched_strategies=batched_strategies,
-            mode="train",
-        )
-        batched_image, batched_compute_locally = render_final(
-            batched_screenspace_pkg, batched_strategies
-        )
-        batch_statistic_collector = [
-            cuda_args["stats_collector"]
-            for cuda_args in batched_screenspace_pkg["batched_cuda_args"]
-        ]
+        if args.backend == "gsplat":
+            batched_screenspace_pkg = (
+                gsplat_distributed_preprocess3dgs_and_all2all_final(
+                    batched_cameras,
+                    gaussians,
+                    pipe_args,
+                    background,
+                    batched_strategies=batched_strategies,
+                    mode="train",
+                )
+            )
+            batched_image, batched_compute_locally = gsplat_render_final(
+                batched_screenspace_pkg, batched_strategies
+            )
+            batch_statistic_collector = [
+                cuda_args["stats_collector"]
+                for cuda_args in batched_screenspace_pkg["batched_cuda_args"]
+            ]
+        else:
+            batched_screenspace_pkg = distributed_preprocess3dgs_and_all2all_final(
+                batched_cameras,
+                gaussians,
+                pipe_args,
+                background,
+                batched_strategies=batched_strategies,
+                mode="train",
+            )
+            batched_image, batched_compute_locally = render_final(
+                batched_screenspace_pkg, batched_strategies
+            )
+            batch_statistic_collector = [
+                cuda_args["stats_collector"]
+                for cuda_args in batched_screenspace_pkg["batched_cuda_args"]
+            ]
 
         loss_sum, batched_losses = batched_loss_computation(
             batched_image,
@@ -210,12 +240,23 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
             # Evaluation
             end2end_timers.stop()
             training_report(
-                iteration, l1_loss, args.test_iterations, scene, pipe_args, background
+                iteration,
+                l1_loss,
+                args.test_iterations,
+                scene,
+                pipe_args,
+                background,
+                args.backend,
             )
             end2end_timers.start()
 
             # Densification
-            densification(iteration, scene, gaussians, batched_screenspace_pkg)
+            if args.backend == "gsplat":
+                gsplat_densification(
+                    iteration, scene, gaussians, batched_screenspace_pkg
+                )
+            else:
+                densification(iteration, scene, gaussians, batched_screenspace_pkg)
 
             # Save Gaussians
             if any(
@@ -312,7 +353,7 @@ def training(dataset_args, opt_args, pipe_args, args, log_file):
 
 
 def training_report(
-    iteration, l1_loss, testing_iterations, scene: Scene, pipe_args, background
+    iteration, l1_loss, testing_iterations, scene: Scene, pipe_args, background, backend
 ):
     args = utils.get_args()
     log_file = utils.get_log_file()
@@ -389,19 +430,16 @@ def training_report(
                     load_camera_from_cpu_to_all_gpu_for_eval(
                         batched_cameras, batched_strategies, gpuid2tasks
                     )
-                    batched_screenspace_pkg = (
-                        distributed_preprocess3dgs_and_all2all_final(
-                            batched_cameras,
-                            scene.gaussians,
-                            pipe_args,
-                            background,
-                            batched_strategies=batched_strategies,
-                            mode="test",
-                        )
-                    )
-                    batched_image, _ = render_final(
-                        batched_screenspace_pkg, batched_strategies
-                    )
+                    if backend == 'gsplat':
+                        batched_screenspace_pkg = gsplat_distributed_preprocess3dgs_and_all2all_final(batched_cameras, scene.gaussians, pipe_args, background,
+                                                                                           batched_strategies=batched_strategies,
+                                                                                           mode="test")
+                        batched_image, _ = gsplat_render_final(batched_screenspace_pkg, batched_strategies)
+                    else:    
+                        batched_screenspace_pkg = distributed_preprocess3dgs_and_all2all_final(batched_cameras, scene.gaussians, pipe_args, background,
+                                                                                            batched_strategies=batched_strategies,
+                                                                                            mode="test")
+                        batched_image, _ = render_final(batched_screenspace_pkg, batched_strategies)
                     for camera_id, (image, gt_camera) in enumerate(
                         zip(batched_image, batched_cameras)
                     ):
