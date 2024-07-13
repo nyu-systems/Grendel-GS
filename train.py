@@ -47,7 +47,9 @@ if __name__ == "__main__":
     ## Prepare arguments.
     # Check arguments
     init_args(args)
-
+    
+    args = utils.get_args()
+    
     # create log folder
     if utils.GLOBAL_RANK == 0:
         os.makedirs(args.log_folder, exist_ok = True)

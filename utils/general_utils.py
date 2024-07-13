@@ -192,7 +192,6 @@ def get_first_rank_on_cur_node():
     NODE_ID = GLOBAL_RANK // one_node_device_count()
     first_rank_in_node = NODE_ID * one_node_device_count()
     return first_rank_in_node
-    
 
 def our_allgather_among_cpu_processes_float_list(data, group):
     ## official implementation: torch.distributed.all_gather_object()

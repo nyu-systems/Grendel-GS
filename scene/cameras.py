@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -17,11 +17,22 @@ from utils.general_utils import get_args, get_log_file
 import utils.general_utils as utils
 import time
 
+
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
-                 image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0
-                 ):
+    def __init__(
+        self,
+        colmap_id,
+        R,
+        T,
+        FoVx,
+        FoVy,
+        image,
+        gt_alpha_mask,
+        image_name,
+        uid,
+        trans=np.array([0.0, 0.0, 0.0]),
+        scale=1.0,
+    ):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -38,7 +49,19 @@ class Camera(nn.Module):
         if args.time_image_loading:
             start_time = time.time()
 
-        if (args.distributed_dataset_storage and utils.LOCAL_RANK == 0) or (not args.distributed_dataset_storage):
+        if (
+            (
+                args.local_sampling
+                and args.distributed_dataset_storage
+                and utils.GLOBAL_RANK == uid % utils.WORLD_SIZE
+            )
+            or (
+                not args.local_sampling
+                and args.distributed_dataset_storage
+                and utils.LOCAL_RANK == 0
+            )
+            or (not args.distributed_dataset_storage)
+        ):
             # load to cpu
             self.original_image_backup = image.contiguous()
             if args.preload_dataset_to_gpu:
@@ -58,10 +81,22 @@ class Camera(nn.Module):
         self.trans = trans
         self.scale = scale
 
-        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        self.world_view_transform = (
+            torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        )
         self.world_view_transform_backup = self.world_view_transform.clone().detach()
-        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        self.projection_matrix = (
+            getProjectionMatrix(
+                znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy
+            )
+            .transpose(0, 1)
+            .cuda()
+        )
+        self.full_proj_transform = (
+            self.world_view_transform.unsqueeze(0).bmm(
+                self.projection_matrix.unsqueeze(0)
+            )
+        ).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
     def get_camera2world(self):
@@ -79,16 +114,40 @@ class Camera(nn.Module):
             self.T = (-c2w[:3, :3].t() @ t_prime).cpu().numpy()
             # import pdb; pdb.set_trace()
 
-            self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1).cuda()
-            self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-            self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+            self.world_view_transform = (
+                torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale))
+                .transpose(0, 1)
+                .cuda()
+            )
+            self.projection_matrix = (
+                getProjectionMatrix(
+                    znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy
+                )
+                .transpose(0, 1)
+                .cuda()
+            )
+            self.full_proj_transform = (
+                self.world_view_transform.unsqueeze(0).bmm(
+                    self.projection_matrix.unsqueeze(0)
+                )
+            ).squeeze(0)
             self.camera_center = self.world_view_transform.inverse()[3, :3]
 
 
 class MiniCam:
-    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
+    def __init__(
+        self,
+        width,
+        height,
+        fovy,
+        fovx,
+        znear,
+        zfar,
+        world_view_transform,
+        full_proj_transform,
+    ):
         self.image_width = width
-        self.image_height = height    
+        self.image_height = height
         self.FoVy = fovy
         self.FoVx = fovx
         self.znear = znear
@@ -97,4 +156,3 @@ class MiniCam:
         self.full_proj_transform = full_proj_transform
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
-

@@ -16,3 +16,5 @@ old_files
 __pycache__
 *.npy
 scripts/
+data
+results
