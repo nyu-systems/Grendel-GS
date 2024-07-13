@@ -74,7 +74,7 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         # Set image size to global variable
-        orig_w, orig_h = scene_info.train_cameras[0].image.size
+        orig_w, orig_h = scene_info.train_cameras[0].width, scene_info.train_cameras[0].height
         utils.set_img_size(orig_h, orig_w)
         # Dataset size in GB
         dataset_size_in_GB = 1.0 * (len(scene_info.train_cameras)+len(scene_info.test_cameras)) * orig_w * orig_h * 3 / 1e9

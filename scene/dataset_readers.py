@@ -105,9 +105,15 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path) # this is a lazy load, the image is not loaded yet
+        width, height = image.size
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=None,
                               image_path=image_path, image_name=image_name, width=width, height=height)
+
+        # release memory
+        image.close()
+        image = None
+
         cam_infos.append(cam_info)
     return cam_infos
 
@@ -257,10 +263,13 @@ def readCamerasFromTransformsCity(path, transformsfile, random_background, white
                 # given focal in pixel unit
                 FovY = focal2fov(frame["fl_y"], image.size[1])
                 FovX = focal2fov(frame["fl_x"], image.size[0])
-
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+            
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=None,
                             image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
 
+            # release memory
+            image.close()
+            image = None
 
             if is_debug and idx > 50:
                 break
