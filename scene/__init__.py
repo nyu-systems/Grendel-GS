@@ -109,10 +109,11 @@ class Scene:
         if (
             dataset_size_in_GB < args.preload_dataset_to_gpu_threshold
         ):  # 10GB memory limit for dataset
-            log_file.write("Preloading dataset to GPU.\n")
+            log_file.write(f"[NOTE]: Preloading dataset({dataset_size_in_GB}GB) to GPU. Disable local_sampling and distributed_dataset_storage.\n")
+            print(f"[NOTE]: Preloading dataset({dataset_size_in_GB}GB) to GPU. Disable local_sampling and distributed_dataset_storage.")
             args.preload_dataset_to_gpu = True
-            if not args.local_sampling:
-                args.distributed_dataset_storage = False
+            args.local_sampling = False # TODO: Preloading dataset to GPU is not compatible with local_sampling and distributed_dataset_storage for now. Fix this.
+            args.distributed_dataset_storage = False
 
         # Train on original resolution, no downsampling in our implementation.
         utils.print_rank_0("Decoding Training Cameras")

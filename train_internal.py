@@ -366,30 +366,23 @@ def training_report(
         testing_iterations.pop(0)
         utils.print_rank_0("\n[ITER {}] Start Testing".format(iteration))
 
-        if args.local_sampling:
-            validation_configs = ({"name": "test", "cameras": scene.getTestCameras()},)
-        else:
-            validation_configs = (
-                {"name": "test", "cameras": scene.getTestCameras()},
-                {
-                    "name": "train",
-                    "cameras": [
-                        scene.getTrainCameras()[
-                            idx * args.llffhold % len(scene.getTrainCameras())
-                        ]
-                        for idx in range(len(scene.getTrainCameras()) // args.llffhold)
-                    ],
-                },
-            )
+        validation_configs = (
+            {"name": "test", "cameras": scene.getTestCameras(), "num_cameras": len(scene.getTestCameras())},
+            {
+                "name": "train",
+                "cameras": scene.getTrainCameras(),
+                "num_cameras": max(len(scene.getTrainCameras()) // args.llffhold, args.bsz),
+            },
+        )
+
         # init workload division strategy
         for config in validation_configs:
             if config["cameras"] and len(config["cameras"]) > 0:
                 l1_test = torch.scalar_tensor(0.0, device="cuda")
                 psnr_test = torch.scalar_tensor(0.0, device="cuda")
 
-                num_cameras = len(config["cameras"])
                 # TODO: if not divisible by world size
-                num_cameras = num_cameras // args.bsz * args.bsz
+                num_cameras = config["num_cameras"] // args.bsz * args.bsz
                 eval_dataset = SceneDataset(config["cameras"])
                 strategy_history = DivisionStrategyHistoryFinal(
                     eval_dataset, utils.DEFAULT_GROUP.size(), utils.DEFAULT_GROUP.rank()

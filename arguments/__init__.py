@@ -74,7 +74,7 @@ class AuxiliaryParams(ParamGroup):
         self.log_folder = "/tmp/gaussian_splatting"
         self.log_interval = 250
         self.llffhold = 8
-        self.backend = "gsplat"
+        self.backend = "default" # "default", "gsplat"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -160,7 +160,7 @@ class DistributionParams(ParamGroup):
         self.bsz = 1  # batch size.
         self.distributed_dataset_storage = True  # if True, we store dataset only on rank 0 and broadcast to other ranks.
         self.distributed_save = True
-        self.local_sampling = True
+        self.local_sampling = False
         self.preload_dataset_to_gpu = (
             False  # By default, we do not preload dataset to GPU.
         )
@@ -289,9 +289,16 @@ def init_args(args):
         args.image_distribution_mode = ""
         args.distributed_dataset_storage = False
         args.distributed_save = False
+        args.local_sampling = False
 
     if args.preload_dataset_to_gpu:
         args.distributed_dataset_storage = False
+        args.local_sampling = False
+        # TODO: args.preload_dataset_to_gpu should be independent of args.local_sampling and args.distributed_dataset_storage
+        # We can distributedly save dataset and preload every shard to GPU at the same time.
+
+    if args.local_sampling:
+        assert args.distributed_dataset_storage, "local_sampling works only when distributed_dataset_storage==True"
 
     if not args.gaussians_distribution:
         args.distributed_save = False
