@@ -91,7 +91,10 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         # Set image size to global variable
-        orig_w, orig_h = scene_info.train_cameras[0].width, scene_info.train_cameras[0].height
+        orig_w, orig_h = (
+            scene_info.train_cameras[0].width,
+            scene_info.train_cameras[0].height,
+        )
         utils.set_img_size(orig_h, orig_w)
         # Dataset size in GB
         dataset_size_in_GB = (
@@ -253,7 +256,7 @@ class SceneDataset:
             batched_cameras_uid.append(camera.uid)
 
         return batched_cameras
-    
+
     def get_batched_cameras_idx(self, batch_size):
         assert (
             batch_size <= self.camera_size
@@ -266,7 +269,7 @@ class SceneDataset:
             batched_cameras_idx.append(idx)
 
         return batched_cameras_idx
-    
+
     def get_batched_cameras_from_idx(self, idx_list):
         return [self.cameras[i] for i in idx_list]
 

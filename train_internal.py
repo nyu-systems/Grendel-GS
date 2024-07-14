@@ -430,16 +430,34 @@ def training_report(
                     load_camera_from_cpu_to_all_gpu_for_eval(
                         batched_cameras, batched_strategies, gpuid2tasks
                     )
-                    if backend == 'gsplat':
-                        batched_screenspace_pkg = gsplat_distributed_preprocess3dgs_and_all2all_final(batched_cameras, scene.gaussians, pipe_args, background,
-                                                                                           batched_strategies=batched_strategies,
-                                                                                           mode="test")
-                        batched_image, _ = gsplat_render_final(batched_screenspace_pkg, batched_strategies)
-                    else:    
-                        batched_screenspace_pkg = distributed_preprocess3dgs_and_all2all_final(batched_cameras, scene.gaussians, pipe_args, background,
-                                                                                            batched_strategies=batched_strategies,
-                                                                                            mode="test")
-                        batched_image, _ = render_final(batched_screenspace_pkg, batched_strategies)
+                    if backend == "gsplat":
+                        batched_screenspace_pkg = (
+                            gsplat_distributed_preprocess3dgs_and_all2all_final(
+                                batched_cameras,
+                                scene.gaussians,
+                                pipe_args,
+                                background,
+                                batched_strategies=batched_strategies,
+                                mode="test",
+                            )
+                        )
+                        batched_image, _ = gsplat_render_final(
+                            batched_screenspace_pkg, batched_strategies
+                        )
+                    else:
+                        batched_screenspace_pkg = (
+                            distributed_preprocess3dgs_and_all2all_final(
+                                batched_cameras,
+                                scene.gaussians,
+                                pipe_args,
+                                background,
+                                batched_strategies=batched_strategies,
+                                mode="test",
+                            )
+                        )
+                        batched_image, _ = render_final(
+                            batched_screenspace_pkg, batched_strategies
+                        )
                     for camera_id, (image, gt_camera) in enumerate(
                         zip(batched_image, batched_cameras)
                     ):

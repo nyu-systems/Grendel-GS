@@ -21,9 +21,12 @@ from multiprocessing import shared_memory
 import torch
 from PIL import Image
 
+
 def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
     orig_w, orig_h = cam_info.width, cam_info.height
-    assert orig_w == utils.get_img_width() and orig_h == utils.get_img_height(), "All images should have the same size. "
+    assert (
+        orig_w == utils.get_img_width() and orig_h == utils.get_img_height()
+    ), "All images should have the same size. "
 
     args = get_args()
     log_file = get_log_file()
@@ -47,7 +50,9 @@ def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
         if args.time_image_loading:
             start_time = time.time()
         image = Image.open(cam_info.image_path)
-        resized_image_rgb = PILtoTorch(image, resolution, args, log_file, decompressed_image=decompressed_image)
+        resized_image_rgb = PILtoTorch(
+            image, resolution, args, log_file, decompressed_image=decompressed_image
+        )
         if args.time_image_loading:
             log_file.write(f"PILtoTorch image in {time.time() - start_time} seconds\n")
 
@@ -55,7 +60,7 @@ def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
         gt_image = resized_image_rgb[:3, ...].contiguous()
         loaded_mask = None
 
-        # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory. 
+        # Free the memory: because the PIL image has been converted to torch tensor, we don't need it anymore. And it takes up lots of cpu memory.
         image.close()
         image = None
     else:

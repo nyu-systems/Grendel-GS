@@ -6,7 +6,7 @@ import utils.general_utils as utils
 def save_image_for_debug(image, file_name, keep_digits=8):
     # save image for visualization
 
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     image_cpu = image.detach().cpu().numpy()
 
@@ -22,7 +22,7 @@ def save_image_for_debug(image, file_name, keep_digits=8):
 def save_image_tiles_for_debug(image_tiles, file_name, keep_digits=3):
     # save image for visualization
 
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     image_tiles_cpu = image_tiles.detach().cpu().numpy()
 
@@ -36,9 +36,10 @@ def save_image_tiles_for_debug(image_tiles, file_name, keep_digits=3):
                     file.write(f"{float_value:.{keep_digits}f} ")
                 file.write("\n")
 
+
 def save_all_pos_for_debug(all_pos, file_name):
 
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     all_pos_cpu = all_pos.detach().cpu().numpy()
 
@@ -48,8 +49,9 @@ def save_all_pos_for_debug(all_pos, file_name):
             file.write(f"{int_value} ")
         file.write("\n")
 
+
 def save_compute_locally_for_debug(compute_locally, file_name):
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     compute_locally_cpu = compute_locally.detach().cpu().numpy()
 
@@ -59,8 +61,9 @@ def save_compute_locally_for_debug(compute_locally, file_name):
             file.write(f"{int_value}")
         file.write("\n")
 
+
 def save_pixels_compute_locally_for_debug(pixels_compute_locally, file_name):
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     pixels_compute_locally_cpu = pixels_compute_locally.detach().cpu().numpy()
 
@@ -70,8 +73,9 @@ def save_pixels_compute_locally_for_debug(pixels_compute_locally, file_name):
             file.write(f"{int_value}")
         file.write("\n")
 
+
 def save_pixel_loss_for_debug(pixel_loss, file_name, keep_digits=3):
-    file = open(file_name, 'w')
+    file = open(file_name, "w")
 
     pixel_loss_cpu = pixel_loss.detach().cpu().numpy()
 

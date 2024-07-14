@@ -429,6 +429,13 @@ Our system design, analysis of large-batch training dynamics, and insights from 
   </div>
 </section> 
 
+# Code Specification
+Please use "black" with default settings to format the code if you want to contribute.
+## Setup
+```shell
+conda install black==24.4.2
+```
+
 # License
 
 Distributed under the Apache License Version 2.0 License. See `LICENSE.txt` for more information.

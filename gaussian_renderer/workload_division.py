@@ -743,8 +743,13 @@ class DivisionStrategyFinal:
 
         return local2j_ids, local2j_ids_bool
 
-    def gsplat_get_local2j_ids(self, means2D, radii, image_height, image_width, cuda_args):
-        dist_global_strategy_tensor = torch.tensor(self.division_pos, dtype=torch.int, device=means2D.device) * utils.TILE_X
+    def gsplat_get_local2j_ids(
+        self, means2D, radii, image_height, image_width, cuda_args
+    ):
+        dist_global_strategy_tensor = (
+            torch.tensor(self.division_pos, dtype=torch.int, device=means2D.device)
+            * utils.TILE_X
+        )
 
         args = (
             image_height,
@@ -754,7 +759,7 @@ class DivisionStrategyFinal:
             means2D,
             radii,
             dist_global_strategy_tensor,
-            cuda_args
+            cuda_args,
         )
 
         local2j_ids_bool = diff_gaussian_rasterization._C.get_local2j_ids_bool(*args)
@@ -762,9 +767,9 @@ class DivisionStrategyFinal:
         local2j_ids = []
         for rk in range(self.world_size):
             local2j_ids.append(local2j_ids_bool[:, rk].nonzero())
-        
+
         return local2j_ids, local2j_ids_bool
-    
+
     def get_compute_locally(self):
         if utils.GLOBAL_RANK not in self.gpu_ids:
             return None
@@ -780,18 +785,20 @@ class DivisionStrategyFinal:
         compute_locally[tile_ids_l:tile_ids_r] = True
         compute_locally = compute_locally.view(utils.TILE_Y, utils.TILE_X)
         return compute_locally
-    
+
     def get_compute_locally_all(self):
         if utils.GLOBAL_RANK not in self.gpu_ids:
             return None
         rank = self.gpu_ids.index(utils.GLOBAL_RANK)
 
         # tile_ids_l, tile_ids_r = self.division_pos[rank]*utils.TILE_X, self.division_pos[rank+1]*utils.TILE_X
-        compute_locally = torch.zeros(utils.TILE_Y*utils.TILE_X, dtype=torch.bool, device="cuda")
+        compute_locally = torch.zeros(
+            utils.TILE_Y * utils.TILE_X, dtype=torch.bool, device="cuda"
+        )
         compute_locally[:] = True
         compute_locally = compute_locally.view(utils.TILE_Y, utils.TILE_X)
         return compute_locally
-    
+
     def get_extended_compute_locally(self):
         return None
 

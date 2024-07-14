@@ -19,3 +19,4 @@ dependencies:
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn
+    - submodules/gsplat

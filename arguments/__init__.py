@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -16,11 +16,13 @@ from gaussian_renderer.distribution_config import init_image_distribution_config
 import utils.general_utils as utils
 import diff_gaussian_rasterization
 
+
 class GroupParams:
     pass
 
+
 class ParamGroup:
-    def __init__(self, parser: ArgumentParser, name : str, fill_none = False):
+    def __init__(self, parser: ArgumentParser, name: str, fill_none=False):
         group = parser.add_argument_group(name)
         for key, value in vars(self).items():
             shorthand = False
@@ -28,12 +30,16 @@ class ParamGroup:
                 shorthand = True
                 key = key[1:]
             t = type(value)
-            value = value if not fill_none else None 
+            value = value if not fill_none else None
             if shorthand:
                 if t == bool:
-                    group.add_argument("--" + key, ("-" + key[0:1]), default=value, action="store_true")
+                    group.add_argument(
+                        "--" + key, ("-" + key[0:1]), default=value, action="store_true"
+                    )
                 else:
-                    group.add_argument("--" + key, ("-" + key[0:1]), default=value, type=t)
+                    group.add_argument(
+                        "--" + key, ("-" + key[0:1]), default=value, type=t
+                    )
             else:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
@@ -41,7 +47,9 @@ class ParamGroup:
                     type_to_use = int
                     if len(value) > 0:
                         type_to_use = type(value[0])
-                    group.add_argument("--" + key, default=value, nargs="+", type=type_to_use)
+                    group.add_argument(
+                        "--" + key, default=value, nargs="+", type=type_to_use
+                    )
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 
@@ -52,7 +60,8 @@ class ParamGroup:
                 setattr(group, arg[0], arg[1])
         return group
 
-class AuxiliaryParams(ParamGroup): 
+
+class AuxiliaryParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
         self.debug_from = -1
         self.detect_anomaly = False
@@ -65,14 +74,15 @@ class AuxiliaryParams(ParamGroup):
         self.log_folder = "/tmp/gaussian_splatting"
         self.log_interval = 250
         self.llffhold = 8
-        self.backend = "diff"
+        self.backend = "gsplat"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
         g = super().extract(args)
         return g
 
-class ModelParams(ParamGroup): 
+
+class ModelParams(ParamGroup):
     def __init__(self, parser, sentinel=False):
         self.sh_degree = 3
         self._source_path = ""
@@ -87,10 +97,12 @@ class ModelParams(ParamGroup):
         g.source_path = os.path.abspath(g.source_path)
         return g
 
+
 class PipelineParams(ParamGroup):
     def __init__(self, parser):
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")
+
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
@@ -117,8 +129,9 @@ class OptimizationParams(ParamGroup):
         self.opacity_reset_until_iter = -1
         self.random_background = False
         self.min_opacity = 0.005
-        self.lr_scale_mode = "sqrt" # can be "linear", "sqrt", or "accumu"
+        self.lr_scale_mode = "sqrt"  # can be "linear", "sqrt", or "accumu"
         super().__init__(parser, "Optimization Parameters")
+
 
 class DistributionParams(ParamGroup):
     def __init__(self, parser):
@@ -133,49 +146,62 @@ class DistributionParams(ParamGroup):
 
         # Distribution for 3DGS-wise workloads.
         self.gaussians_distribution = True
-        self.redistribute_gaussians_mode = "random_redistribute" # "no_redistribute"
-        self.redistribute_gaussians_frequency = 10 # redistribution frequency for 3DGS storage location.
-        self.redistribute_gaussians_threshold = 1.1 # threshold to apply redistribution for 3DGS storage location
-        self.sync_grad_mode = "dense" # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. Only use when gaussians_distribution is False.
-        self.grad_normalization_mode = "none" # "divide_by_visible_count", "square_multiply_by_visible_count", "multiply_by_visible_count", "none" gradient normalization mode. 
+        self.redistribute_gaussians_mode = "random_redistribute"  # "no_redistribute"
+        self.redistribute_gaussians_frequency = (
+            10  # redistribution frequency for 3DGS storage location.
+        )
+        self.redistribute_gaussians_threshold = (
+            1.1  # threshold to apply redistribution for 3DGS storage location
+        )
+        self.sync_grad_mode = "dense"  # "dense", "sparse", "fused_dense", "fused_sparse" gradient synchronization. Only use when gaussians_distribution is False.
+        self.grad_normalization_mode = "none"  # "divide_by_visible_count", "square_multiply_by_visible_count", "multiply_by_visible_count", "none" gradient normalization mode.
 
         # Dataset and Model save
-        self.bsz = 1 # batch size.
-        self.distributed_dataset_storage = True # if True, we store dataset only on rank 0 and broadcast to other ranks.
+        self.bsz = 1  # batch size.
+        self.distributed_dataset_storage = True  # if True, we store dataset only on rank 0 and broadcast to other ranks.
         self.distributed_save = True
         self.local_sampling = True
-        self.preload_dataset_to_gpu = False # By default, we do not preload dataset to GPU.
-        self.preload_dataset_to_gpu_threshold = 10 # unit is GB, by default 10GB memory limit for dataset.
+        self.preload_dataset_to_gpu = (
+            False  # By default, we do not preload dataset to GPU.
+        )
+        self.preload_dataset_to_gpu_threshold = (
+            10  # unit is GB, by default 10GB memory limit for dataset.
+        )
         self.multiprocesses_image_loading = False
         self.num_train_cameras = -1
         self.num_test_cameras = -1
 
         super().__init__(parser, "Distribution Parameters")
 
+
 class BenchmarkParams(ParamGroup):
     def __init__(self, parser):
-        self.enable_timer = False # Log running time from python side.
-        self.end2end_time = True # Log end2end training time.
-        self.zhx_time = False # Log running time from gpu side.
-        self.check_gpu_memory = False # check gpu memory usage.
-        self.check_cpu_memory = False # check cpu memory usage.
+        self.enable_timer = False  # Log running time from python side.
+        self.end2end_time = True  # Log end2end training time.
+        self.zhx_time = False  # Log running time from gpu side.
+        self.check_gpu_memory = False  # check gpu memory usage.
+        self.check_cpu_memory = False  # check cpu memory usage.
         self.log_memory_summary = False
 
         super().__init__(parser, "Benchmark Parameters")
 
+
 class DebugParams(ParamGroup):
     def __init__(self, parser):
-        self.zhx_debug = False # log debug information that zhx needs.
-        self.stop_update_param = False # stop updating parameters. No optimizer.step() will be called.
-        self.time_image_loading = False # Log image loading time.
+        self.zhx_debug = False  # log debug information that zhx needs.
+        self.stop_update_param = (
+            False  # stop updating parameters. No optimizer.step() will be called.
+        )
+        self.time_image_loading = False  # Log image loading time.
 
-        self.nsys_profile = False # profile with nsys.
-        self.drop_initial_3dgs_p = 0.0 # profile with nsys.
+        self.nsys_profile = False  # profile with nsys.
+        self.drop_initial_3dgs_p = 0.0  # profile with nsys.
         self.drop_duplicate_gaussians_coeff = 1.0
 
         super().__init__(parser, "Debug Parameters")
 
-def get_combined_args(parser : ArgumentParser, auto_find_cfg_args_path=False):
+
+def get_combined_args(parser: ArgumentParser, auto_find_cfg_args_path=False):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"
     args_cmdline = parser.parse_args(cmdlne_string)
@@ -184,7 +210,9 @@ def get_combined_args(parser : ArgumentParser, auto_find_cfg_args_path=False):
         if auto_find_cfg_args_path:
             if hasattr(args_cmdline, "load_ply_path"):
                 path = args_cmdline.load_ply_path
-                while not os.path.exists(os.path.join(path, "cfg_args")) and os.path.exists(path):
+                while not os.path.exists(
+                    os.path.join(path, "cfg_args")
+                ) and os.path.exists(path):
                     path = os.path.join(path, "..")
                 cfgfilepath = os.path.join(path, "cfg_args")
         else:
@@ -199,24 +227,40 @@ def get_combined_args(parser : ArgumentParser, auto_find_cfg_args_path=False):
     args_cfgfile = eval(cfgfile_string)
 
     merged_dict = vars(args_cfgfile).copy()
-    for k,v in vars(args_cmdline).items():
+    for k, v in vars(args_cmdline).items():
         if v != None:
             merged_dict[k] = v
     return Namespace(**merged_dict)
 
+
 def print_all_args(args, log_file):
     # print all arguments in a readable format, each argument in a line.
     log_file.write("arguments:\n")
-    log_file.write("-"*30+"\n")
+    log_file.write("-" * 30 + "\n")
     for arg in vars(args):
         log_file.write("{}: {}\n".format(arg, getattr(args, arg)))
-    log_file.write("-"*30+"\n\n")
-    log_file.write("world_size: " + str(utils.WORLD_SIZE)+" rank: " + str(utils.GLOBAL_RANK) + "; bsz: " + str(args.bsz)+"\n")
+    log_file.write("-" * 30 + "\n\n")
+    log_file.write(
+        "world_size: "
+        + str(utils.WORLD_SIZE)
+        + " rank: "
+        + str(utils.GLOBAL_RANK)
+        + "; bsz: "
+        + str(args.bsz)
+        + "\n"
+    )
 
     # Make sure block size match between python and cuda code.
-    cuda_block_x, cuda_block_y, one_dim_block_size = diff_gaussian_rasterization._C.get_block_XY()
+    cuda_block_x, cuda_block_y, one_dim_block_size = (
+        diff_gaussian_rasterization._C.get_block_XY()
+    )
     utils.set_block_size(cuda_block_x, cuda_block_y, one_dim_block_size)
-    log_file.write("cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(cuda_block_x, cuda_block_y, one_dim_block_size))
+    log_file.write(
+        "cuda_block_x: {}; cuda_block_y: {}; one_dim_block_size: {};\n".format(
+            cuda_block_x, cuda_block_y, one_dim_block_size
+        )
+    )
+
 
 def find_latest_checkpoint(log_folder):
     checkpoint_folder = os.path.join(log_folder, "checkpoints")
@@ -226,6 +270,7 @@ def find_latest_checkpoint(log_folder):
             all_sub_folders.sort(key=lambda x: int(x), reverse=True)
             return os.path.join(checkpoint_folder, all_sub_folders[0])
     return ""
+
 
 def init_args(args):
 
@@ -237,7 +282,7 @@ def init_args(args):
 
     if args.auto_start_checkpoint:
         args.start_checkpoint = find_latest_checkpoint(args.log_folder)
-    
+
     if utils.DEFAULT_GROUP.size() == 1:
         args.gaussians_distribution = False
         args.image_distribution = False

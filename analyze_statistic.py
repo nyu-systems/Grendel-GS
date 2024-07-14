@@ -13,24 +13,25 @@ folder = None
 file_names = None
 num_render_file_names = None
 
+
 def delete_all_file_paths(file_paths):
     for file_path in file_paths:
         if os.path.exists(file_path):
             os.remove(file_path)
 
+
 def read_file(file_name, num_render_file_name=None):
     file_path = folder + file_name
 
     # get rk and ws
-    rk = int(file_name[file_name.find("rk=")+3])
-    ws = int(file_name[file_name.find("ws=")+3])
-    prefix = file_name[:file_name.find("ws=")]
+    rk = int(file_name[file_name.find("rk=") + 3])
+    ws = int(file_name[file_name.find("ws=") + 3])
+    prefix = file_name[: file_name.find("ws=")]
     print("rk: ", rk, "ws: ", ws)
 
-
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         file_contents = file.readlines()
-    
+
     # Function to parse each line and extract the statistic and its value
     def parse_line(line):
         # 10 preprocess time: 0.291950 ms
@@ -51,12 +52,14 @@ def read_file(file_name, num_render_file_name=None):
 
     for line in file_contents:
         if line.startswith("it="):
-            iteration = int(line[3:line.find(",")])
+            iteration = int(line[3 : line.find(",")])
             if iteration != last_iteration:
                 last_iteration = iteration
             else:
                 continue
-            stats_json.append({"iteration": iteration, "prefix": prefix, "rk": rk, "ws": ws})
+            stats_json.append(
+                {"iteration": iteration, "prefix": prefix, "rk": rk, "ws": ws}
+            )
             continue
 
         print(line)
@@ -67,16 +70,30 @@ def read_file(file_name, num_render_file_name=None):
 
     if num_render_file_name is not None:
 
-        with open(folder + num_render_file_name, 'r') as file:
+        with open(folder + num_render_file_name, "r") as file:
             num_render_file_contents = file.readlines()
 
         idx = 0
         for line in num_render_file_contents:
             # line format:`iteration: 251, num_local_tiles: 398, local_tiles_left_idx: 742, local_tiles_right_idx: 1139, last_local_num_rendered_end: 336199, local_num_rendered_end: 672398, num_rendered: 335791, num_rendered_from_distState: 335791`
             # extract iteration, num_local_tiles, num_rendered
-            iteration = int(line[line.find("iteration:")+len("iteration: "):line.find(",")])
-            num_local_tiles = int(line[line.find("num_local_tiles:")+len("num_local_tiles: "):line.find(", local_tiles_left_idx:")])
-            num_rendered = int(line[line.find("num_rendered:")+len("num_rendered: "):line.find(", num_rendered_from_distState:")])
+            iteration = int(
+                line[line.find("iteration:") + len("iteration: ") : line.find(",")]
+            )
+            num_local_tiles = int(
+                line[
+                    line.find("num_local_tiles:")
+                    + len("num_local_tiles: ") : line.find(", local_tiles_left_idx:")
+                ]
+            )
+            num_rendered = int(
+                line[
+                    line.find("num_rendered:")
+                    + len("num_rendered: ") : line.find(
+                        ", num_rendered_from_distState:"
+                    )
+                ]
+            )
             assert iteration == stats_json[idx]["iteration"]
             stats_json[idx]["num_local_tiles"] = num_local_tiles
             stats_json[idx]["num_rendered"] = num_rendered
@@ -87,24 +104,28 @@ def read_file(file_name, num_render_file_name=None):
     print(json_data)
     return stats_json
 
+
 def extract_stats_from_file():
     file2stats = {}
-    assert len(file_names) == len(num_render_file_names), "file_names and num_render_file_names should have same length"
+    assert len(file_names) == len(
+        num_render_file_names
+    ), "file_names and num_render_file_names should have same length"
     for file_name, num_render_file_name in zip(file_names, num_render_file_names):
 
         if not os.path.exists(folder + file_name):
-            continue        
+            continue
 
         file2stats[file_name] = read_file(file_name, num_render_file_name)
 
         # save in file
-        with open(folder + file_name.removesuffix(".log") + ".json", 'w') as f:
+        with open(folder + file_name.removesuffix(".log") + ".json", "w") as f:
             json.dump(file2stats[file_name], f, indent=4)
+
 
 def draw_graph(file_name, iteration):
     file_path = folder + file_name
     stats = []
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         stats = json.load(f)
 
     data = None
@@ -126,13 +147,14 @@ def draw_graph(file_name, iteration):
     labels = data.keys()
     sizes = data.values()
     # make character smaller
-    plt.rc('font', size=6)
+    plt.rc("font", size=6)
     fig1, ax1 = plt.subplots()
-    ax1.pie(sizes, labels=labels, autopct='%1.1f%%', shadow=True)
-    ax1.axis('equal')
+    ax1.pie(sizes, labels=labels, autopct="%1.1f%%", shadow=True)
+    ax1.axis("equal")
     plt.title(file_name)
     fig_name = file_name.split(".json")[0] + "_it=" + str(iteration) + ".png"
     plt.savefig(folder + fig_name)
+
 
 def extract_excel(iteration, provided_file_names=None):
     # extract frame from all data
@@ -145,7 +167,7 @@ def extract_excel(iteration, provided_file_names=None):
             continue
         file_path = folder + file_name.removesuffix(".log") + ".json"
         stats = []
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             stats = json.load(f)
 
         data = None
@@ -171,9 +193,7 @@ def extract_excel(iteration, provided_file_names=None):
             df = pd.concat([df, pd.DataFrame([data_for_save])], ignore_index=True)
             # df = df.append(data, ignore_index=True)
 
-
-    df.to_csv(folder + "time_stat_it="+ str(iteration) +".csv", index=False)
-
+    df.to_csv(folder + "time_stat_it=" + str(iteration) + ".csv", index=False)
 
 
 def extract_stats_from_file_bench_num_tiles():
@@ -191,7 +211,7 @@ def extract_stats_from_file_bench_num_tiles():
     x = os.listdir(base_folder)
     # filter out non-folders
     x = [t for t in x if os.path.isdir(base_folder + t)]
-    x.sort( key=lambda x: int(x) )
+    x.sort(key=lambda x: int(x))
     iterations = [1, 301, 601, 901]
     for t in x:
         folder = base_folder + t + "/"
@@ -202,13 +222,12 @@ def extract_stats_from_file_bench_num_tiles():
 
     stats = None
     try:
-        # load 
+        # load
         path = "experiments/n_contributors_3/n_contrib_ws=1_rk=0.json"
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             stats = json.load(f)
     except:
         pass
-    
 
     # merge all csv together
     for i in iterations:
@@ -226,13 +245,29 @@ def extract_stats_from_file_bench_num_tiles():
 
         for t in x:
             folder = base_folder + t + "/"
-            df_t = pd.read_csv(folder + "time_stat_it="+ str(i) +".csv")
+            df_t = pd.read_csv(folder + "time_stat_it=" + str(i) + ".csv")
             # add a columne for tile size
             df_t["tile_size"] = t
-            df_t["b10 render time/tile_size*100"] = float(df_t.loc[0, "b10 render time"]) / float(df_t.loc[0, "tile_size"])*100
-            df_t["b10 render time/num_rendered*100000"] = float(df_t.loc[0, "b10 render time"]) / float(df_t.loc[0, "num_rendered"])*100000
-            df_t["70 render time/tile_size*100"] = float(df_t.loc[0, "70 render time"]) / float(df_t.loc[0, "tile_size"])*100
-            df_t["70 render time/num_rendered*100000"] = float(df_t.loc[0, "70 render time"]) / float(df_t.loc[0, "num_rendered"])*100000
+            df_t["b10 render time/tile_size*100"] = (
+                float(df_t.loc[0, "b10 render time"])
+                / float(df_t.loc[0, "tile_size"])
+                * 100
+            )
+            df_t["b10 render time/num_rendered*100000"] = (
+                float(df_t.loc[0, "b10 render time"])
+                / float(df_t.loc[0, "num_rendered"])
+                * 100000
+            )
+            df_t["70 render time/tile_size*100"] = (
+                float(df_t.loc[0, "70 render time"])
+                / float(df_t.loc[0, "tile_size"])
+                * 100
+            )
+            df_t["70 render time/num_rendered*100000"] = (
+                float(df_t.loc[0, "70 render time"])
+                / float(df_t.loc[0, "num_rendered"])
+                * 100000
+            )
 
             if df is None:
                 df = df_t
@@ -246,11 +281,17 @@ def extract_stats_from_file_bench_num_tiles():
         df["new_tile:70 render time"] = 0.0
 
         for k in range(1, len(df)):
-            df.loc[k, "new_tile:num_rendered"] = df.loc[k, "num_rendered"] - df.loc[k-1, "num_rendered"]
-            df.loc[k, "new_tile:b10 render time"] = df.loc[k, "b10 render time"] - df.loc[k-1, "b10 render time"]
-            df.loc[k, "new_tile:70 render time"] = df.loc[k, "70 render time"] - df.loc[k-1, "70 render time"]
+            df.loc[k, "new_tile:num_rendered"] = (
+                df.loc[k, "num_rendered"] - df.loc[k - 1, "num_rendered"]
+            )
+            df.loc[k, "new_tile:b10 render time"] = (
+                df.loc[k, "b10 render time"] - df.loc[k - 1, "b10 render time"]
+            )
+            df.loc[k, "new_tile:70 render time"] = (
+                df.loc[k, "70 render time"] - df.loc[k - 1, "70 render time"]
+            )
 
-            tile_range = (int(df.loc[k-1, "tile_size"]), int(df.loc[k, "tile_size"]))
+            tile_range = (int(df.loc[k - 1, "tile_size"]), int(df.loc[k, "tile_size"]))
             num_real_contributed = 0
             ave_contrib_ratio = 0
             if stats is not None:
@@ -258,17 +299,18 @@ def extract_stats_from_file_bench_num_tiles():
                     if data["iteration"] == str(i) and data["mode"] == "local":
                         tile_str = data["tile"]
                         tile_xy = (int(tile_str[0]), int(tile_str[1]))
-                        tile_id = tile_xy[0]*62 + tile_xy[1]
+                        tile_id = tile_xy[0] * 62 + tile_xy[1]
                         if tile_range[0] <= tile_id and tile_id < tile_range[1]:
                             num_real_contributed += float(data["local_real_n_contrib"])
                             ave_contrib_ratio += float(data["contrib_ratio"])
-            
+
             ave_contrib_ratio = ave_contrib_ratio / float(tile_range[1] - tile_range[0])
             df.loc[k, "new_tile:num_real_contributed"] = num_real_contributed
             df.loc[k, "new_tile:ave_contrib_ratio"] = ave_contrib_ratio
             # print("tile_range: ", tile_range, "num_real_contributed: ", num_real_contributed, "ave_contrib_ratio: ", ave_contrib_ratio)
 
-        df.to_csv(base_folder + "time_stat_it="+ str(i) +".csv", index=False)
+        df.to_csv(base_folder + "time_stat_it=" + str(i) + ".csv", index=False)
+
 
 def gpu_timer_0():
     global folder
@@ -290,12 +332,10 @@ def gpu_timer_0():
     extract_excel(301)
 
 
-
-
-
 ############################################################################################################
 # New tools for analyzing: extract stats from python time log
 ############################################################################################################
+
 
 def extract_data_from_list_by_iteration(data_list, iteration):
     for stat in data_list:
@@ -303,14 +343,15 @@ def extract_data_from_list_by_iteration(data_list, iteration):
             return stat
     return None
 
+
 def get_suffix_in_folder(folder):
 
     if not os.path.exists(folder):
         return None
-    
+
     if not folder.endswith("/"):
         folder += "/"
-    
+
     # suffix_list_candidates = [
     #     "ws=1_rk=0",
     #     "ws=2_rk=0",
@@ -321,10 +362,10 @@ def get_suffix_in_folder(folder):
     #     "ws=4_rk=3",
     # ]
     suffix_list_candidates = []
-    for ws in [1,2,4,8,16,32]:
+    for ws in [1, 2, 4, 8, 16, 32]:
         for rk in range(ws):
             suffix_list_candidates.append(f"ws={ws}_rk={rk}")
-    
+
     suffix_list = []
 
     for suffix in suffix_list_candidates:
@@ -334,11 +375,12 @@ def get_suffix_in_folder(folder):
 
     return suffix_list
 
+
 def get_end2end_stats(file_path):
     if not os.path.exists(file_path):
         return None
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
 
     # end2end total_time: 5473.110746 ms, iterations: 30000, throughput 5.48 it/s
@@ -346,17 +388,19 @@ def get_end2end_stats(file_path):
 
     line_for_time = lines[-2]
     line_for_memory = lines[-1]
-    
+
     if not line_for_time.startswith("end2end total_time"):
         return {"expe_name": file_path.strip("experiments")}
-    
+
     print("line_for_time: ", line_for_time)
     print("line_for_memory: ", line_for_memory)
     stats = {}
     stats["expe_name"] = file_path.strip("experiments")
     stats["total_time"] = float(line_for_time.split("total_time: ")[1].split(" ms")[0])
     stats["throughput"] = float(line_for_time.split("throughput ")[1].split(" it/s")[0])
-    stats["max_memory_usage"] = float(line_for_memory.split("Max Memory usage: ")[1].split(" GB")[0])
+    stats["max_memory_usage"] = float(
+        line_for_memory.split("Max Memory usage: ")[1].split(" GB")[0]
+    )
     # round to 3 digits
     stats["total_time"] = round(stats["total_time"], 3)
     stats["throughput"] = round(stats["throughput"], 3)
@@ -365,19 +409,18 @@ def get_end2end_stats(file_path):
     return stats
 
 
-
-
-
-def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):# mode = "python" or "gpu"
+def extract_time_excel_from_json(
+    folder, file_paths, iteration, mode="python"
+):  # mode = "python" or "gpu"
     # extract frame from all data
     df = None
     for file_path in file_paths:
         if not os.path.exists(file_path):
             continue
         stats = []
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             stats = json.load(f)
-        
+
         # gpu_time_ws=2_rk=0.json, python_time_ws=2_rk=0.log
         ws = int(file_path.split("/")[-1].split("_")[2].split("=")[1])
         rk = int(file_path.split("/")[-1].split("_")[3].split("=")[1].split(".")[0])
@@ -406,7 +449,8 @@ def extract_time_excel_from_json(folder, file_paths, iteration, mode="python"):#
         print("No data to save in csv.")
         return
     print("extract_time_excel_from_json at iteration: ", iteration)
-    df.to_csv(folder + f"{mode}_time_it="+ str(iteration) +".csv", index=False)
+    df.to_csv(folder + f"{mode}_time_it=" + str(iteration) + ".csv", index=False)
+
 
 def merge_csv_which_have_same_columns(file_paths, output_file_path):
     # add another column for file_path
@@ -427,6 +471,7 @@ def merge_csv_which_have_same_columns(file_paths, output_file_path):
         return
     df.to_csv(output_file_path, index=False)
 
+
 # iter 1001, TimeFor 'forward': 3.405571 ms
 # iter 1001, TimeFor 'image_allreduce': 0.006914 ms
 # iter 1001, TimeFor 'loss': 2.740145 ms
@@ -436,16 +481,21 @@ def merge_csv_which_have_same_columns(file_paths, output_file_path):
 def extract_json_from_python_time_log(file_path, load_genereated_json=False):
 
     file_name = file_path.split("/")[-1]
-    ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
+    ws, rk = (
+        file_name.split("_")[2].split("=")[1],
+        file_name.split("_")[3].split("=")[1].split(".")[0],
+    )
     ws, rk = int(ws), int(rk)
     # print(file_name, " wk: ", wk, "rk: ", rk)
 
-    if load_genereated_json and os.path.exists(file_path.removesuffix(".log") + ".json"):
-        print("load from file"+file_path.removesuffix(".log") + ".json")
-        with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    if load_genereated_json and os.path.exists(
+        file_path.removesuffix(".log") + ".json"
+    ):
+        print("load from file" + file_path.removesuffix(".log") + ".json")
+        with open(file_path.removesuffix(".log") + ".json", "r") as f:
             return json.load(f)
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
     stats = []
     for line in lines:
@@ -461,11 +511,12 @@ def extract_json_from_python_time_log(file_path, load_genereated_json=False):
             stats[-1][key] = time
 
     # save in file
-    with open(file_path.removesuffix(".log") + ".json", 'w') as f:
+    with open(file_path.removesuffix(".log") + ".json", "w") as f:
         json.dump(stats, f, indent=4)
-    
-    print("return data from file"+file_path.removesuffix(".log") + ".json")
+
+    print("return data from file" + file_path.removesuffix(".log") + ".json")
     return stats
+
 
 def extract_3dgs_count_from_python_log(folder):
     suffixes = get_suffix_in_folder(folder)
@@ -475,7 +526,7 @@ def extract_3dgs_count_from_python_log(folder):
     for rk, suffix in enumerate(suffixes):
         file = f"python_{suffix}.log"
         file_path = folder + file
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             lines = f.readlines()
         stats[f"n_3dgs_rk={rk}"] = []
         for line in lines:
@@ -498,7 +549,7 @@ def extract_3dgs_count_from_python_log(folder):
 
             if "Now num of 3dgs:" in line:
                 # example
-                # iteration[600,601) densify_and_prune. Now num of 3dgs: 183910. Now Memory usage: 0.23658323287963867 GB. Max Memory usage: 0.399813175201416 GB. 
+                # iteration[600,601) densify_and_prune. Now num of 3dgs: 183910. Now Memory usage: 0.23658323287963867 GB. Max Memory usage: 0.399813175201416 GB.
                 iteration = int(line.split("iteration[")[1].split(",")[0])
                 n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
                 if rk == 0:
@@ -506,16 +557,17 @@ def extract_3dgs_count_from_python_log(folder):
                 stats[f"n_3dgs_rk={rk}"].append(n_3dgs)
     return stats, iterations
 
+
 def extract_comm_count_from_i2jsend_log(folder):
     expe_name = folder.split("/")[-2]
-    file_path = folder+"i2jsend_ws=4_rk=0.txt"
-    with open(file_path, 'r') as f:
+    file_path = folder + "i2jsend_ws=4_rk=0.txt"
+    with open(file_path, "r") as f:
         lines = f.readlines()
     stats = {"total_comm_count": [], "i2jsend": []}
     iterations = []
     for line in lines:
-        #example
-        #iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
+        # example
+        # iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
         if line.startswith("iteration"):
             parts = line.split(":")
             iteration = int(parts[0].split(" ")[1])
@@ -524,22 +576,31 @@ def extract_comm_count_from_i2jsend_log(folder):
             i2jsend_json_data = json.loads(parts[1])
             # stats["i2jsend"].append(i2jsend_json_data)
             stats["total_comm_count"].append(
-                sum([sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i] for i in range(len(i2jsend_json_data))])
+                sum(
+                    [
+                        sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i]
+                        for i in range(len(i2jsend_json_data))
+                    ]
+                )
             )
     return stats, iterations
+
 
 def extract_json_from_i2jsend_log(file_path):
 
     file_name = file_path.split("/")[-1]
-    ws, rk = file_name.split("_")[1].split("=")[1], file_name.split("_")[2].split("=")[1].split(".")[0]
+    ws, rk = (
+        file_name.split("_")[1].split("=")[1],
+        file_name.split("_")[2].split("=")[1].split(".")[0],
+    )
     ws, rk = int(ws), int(rk)
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
     stats = []
     for line in lines:
-        #example
-        #iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
+        # example
+        # iteration 851:[[511, 6817, 22924, 10372], [534, 5954, 24520, 10415], [1525, 7140, 15090, 11255], [945, 4812, 17584, 9013]]
         if line.startswith("iteration"):
             parts = line.split(":")
             iteration = int(parts[0].split(" ")[1])
@@ -548,16 +609,31 @@ def extract_json_from_i2jsend_log(file_path):
                 stats.append({"iteration": iteration, "ws": ws})
             i2jsend_json_data = json.loads(parts[1])
             stats[-1]["i2jsend"] = i2jsend_json_data
-            stats[-1]["total_comm_count"] = sum([sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i] for i in range(len(i2jsend_json_data))])
+            stats[-1]["total_comm_count"] = sum(
+                [
+                    sum(i2jsend_json_data[i]) - i2jsend_json_data[i][i]
+                    for i in range(len(i2jsend_json_data))
+                ]
+            )
 
     # save in file
-    with open(file_path.removesuffix(".txt") + ".json", 'w') as f:
+    with open(file_path.removesuffix(".txt") + ".json", "w") as f:
         json.dump(stats, f, indent=4)
     return stats
 
-def extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list, all2all_stats, process_iterations):
+
+def extract_csv_from_forward_all_to_all_communication_json(
+    folder, time_data, suffix_list, all2all_stats, process_iterations
+):
     # save results in csv: i2jsend.csv
-    columns = ["iteration", "ws", "rk", "send_volume", "recv_volume", "forward_all_to_all_communication"]
+    columns = [
+        "iteration",
+        "ws",
+        "rk",
+        "send_volume",
+        "recv_volume",
+        "forward_all_to_all_communication",
+    ]
     df = pd.DataFrame(columns=columns)
 
     ws = int(suffix_list[0].split("_")[0].split("=")[1])
@@ -577,7 +653,7 @@ def extract_csv_from_forward_all_to_all_communication_json(folder, time_data, su
         recv_volume = np.sum(i2jsend, axis=0)
 
         # print experiment name and iteration
-        with open(folder + f"i2jsend_ws={ws}.txt", 'a') as f:
+        with open(folder + f"i2jsend_ws={ws}.txt", "a") as f:
             f.write(f"experiment: {folder}\n")
             f.write(f"iteration: {iteration}\n")
             f.write(f"send_volume: {send_volume}\n")
@@ -590,31 +666,38 @@ def extract_csv_from_forward_all_to_all_communication_json(folder, time_data, su
             rk = int(suffix.split("_")[1].split("=")[1])
             assert rk == i, "rk should be the same as index!"
             assert ws == this_ws, "ws should be the same!"
-            df = df._append({
-                "iteration": int(iteration),
-                "ws": int(ws),
-                "rk": int(rk),
-                "send_volume": int(send_volume[rk]),
-                "recv_volume": int(recv_volume[rk]),
-                "forward_all_to_all_communication": python_time_rks[i],
-            }, ignore_index=True)
+            df = df._append(
+                {
+                    "iteration": int(iteration),
+                    "ws": int(ws),
+                    "rk": int(rk),
+                    "send_volume": int(send_volume[rk]),
+                    "recv_volume": int(recv_volume[rk]),
+                    "forward_all_to_all_communication": python_time_rks[i],
+                },
+                ignore_index=True,
+            )
         # append an empty row for better visualization
-        df = df._append({
-            "iteration": "",
-            "ws": "",
-            "rk": "",
-            "send_volume": "",
-            "recv_volume": "",
-            "forward_all_to_all_communication": "",
-        }, ignore_index=True)
+        df = df._append(
+            {
+                "iteration": "",
+                "ws": "",
+                "rk": "",
+                "send_volume": "",
+                "recv_volume": "",
+                "forward_all_to_all_communication": "",
+            },
+            ignore_index=True,
+        )
     # save in file
     df.to_csv(folder + f"i2jsend_ws={ws}.csv", index=False)
 
+
 def extract_memory_json_from_log(folder, file):
     file_path = folder + file
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
-    
+
     stats = []
     for line in lines:
         if "densify_and_prune. Now num of 3dgs:" in line:
@@ -622,20 +705,27 @@ def extract_memory_json_from_log(folder, file):
             # iteration 1000 densify_and_prune. Now num of 3dgs: 54539. Now Memory usage: 0.45931053161621094 GB. Max Memory usage: 4.580923080444336 GB.
             iteration = int(line.split("iteration ")[1].split(" ")[0])
             n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
-            now_memory_usage = float(line.split("Now Memory usage: ")[1].split(" GB")[0])
-            max_memory_usage = float(line.split("Max Memory usage: ")[1].split(" GB")[0])
-            stats.append({
-                "iteration": iteration,
-                "n_3dgs": n_3dgs,
-                "now_memory_usage": now_memory_usage,
-                "max_memory_usage": max_memory_usage,
-            })
+            now_memory_usage = float(
+                line.split("Now Memory usage: ")[1].split(" GB")[0]
+            )
+            max_memory_usage = float(
+                line.split("Max Memory usage: ")[1].split(" GB")[0]
+            )
+            stats.append(
+                {
+                    "iteration": iteration,
+                    "n_3dgs": n_3dgs,
+                    "now_memory_usage": now_memory_usage,
+                    "max_memory_usage": max_memory_usage,
+                }
+            )
 
     # save in file
-    memory_log_path = folder+file.removesuffix(".log") + "_mem.json"
-    with open(memory_log_path, 'w') as f:
+    memory_log_path = folder + file.removesuffix(".log") + "_mem.json"
+    with open(memory_log_path, "w") as f:
         json.dump(stats, f, indent=4)
     return stats
+
 
 def extract_all_memory_json_from_log(folder):
     files = [
@@ -653,23 +743,29 @@ def extract_all_memory_json_from_log(folder):
             stats.append(extract_memory_json_from_log(folder, file))
     return stats
 
+
 def extract_json_from_gpu_time_log(file_path, load_genereated_json=False):
-    
+
     file_name = file_path.split("/")[-1]
-    ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
+    ws, rk = (
+        file_name.split("_")[2].split("=")[1],
+        file_name.split("_")[3].split("=")[1].split(".")[0],
+    )
     ws, rk = int(ws), int(rk)
 
-    if load_genereated_json and os.path.exists(file_path.removesuffix(".log") + ".json"):
-        print("load from file"+file_path.removesuffix(".log") + ".json")
-        with open(file_path.removesuffix(".log") + ".json", 'r') as f:
+    if load_genereated_json and os.path.exists(
+        file_path.removesuffix(".log") + ".json"
+    ):
+        print("load from file" + file_path.removesuffix(".log") + ".json")
+        with open(file_path.removesuffix(".log") + ".json", "r") as f:
             return json.load(f)
 
     if not os.path.exists(file_path):
         return {}
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         file_contents = file.readlines()
-    
+
     # Function to parse each line and extract the statistic and its value
     def parse_line(line):
         # 10 preprocess time: 0.291950 ms
@@ -690,7 +786,7 @@ def extract_json_from_gpu_time_log(file_path, load_genereated_json=False):
 
     for line in file_contents:
         if line.startswith("it="):
-            iteration = int(line[3:line.find(",")])
+            iteration = int(line[3 : line.find(",")])
             if iteration != last_iteration:
                 last_iteration = iteration
             else:
@@ -703,12 +799,13 @@ def extract_json_from_gpu_time_log(file_path, load_genereated_json=False):
         if parsed_data:
             stat_name, stat_value = parsed_data
             stats_json[-1][stat_name] = stat_value
-    
+
     # save in file
-    with open(file_path.removesuffix(".log") + ".json", 'w') as f:
+    with open(file_path.removesuffix(".log") + ".json", "w") as f:
         json.dump(stats_json, f, indent=4)
-    print("return data from file"+file_path.removesuffix(".log") + ".json")
+    print("return data from file" + file_path.removesuffix(".log") + ".json")
     return stats_json
+
 
 def get_number_prefix(s):
     # the number may have multiple digits
@@ -718,7 +815,7 @@ def get_number_prefix(s):
     is_float = False
     for i in range(len(s)):
         if not s[i].isdigit():
-            if s[i] == "-" and s[i+1].isdigit():
+            if s[i] == "-" and s[i + 1].isdigit():
                 continue
             if s[i] == ".":
                 is_float = True
@@ -729,6 +826,7 @@ def get_number_prefix(s):
 
     assert False, "s should have a number prefix"
 
+
 def get_number_tuple_prefix(s):
     # the number may have multiple digits
     # example: s = "(0, 0)abc", return (0,0)
@@ -736,15 +834,18 @@ def get_number_tuple_prefix(s):
     left = s.find("(")
     right = s.find(")")
     assert left != -1 and right != -1, "s should have a number tuple prefix"
-    tuple_str = s[left+1:right]
+    tuple_str = s[left + 1 : right]
     tuple_str = tuple_str.split(",")
     assert len(tuple_str) == 2, "tuple_str should have 2 elements"
-    return (int(tuple_str[0].strip()), int(tuple_str[1].strip())), s[right+1:]
+    return (int(tuple_str[0].strip()), int(tuple_str[1].strip())), s[right + 1 :]
 
 
 def extract_json_from_n_contrib_log(file_path):
     file_name = file_path.split("/")[-1]
-    ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
+    ws, rk = (
+        file_name.split("_")[2].split("=")[1],
+        file_name.split("_")[3].split("=")[1].split(".")[0],
+    )
     ws, rk = int(ws), int(rk)
     print(file_name, " ws: ", ws, "rk: ", rk)
 
@@ -752,7 +853,7 @@ def extract_json_from_n_contrib_log(file_path):
     #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
     #         return json.load(f)
 
-    with open(file_path, 'r') as f:
+    with open(file_path, "r") as f:
         lines = f.readlines()
     stats = []
     last_iteration = None
@@ -782,15 +883,20 @@ def extract_json_from_n_contrib_log(file_path):
             tmp_line = tmp_line.strip(", ").removeprefix("num_rendered: ")
             num_rendered, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
-            tmp_line = tmp_line.strip(", ").removeprefix("global_ave_n_rendered_per_pix: ")
+            tmp_line = tmp_line.strip(", ").removeprefix(
+                "global_ave_n_rendered_per_pix: "
+            )
             global_ave_n_rendered_per_pix, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
-            tmp_line = tmp_line.strip(", ").removeprefix("global_ave_n_considered_per_pix: ")
+            tmp_line = tmp_line.strip(", ").removeprefix(
+                "global_ave_n_considered_per_pix: "
+            )
             global_ave_n_considered_per_pix, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
-            tmp_line = tmp_line.strip(", ").removeprefix("global_ave_n_contrib2loss_per_pix: ")
+            tmp_line = tmp_line.strip(", ").removeprefix(
+                "global_ave_n_contrib2loss_per_pix: "
+            )
             global_ave_n_contrib2loss_per_pix, tmp_line = get_number_prefix(tmp_line)
-
 
             assert iteration == last_iteration, "iteration should be the same"
             stats[-1]["stats"] = {
@@ -807,7 +913,7 @@ def extract_json_from_n_contrib_log(file_path):
 
             continue
 
-        # an example            
+        # an example
         # iteration: 1, tile: (0, 12), range: (1639, 1501), num_rendered_this_tile: 138, n_considered_per_pixel: 138.000000, n_contrib2loss_per_pixel: 77.437500, contrib2loss_ratio: 0.302490
         if line.startswith("iteration:"):
             tmp_line = line
@@ -834,7 +940,6 @@ def extract_json_from_n_contrib_log(file_path):
             tmp_line = tmp_line.strip(", ").removeprefix("contrib2loss_ratio: ")
             contrib2loss_ratio, tmp_line = get_number_prefix(tmp_line)
 
-
             if iteration != last_iteration:
                 stats.append({"iteration": iteration, "data": []})
                 last_iteration = iteration
@@ -851,24 +956,27 @@ def extract_json_from_n_contrib_log(file_path):
                 }
             )
 
-
     # save in file
-    with open(file_path.removesuffix(".log") + ".json", 'w') as f:
+    with open(file_path.removesuffix(".log") + ".json", "w") as f:
         json.dump(stats, f, indent=4)
     return stats
 
+
 def extract_json_from_num_rendered_log(file_path):
     file_name = file_path.split("/")[-1]
-    ws, rk = file_name.split("_")[2].split("=")[1], file_name.split("_")[3].split("=")[1].split(".")[0]
+    ws, rk = (
+        file_name.split("_")[2].split("=")[1],
+        file_name.split("_")[3].split("=")[1].split(".")[0],
+    )
     ws, rk = int(ws), int(rk)
 
     # if os.path.exists(file_path.removesuffix(".log") + ".json"):
     #     with open(file_path.removesuffix(".log") + ".json", 'r') as f:
     #         return json.load(f)
 
-    with open(file_path, 'r') as file:
-        file_contents = file.readlines()    
-    
+    with open(file_path, "r") as file:
+        file_contents = file.readlines()
+
     stats = []
     for line in file_contents:
         # example
@@ -890,7 +998,9 @@ def extract_json_from_num_rendered_log(file_path):
             tmp_line = tmp_line.strip(", ").removeprefix("local_tiles_right_idx: ")
             local_tiles_right_idx, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
-            tmp_line = tmp_line.strip(", ").removeprefix("last_local_num_rendered_end: ")
+            tmp_line = tmp_line.strip(", ").removeprefix(
+                "last_local_num_rendered_end: "
+            )
             last_local_num_rendered_end, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
             tmp_line = tmp_line.strip(", ").removeprefix("local_num_rendered_end: ")
@@ -899,30 +1009,35 @@ def extract_json_from_num_rendered_log(file_path):
             tmp_line = tmp_line.strip(", ").removeprefix("num_rendered: ")
             num_rendered, tmp_line = get_number_prefix(tmp_line)
             # print(tmp_line)
-            tmp_line = tmp_line.strip(", ").removeprefix("num_rendered_from_distState: ")
+            tmp_line = tmp_line.strip(", ").removeprefix(
+                "num_rendered_from_distState: "
+            )
             num_rendered_from_distState, tmp_line = get_number_prefix(tmp_line)
 
-            stats.append({
-                "iteration": iteration,
-                "num_local_tiles": num_local_tiles,
-                "local_tiles_left_idx": local_tiles_left_idx,
-                "local_tiles_right_idx": local_tiles_right_idx,
-                "last_local_num_rendered_end": last_local_num_rendered_end,
-                "local_num_rendered_end": local_num_rendered_end,
-                "num_rendered": num_rendered,
-                "num_rendered_from_distState": num_rendered_from_distState,
-            })
-    
+            stats.append(
+                {
+                    "iteration": iteration,
+                    "num_local_tiles": num_local_tiles,
+                    "local_tiles_left_idx": local_tiles_left_idx,
+                    "local_tiles_right_idx": local_tiles_right_idx,
+                    "last_local_num_rendered_end": last_local_num_rendered_end,
+                    "local_num_rendered_end": local_num_rendered_end,
+                    "num_rendered": num_rendered,
+                    "num_rendered_from_distState": num_rendered_from_distState,
+                }
+            )
+
     # save in file
-    with open(file_path.removesuffix(".log") + ".json", 'w') as f:
+    with open(file_path.removesuffix(".log") + ".json", "w") as f:
         json.dump(stats, f, indent=4)
-    
+
     return stats
 
 
 def extract_json_from_python_time_log_many_files():
     for file in file_names:
         extract_json_from_python_time_log(folder + file)
+
 
 def python_timer_0():
     global folder
@@ -944,6 +1059,7 @@ def python_timer_0():
     extract_json_from_python_time_log_many_files()
     extract_excel(301)
 
+
 def python_timer_1():
     global folder
     global file_names
@@ -963,6 +1079,7 @@ def python_timer_1():
 
     extract_json_from_python_time_log_many_files()
     extract_excel(301)
+
 
 def python_timer_sync_sparse_grad():
     global folder
@@ -988,6 +1105,7 @@ def python_timer_sync_sparse_grad():
     extract_excel(2001)
     extract_excel(2401)
     extract_excel(2801)
+
 
 def end2end_timer_0():
     global folder
@@ -1015,8 +1133,9 @@ def end2end_timer_0():
     extract_excel(2401)
     extract_excel(2801)
 
+
 def get_all_grad_sync_time(json_file_path):
-    with open(json_file_path, 'r') as f:
+    with open(json_file_path, "r") as f:
         stats = json.load(f)
     grad_sync_time = []
     iterations = []
@@ -1024,6 +1143,7 @@ def get_all_grad_sync_time(json_file_path):
         iterations.append(stat["iteration"])
         grad_sync_time.append(stat["sync_gradients"])
     return iterations, grad_sync_time
+
 
 def analyze_sparse_grad_speed_up():
     paths = [
@@ -1039,7 +1159,7 @@ def analyze_sparse_grad_speed_up():
         "experiments/sparse_grad_sync/python_time_ws=4_rk=0.json",
         "experiments/sparse_grad_sync/python_time_ws=4_rk=1.json",
         "experiments/sparse_grad_sync/python_time_ws=4_rk=2.json",
-        "experiments/sparse_grad_sync/python_time_ws=4_rk=3.json",        
+        "experiments/sparse_grad_sync/python_time_ws=4_rk=3.json",
     ]
     all_grad_sync_time = []
     iterations = []
@@ -1048,7 +1168,7 @@ def analyze_sparse_grad_speed_up():
         iterations, grad_sync_time = get_all_grad_sync_time(path)
         columes.append(path.removeprefix("experiments/").removesuffix(".json"))
         all_grad_sync_time.append(grad_sync_time)
-    
+
     # convert to data frame
     # each row is a iteration
     # each column is a json data
@@ -1060,16 +1180,46 @@ def analyze_sparse_grad_speed_up():
     for i in range(len(all_grad_sync_time)):
         # print length of each grad_sync_time
         print("len grad_sync_time: ", len(all_grad_sync_time[i]))
-        df[columes[i+1]] = all_grad_sync_time[i]
-        
-    df["end2end_timer_0/python_time_ws=2"] = df[["end2end_timer_0/python_time_ws=2_rk=0", "end2end_timer_0/python_time_ws=2_rk=1"]].max(axis=1)
-    df["end2end_timer_0/python_time_ws=4"] = df[["end2end_timer_0/python_time_ws=4_rk=0", "end2end_timer_0/python_time_ws=4_rk=1", "end2end_timer_0/python_time_ws=4_rk=2", "end2end_timer_0/python_time_ws=4_rk=3"]].max(axis=1)
-    df["sparse_grad_sync/python_time_ws=2"] = df[["sparse_grad_sync/python_time_ws=2_rk=0", "sparse_grad_sync/python_time_ws=2_rk=1"]].max(axis=1)
-    df["sparse_grad_sync/python_time_ws=4"] = df[["sparse_grad_sync/python_time_ws=4_rk=0", "sparse_grad_sync/python_time_ws=4_rk=1", "sparse_grad_sync/python_time_ws=4_rk=2", "sparse_grad_sync/python_time_ws=4_rk=3"]].max(axis=1)
-    df["speed_up_ws=2"] = df["sparse_grad_sync/python_time_ws=2"] / df["end2end_timer_0/python_time_ws=2"]
-    df["speed_up_ws=4"] = df["sparse_grad_sync/python_time_ws=4"] / df["end2end_timer_0/python_time_ws=4"]
+        df[columes[i + 1]] = all_grad_sync_time[i]
 
-    df.to_csv("experiments/sparse_grad_sync/compare_sparse_grad_sync_time.csv", index=False)
+    df["end2end_timer_0/python_time_ws=2"] = df[
+        [
+            "end2end_timer_0/python_time_ws=2_rk=0",
+            "end2end_timer_0/python_time_ws=2_rk=1",
+        ]
+    ].max(axis=1)
+    df["end2end_timer_0/python_time_ws=4"] = df[
+        [
+            "end2end_timer_0/python_time_ws=4_rk=0",
+            "end2end_timer_0/python_time_ws=4_rk=1",
+            "end2end_timer_0/python_time_ws=4_rk=2",
+            "end2end_timer_0/python_time_ws=4_rk=3",
+        ]
+    ].max(axis=1)
+    df["sparse_grad_sync/python_time_ws=2"] = df[
+        [
+            "sparse_grad_sync/python_time_ws=2_rk=0",
+            "sparse_grad_sync/python_time_ws=2_rk=1",
+        ]
+    ].max(axis=1)
+    df["sparse_grad_sync/python_time_ws=4"] = df[
+        [
+            "sparse_grad_sync/python_time_ws=4_rk=0",
+            "sparse_grad_sync/python_time_ws=4_rk=1",
+            "sparse_grad_sync/python_time_ws=4_rk=2",
+            "sparse_grad_sync/python_time_ws=4_rk=3",
+        ]
+    ].max(axis=1)
+    df["speed_up_ws=2"] = (
+        df["sparse_grad_sync/python_time_ws=2"] / df["end2end_timer_0/python_time_ws=2"]
+    )
+    df["speed_up_ws=4"] = (
+        df["sparse_grad_sync/python_time_ws=4"] / df["end2end_timer_0/python_time_ws=4"]
+    )
+
+    df.to_csv(
+        "experiments/sparse_grad_sync/compare_sparse_grad_sync_time.csv", index=False
+    )
 
     # output the average of colume: speed_up_ws=2 and speed_up_ws=4, discard the first 2 rows
     print("average time spent ratio=2: ", np.mean(df["speed_up_ws=2"][2:]))
@@ -1087,6 +1237,7 @@ def prepare_json(folder):
     python_time_json = extract_json_from_python_time_log(python_time_path)
     return n_contrib_json, gpu_time_json, num_rendered_json, python_time_json
 
+
 def bench_train_rows(folder):
     sub_folders = [x for x in os.listdir(folder) if os.path.isdir(folder + x)]
     sub_folders.sort(key=lambda x: int(x.split("_")[1]))
@@ -1095,14 +1246,21 @@ def bench_train_rows(folder):
     all_n_contrib_json = []
     for sub_folder in sub_folders:
         print("sub_folder: ", sub_folder)
-        n_contrib_json, gpu_time_json, num_rendered_json, python_time_json = prepare_json(folder + sub_folder)
+        n_contrib_json, gpu_time_json, num_rendered_json, python_time_json = (
+            prepare_json(folder + sub_folder)
+        )
 
         # merge all json
-        assert len(n_contrib_json) == len(gpu_time_json) == len(num_rendered_json) == len(python_time_json), "length of json should be the same"
+        assert (
+            len(n_contrib_json)
+            == len(gpu_time_json)
+            == len(num_rendered_json)
+            == len(python_time_json)
+        ), "length of json should be the same"
 
         all_gpu_time_json.append(gpu_time_json)
         all_n_contrib_json.append(n_contrib_json)
-    
+
     def get_statistics(stat_id, iteration):
         gpu_time_keys = []
         for key in all_gpu_time_json[0][stat_id].keys():
@@ -1110,8 +1268,15 @@ def bench_train_rows(folder):
                 continue
             gpu_time_keys.append(key)
 
-        n_contrib_keys = ["num_tiles", "num_pixels", "num_rendered", "global_ave_n_rendered_per_pix", "global_ave_n_considered_per_pix", "global_ave_n_contrib2loss_per_pix"]
-        
+        n_contrib_keys = [
+            "num_tiles",
+            "num_pixels",
+            "num_rendered",
+            "global_ave_n_rendered_per_pix",
+            "global_ave_n_considered_per_pix",
+            "global_ave_n_contrib2loss_per_pix",
+        ]
+
         columns = ["sub_folder"] + gpu_time_keys + n_contrib_keys
         df = pd.DataFrame(columns=columns)
         for i in range(len(sub_folders)):
@@ -1119,8 +1284,12 @@ def bench_train_rows(folder):
             gpu_time_json = all_gpu_time_json[i]
             n_contrib_json = all_n_contrib_json[i]
 
-            assert gpu_time_json[stat_id]["iteration"] == iteration, "iteration should be the same"
-            assert n_contrib_json[stat_id]["stats"]["iteration"] == iteration, "iteration should be the same"
+            assert (
+                gpu_time_json[stat_id]["iteration"] == iteration
+            ), "iteration should be the same"
+            assert (
+                n_contrib_json[stat_id]["stats"]["iteration"] == iteration
+            ), "iteration should be the same"
 
             row = {"sub_folder": sub_folder}
             for key in gpu_time_keys:
@@ -1128,7 +1297,7 @@ def bench_train_rows(folder):
             for key in n_contrib_keys:
                 row[key] = n_contrib_json[stat_id]["stats"][key]
             df = df._append(row, ignore_index=True)
-        
+
         df.to_csv(folder + f"statistics_{iteration}.csv", index=False)
 
     all_iterations = []
@@ -1136,7 +1305,7 @@ def bench_train_rows(folder):
         all_iterations.append(gpu_time_data["iteration"])
     print("all_iterations: ", all_iterations)
     for i, iteration in enumerate(all_iterations):
-        if i >=1:
+        if i >= 1:
             get_statistics(i, iteration)
 
 
@@ -1144,27 +1313,35 @@ def fvalue(x):
     # example: row_21_22_duplicategscnt_4
     # return 21*10000 + 22*100 + 4
     parts = x.split("_")
-    return int(parts[1])*10000 + int(parts[2])*100 + int(parts[4])
+    return int(parts[1]) * 10000 + int(parts[2]) * 100 + int(parts[4])
+
 
 def bench_sklearn_dataset(folder):
     sub_folders = [x for x in os.listdir(folder) if os.path.isdir(folder + x)]
     sub_folders.sort(key=lambda x: fvalue(x))
 
     # print("sub_folders: ", sub_folders)
-    print("len sub_folders: ", len(sub_folders)) # 2112 = 528*4
+    print("len sub_folders: ", len(sub_folders))  # 2112 = 528*4
 
     all_gpu_time_json = []
     all_n_contrib_json = []
     for sub_folder in sub_folders:
         print("sub_folder: ", sub_folder)
-        n_contrib_json, gpu_time_json, num_rendered_json, python_time_json = prepare_json(folder + sub_folder)
+        n_contrib_json, gpu_time_json, num_rendered_json, python_time_json = (
+            prepare_json(folder + sub_folder)
+        )
 
         # merge all json
-        assert len(n_contrib_json) == len(gpu_time_json) == len(num_rendered_json) == len(python_time_json), "length of json should be the same"
+        assert (
+            len(n_contrib_json)
+            == len(gpu_time_json)
+            == len(num_rendered_json)
+            == len(python_time_json)
+        ), "length of json should be the same"
 
         all_gpu_time_json.append(gpu_time_json)
         all_n_contrib_json.append(n_contrib_json)
-    
+
     def get_statistics(stat_id, iteration):
         gpu_time_keys = []
         for key in all_gpu_time_json[0][stat_id].keys():
@@ -1172,8 +1349,15 @@ def bench_sklearn_dataset(folder):
                 continue
             gpu_time_keys.append(key)
 
-        n_contrib_keys = ["num_tiles", "num_pixels", "num_rendered", "global_ave_n_rendered_per_pix", "global_ave_n_considered_per_pix", "global_ave_n_contrib2loss_per_pix"]
-        
+        n_contrib_keys = [
+            "num_tiles",
+            "num_pixels",
+            "num_rendered",
+            "global_ave_n_rendered_per_pix",
+            "global_ave_n_considered_per_pix",
+            "global_ave_n_contrib2loss_per_pix",
+        ]
+
         columns = ["sub_folder"] + gpu_time_keys + n_contrib_keys
         df = pd.DataFrame(columns=columns)
         for i in range(len(sub_folders)):
@@ -1181,8 +1365,12 @@ def bench_sklearn_dataset(folder):
             gpu_time_json = all_gpu_time_json[i]
             n_contrib_json = all_n_contrib_json[i]
 
-            assert gpu_time_json[stat_id]["iteration"] == iteration, "iteration should be the same"
-            assert n_contrib_json[stat_id]["stats"]["iteration"] == iteration, "iteration should be the same"
+            assert (
+                gpu_time_json[stat_id]["iteration"] == iteration
+            ), "iteration should be the same"
+            assert (
+                n_contrib_json[stat_id]["stats"]["iteration"] == iteration
+            ), "iteration should be the same"
 
             row = {"sub_folder": sub_folder}
             for key in gpu_time_keys:
@@ -1190,7 +1378,7 @@ def bench_sklearn_dataset(folder):
             for key in n_contrib_keys:
                 row[key] = n_contrib_json[stat_id]["stats"][key]
             df = df._append(row, ignore_index=True)
-        
+
         df.to_csv(folder + f"statistics_{iteration}.csv", index=False)
 
     all_iterations = []
@@ -1199,7 +1387,7 @@ def bench_sklearn_dataset(folder):
     # print("all_iterations: ", all_iterations)
     for i, iteration in enumerate(all_iterations):
         print("iteration: ", iteration)
-        if i >=1:
+        if i >= 1:
             get_statistics(i, iteration)
 
 
@@ -1244,12 +1432,13 @@ def div_stra_5_adjust(folder):
     extract_time_excel_from_json(folder, file_paths, 7, mode="python")
     extract_time_excel_from_json(folder, file_paths, 10, mode="python")
 
+
 def merge_csv_for_div_stra_5_adjust():
     folder1 = "experiments/div_stra_5_adjust_none/"
     folder2 = "experiments/div_stra_5_adjust_n_contrib/"
 
     file_paths = []
-    for iteration in [4,7,10]:
+    for iteration in [4, 7, 10]:
         file_paths += [
             folder1 + f"gpu_time_it={iteration}.csv",
             folder2 + f"gpu_time_it={iteration}.csv",
@@ -1258,7 +1447,7 @@ def merge_csv_for_div_stra_5_adjust():
     merge_csv_which_have_same_columns(file_paths, folder1 + f"merged_gpu_time.csv")
 
     file_paths = []
-    for iteration in [4,7,10]:
+    for iteration in [4, 7, 10]:
         file_paths += [
             folder1 + f"python_time_it={iteration}.csv",
             folder2 + f"python_time_it={iteration}.csv",
@@ -1311,6 +1500,7 @@ def memory_distribution_4(folder):
     extract_time_excel_from_json(folder, file_paths, 101, mode="python")
     extract_time_excel_from_json(folder, file_paths, 151, mode="python")
 
+
 def memory_distribution_4_no(folder):
     suffix_list = [
         "ws=2_rk=0",
@@ -1352,6 +1542,7 @@ def memory_distribution_4_no(folder):
     extract_time_excel_from_json(folder, file_paths, 101, mode="python")
     extract_time_excel_from_json(folder, file_paths, 151, mode="python")
 
+
 def memory_distribution_4_no_sep_render_ws1(folder):
     suffix_list = [
         "ws=1_rk=0",
@@ -1378,6 +1569,7 @@ def memory_distribution_4_no_sep_render_ws1(folder):
     extract_time_excel_from_json(folder, file_paths, 101, mode="python")
     extract_time_excel_from_json(folder, file_paths, 151, mode="python")
 
+
 def mem_dist_stats_3(folder):
     suffix_list = [
         "ws=4_rk=0",
@@ -1393,7 +1585,6 @@ def mem_dist_stats_3(folder):
         file_path = folder + f"python_time_{suffix}.log"
         python_time_json = extract_json_from_python_time_log(file_path)
         time_data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
-
 
     file_path = folder + "i2jsend_ws=4_rk=0.txt"
     stats = extract_json_from_i2jsend_log(file_path)
@@ -1427,21 +1618,27 @@ def mem_dist_stats_3(folder):
         # print("")
 
         for rk in range(4):
-            df = df._append({
-                "iteration": iteration,
-                "rk": rk,
-                "send_volume": send_volume[rk],
-                "recv_volume": recv_volume[rk],
-                "python_time": python_time_rks[rk],
-            }, ignore_index=True)
+            df = df._append(
+                {
+                    "iteration": iteration,
+                    "rk": rk,
+                    "send_volume": send_volume[rk],
+                    "recv_volume": recv_volume[rk],
+                    "python_time": python_time_rks[rk],
+                },
+                ignore_index=True,
+            )
         # append an empty row for better visualization
-        df = df._append({
-            "iteration": "",
-            "rk": "",
-            "send_volume": "",
-            "recv_volume": "",
-            "python_time": "",
-        }, ignore_index=True)
+        df = df._append(
+            {
+                "iteration": "",
+                "rk": "",
+                "send_volume": "",
+                "recv_volume": "",
+                "python_time": "",
+            },
+            ignore_index=True,
+        )
     # save in file
     df.to_csv(folder + "i2jsend.csv", index=False)
 
@@ -1467,7 +1664,13 @@ def mem_dist_stats_4(folder):
     stats = extract_json_from_i2jsend_log(file_path)
 
     # save results in csv: i2jsend.csv
-    columns = ["iteration", "rk", "send_volume", "recv_volume", "forward_all_to_all_communication"]
+    columns = [
+        "iteration",
+        "rk",
+        "send_volume",
+        "recv_volume",
+        "forward_all_to_all_communication",
+    ]
     df = pd.DataFrame(columns=columns)
 
     # the following code is only for ws=4
@@ -1497,21 +1700,27 @@ def mem_dist_stats_4(folder):
         print("")
 
         for rk in range(4):
-            df = df._append({
-                "iteration": int(iteration),
-                "rk": int(rk),
-                "send_volume": int(send_volume[rk]),
-                "recv_volume": int(recv_volume[rk]),
-                "forward_all_to_all_communication": python_time_rks[rk],
-            }, ignore_index=True)
+            df = df._append(
+                {
+                    "iteration": int(iteration),
+                    "rk": int(rk),
+                    "send_volume": int(send_volume[rk]),
+                    "recv_volume": int(recv_volume[rk]),
+                    "forward_all_to_all_communication": python_time_rks[rk],
+                },
+                ignore_index=True,
+            )
         # append an empty row for better visualization
-        df = df._append({
-            "iteration": "",
-            "rk": "",
-            "send_volume": "",
-            "recv_volume": "",
-            "forward_all_to_all_communication": "",
-        }, ignore_index=True)
+        df = df._append(
+            {
+                "iteration": "",
+                "rk": "",
+                "send_volume": "",
+                "recv_volume": "",
+                "forward_all_to_all_communication": "",
+            },
+            ignore_index=True,
+        )
     # save in file
     df.to_csv(folder + "i2jsend.csv", index=False)
 
@@ -1562,9 +1771,13 @@ def mem_dist_stats_4k_garden_2(folder):
     if os.path.exists(folder + f"i2jsend_ws=2.txt"):
         os.remove(folder + f"i2jsend_ws=2.txt")
     stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=4_rk=0.txt")
-    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[3:], stats, process_iterations)
+    extract_csv_from_forward_all_to_all_communication_json(
+        folder, time_data, suffix_list[3:], stats, process_iterations
+    )
     stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=2_rk=0.txt")
-    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[1:3], stats, process_iterations)    
+    extract_csv_from_forward_all_to_all_communication_json(
+        folder, time_data, suffix_list[1:3], stats, process_iterations
+    )
 
     # get time csv
     file_paths = [
@@ -1592,6 +1805,7 @@ def mem_dist_stats_4k_garden_2(folder):
 
     extract_all_memory_json_from_log(folder)
 
+
 def mem_dist_stats_4k_garden_3(folder):
     suffix_list = [
         "ws=1_rk=0",
@@ -1615,7 +1829,9 @@ def mem_dist_stats_4k_garden_3(folder):
     if os.path.exists(folder + f"i2jsend_ws=4.txt"):
         os.remove(folder + f"i2jsend_ws=4.txt")
     stats = extract_json_from_i2jsend_log(folder + "i2jsend_ws=4_rk=0.txt")
-    extract_csv_from_forward_all_to_all_communication_json(folder, time_data, suffix_list[1:], stats, process_iterations)
+    extract_csv_from_forward_all_to_all_communication_json(
+        folder, time_data, suffix_list[1:], stats, process_iterations
+    )
 
     # get time csv
     file_paths = [
@@ -1638,6 +1854,7 @@ def mem_dist_stats_4k_garden_3(folder):
         extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
 
     extract_all_memory_json_from_log(folder)
+
 
 def adjust2(folder):
     suffix_list = [
@@ -1666,10 +1883,9 @@ def adjust2(folder):
         folder + "gpu_time_ws=4_rk=2.json",
         folder + "gpu_time_ws=4_rk=3.json",
     ]
-    iterations_to_process = [250*i+1 for i in range(100, 120)]
+    iterations_to_process = [250 * i + 1 for i in range(100, 120)]
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
-
 
     file_paths = [folder + f"gpu_time_it={it}.csv" for it in iterations_to_process]
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
@@ -1689,7 +1905,7 @@ def adjust2(folder):
 
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
-    
+
     file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
     # delete all file_paths
@@ -1700,22 +1916,25 @@ def adjust2(folder):
 def adjust(folder):
     suffix_list = get_suffix_in_folder(folder)
     print("processing suffix_list: ", suffix_list)
-    # return 
+    # return
 
     data = {}
     for suffix in suffix_list:
         file_path = folder + f"gpu_time_{suffix}.log"
-        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=False)
+        gpu_time_json = extract_json_from_gpu_time_log(
+            file_path, load_genereated_json=False
+        )
         file_path = folder + f"python_time_{suffix}.log"
-        python_time_json = extract_json_from_python_time_log(file_path, load_genereated_json=False)
+        python_time_json = extract_json_from_python_time_log(
+            file_path, load_genereated_json=False
+        )
         data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
 
     file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
 
-    iterations_to_process = [250*i+1 for i in range(1, 120, 2)]
+    iterations_to_process = [250 * i + 1 for i in range(1, 120, 2)]
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
-
 
     file_paths = [folder + f"gpu_time_it={it}.csv" for it in iterations_to_process]
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_gpu_time.csv")
@@ -1727,7 +1946,7 @@ def adjust(folder):
 
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
-    
+
     file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
     # delete all file_paths
@@ -1743,12 +1962,12 @@ def adjust_analyze_optimal(folder):
     gpu_time_df = gpu_time_df[gpu_time_df["ws"] == 4]
     python_time_df = python_time_df[python_time_df["ws"] == 4]
 
-    #print len of gpu_time_df and python_time_df
+    # print len of gpu_time_df and python_time_df
     # print("len(gpu_time_df): ", len(gpu_time_df))
     # print("len(python_time_df): ", len(python_time_df))
 
-    # get the total time. save in a list. 
-    iterations_to_process = [250*i+1 for i in range(1, 120, 2)]
+    # get the total time. save in a list.
+    iterations_to_process = [250 * i + 1 for i in range(1, 120, 2)]
 
     gpu_forward_columns1 = [
         "10 preprocess time",
@@ -1786,14 +2005,14 @@ def adjust_analyze_optimal(folder):
         # get the current time spent from statistics
         cur_time_sum = 0
         for column in [
-                "forward",
-                "[loss]prepare_for_distributed_loss_computation",
-                "gt_image_load_to_gpu",
-                "local_loss_computation",
-                "backward",
-                "optimizer_step"
-            ]:
-            cur_time_sum += python_time_df[column][idx*4:(idx+1)*4].max()
+            "forward",
+            "[loss]prepare_for_distributed_loss_computation",
+            "gt_image_load_to_gpu",
+            "local_loss_computation",
+            "backward",
+            "optimizer_step",
+        ]:
+            cur_time_sum += python_time_df[column][idx * 4 : (idx + 1) * 4].max()
         current_time.append(round(cur_time_sum, 6))
 
         # get the optimal time estimated from statistics.
@@ -1803,69 +2022,82 @@ def adjust_analyze_optimal(folder):
         for python_col in python_gpu_columns:
             for gpu_col_group in python_gpu_columns[python_col]:
                 gpu_time_all = []
-                for j in range(idx*4, (idx+1)*4):
+                for j in range(idx * 4, (idx + 1) * 4):
                     # print(j)
                     gpu_time_sum = 0
                     for col in gpu_col_group:
-                        gpu_time_sum += gpu_time_df[col][j:j+1].sum()
+                        gpu_time_sum += gpu_time_df[col][j : j + 1].sum()
                     gpu_time_all.append(gpu_time_sum)
                 estimated_time_sum -= max_subtract_mean_time(gpu_time_all)
 
-        # We should also subtract the unbalanced time of forward loss and backward loss. 
-        # However, current measure of local_loss_computation is wrong. 
+        # We should also subtract the unbalanced time of forward loss and backward loss.
+        # However, current measure of local_loss_computation is wrong.
 
-        # Let me estimate it. local loss computation is about 25ms per GPU in ws=4 case. 
+        # Let me estimate it. local loss computation is about 25ms per GPU in ws=4 case.
         # The unbalance range could be (20ms~30ms), potentially optimizable unbalance time is 5ms. 10ms for both forward and backward.
-        # 10ms is 5% optimization opportunity. 
+        # 10ms is 5% optimization opportunity.
 
         # These are abandoned code.
         # loss_forward_all_time = (
-        #     python_time_df["local_loss_computation"][idx*4:(idx+1)*4] + 
+        #     python_time_df["local_loss_computation"][idx*4:(idx+1)*4] +
         #     python_time_df["gt_image_load_to_gpu"][idx*4:(idx+1)*4]
         # ).to_list()
         # estimated_time_sum -= max_subtract_mean_time(loss_forward_all_time)
-        # forward loss: Current measure of local_loss_computation contains the unbalanced of: 
+        # forward loss: Current measure of local_loss_computation contains the unbalanced of:
         #     - local loss computation + load gt-image loading + merge_image_tiles_by_pos
         #     - Basically, everything after the all2all computation.
 
         # estimated_time_sum -= max_subtract_mean_time(loss_forward_all_time)
-        # backward loss. I need to only substruct 1 copy of the unbalanced time. 
+        # backward loss. I need to only substruct 1 copy of the unbalanced time.
         # Ignore the unbalance of local_loss_computation backward time for now. because it is too complicated to estimate.
 
         estimated_optimal_time.append(round(estimated_time_sum, 6))
-    
-    speed_up = [current_time[i]/estimated_optimal_time[i] for i in range(len(current_time))]
+
+    speed_up = [
+        current_time[i] / estimated_optimal_time[i] for i in range(len(current_time))
+    ]
 
     # create a dataframe with iteration list, current_time list, estimated_optimal_time list, speed_up list as columns
-    df = pd.DataFrame({
-        'Iteration': iterations_to_process,
-        'Current Time Spent': current_time,
-        'Estimated Optimal Time Spent': estimated_optimal_time,
-        'Speed Up': speed_up
-    })
+    df = pd.DataFrame(
+        {
+            "Iteration": iterations_to_process,
+            "Current Time Spent": current_time,
+            "Estimated Optimal Time Spent": estimated_optimal_time,
+            "Speed Up": speed_up,
+        }
+    )
     df.to_csv(folder + "current_vs_optimal_time.csv", index=False)
-
 
     fig, ax1 = plt.subplots(figsize=(36, 6))
 
     # 绘制当前时间和估计的最佳时间
-    color_current = 'tab:red'
-    color_estimated = 'tab:green'
-    ax1.set_xlabel('Iteration')
-    ax1.set_ylabel('Time')
-    ax1.plot(df['Iteration'], df['Current Time Spent'], color=color_current, label='Current Time')
-    ax1.plot(df['Iteration'], df['Estimated Optimal Time Spent'], color=color_estimated, label='Estimated Optimal Time')
-    ax1.tick_params(axis='y')
+    color_current = "tab:red"
+    color_estimated = "tab:green"
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel("Time")
+    ax1.plot(
+        df["Iteration"],
+        df["Current Time Spent"],
+        color=color_current,
+        label="Current Time",
+    )
+    ax1.plot(
+        df["Iteration"],
+        df["Estimated Optimal Time Spent"],
+        color=color_estimated,
+        label="Estimated Optimal Time",
+    )
+    ax1.tick_params(axis="y")
     ax1.xaxis.set_ticks(iterations_to_process)  # 确保迭代显示在X轴上
-    ax1.legend(loc='upper left')
+    ax1.legend(loc="upper left")
 
     # 实例化另一个Y轴共享相同的X轴
-    ax2 = ax1.twinx()  
-    color_speed_up = 'tab:blue'
-    ax2.set_ylabel('Speed Up', color=color_speed_up)  # 我们已经处理了y轴的标签
-    ax2.plot(df['Iteration'], df['Speed Up'], linestyle='--', color=color_speed_up)
-    ax2.tick_params(axis='y', labelcolor=color_speed_up)
-    ax2.legend(loc='upper right')
+    ax2 = ax1.twinx()
+    color_speed_up = "tab:blue"
+    ax2.set_ylabel("Speed Up", color=color_speed_up)  # 我们已经处理了y轴的标签
+    ax2.plot(df["Iteration"], df["Speed Up"], linestyle="--", color=color_speed_up)
+    ax2.tick_params(axis="y", labelcolor=color_speed_up)
+    ax2.legend(loc="upper right")
     fig.tight_layout()  # 为了布局不重叠
     # save the figure
     plt.savefig(folder + "current_vs_optimal_time.png")
@@ -1878,14 +2110,18 @@ def adjust3(folder):
     data = {}
     for suffix in suffix_list:
         file_path = folder + f"gpu_time_{suffix}.log"
-        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=True)
+        gpu_time_json = extract_json_from_gpu_time_log(
+            file_path, load_genereated_json=True
+        )
         file_path = folder + f"python_time_{suffix}.log"
-        python_time_json = extract_json_from_python_time_log(file_path, load_genereated_json=True)
+        python_time_json = extract_json_from_python_time_log(
+            file_path, load_genereated_json=True
+        )
         data[suffix] = {"gpu_time": gpu_time_json, "python_time": python_time_json}
 
     file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
 
-    iterations_to_process = [10*i+1 for i in range(1, 100, 1)]
+    iterations_to_process = [10 * i + 1 for i in range(1, 100, 1)]
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
 
@@ -1900,14 +2136,14 @@ def adjust3(folder):
 
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="python")
-    
+
     file_paths = [folder + f"python_time_it={it}.csv" for it in iterations_to_process]
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
     # delete all file_paths
     for file_path in file_paths:
         if os.path.exists(file_path):
             os.remove(file_path)
-    
+
     gpu_time_df = pd.read_csv(folder + "merged_gpu_time.csv")
     python_time_df = pd.read_csv(folder + "merged_python_time.csv")
     gpu_time_df = gpu_time_df[gpu_time_df["ws"] == 4]
@@ -1922,7 +2158,6 @@ def adjust3(folder):
         std_row = {"rk": rk, "mode": "std"}
         coeff_of_var_row = {"rk": rk, "mode": "coeff_of_var"}
 
-
         for column in gpu_time_df.columns:
             if column in ["file_path", "ws", "rk"]:
                 continue
@@ -1931,11 +2166,10 @@ def adjust3(folder):
             # print(data)
             mean = np.mean(data)
             std = np.std(data)
-            coeff_of_var = std/mean
+            coeff_of_var = std / mean
             mean_row[column] = round(mean, 6)
             std_row[column] = round(std, 6)
             coeff_of_var_row[column] = round(coeff_of_var, 6)
-
 
         if df_stats is None:
             df_stats = pd.DataFrame([mean_row])
@@ -1946,6 +2180,7 @@ def adjust3(folder):
 
     # print(df_stats)
     df_stats.to_csv(folder + "gpu_time_stats.csv", index=False)
+
 
 def compare_end2end_stats(save_folder, file_paths=None):
     # print(get_end2end_stats("experiments/adjust_baseline_garden4k_1/python_ws=1_rk=0.log"))
@@ -1967,8 +2202,8 @@ def compare_end2end_stats(save_folder, file_paths=None):
             "experiments/adjust_baseline_garden4k_2/python_ws=1_rk=0.log",
             "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=0.log",
             # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=1.log",
-            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=2.log", 
-            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=3.log",               
+            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=2.log",
+            # "experiments/adjust_baseline_garden4k_2/python_ws=4_rk=3.log",
             "experiments/adjust_baseline_room4k_1/python_ws=1_rk=0.log",
             "experiments/adjust_baseline_room4k_1/python_ws=4_rk=0.log",
             "experiments/adjust_baseline_room4k_2/python_ws=1_rk=0.log",
@@ -1993,6 +2228,7 @@ def compare_end2end_stats(save_folder, file_paths=None):
     df.to_csv(save_folder + "compare_end2end_stats.csv", index=False)
     # print(df)
 
+
 def compare_garden_adjust_mode(save_folder):
     folder = [
         "experiments/adjust_baseline_garden4k_1/",
@@ -2016,28 +2252,28 @@ def compare_garden_adjust_mode(save_folder):
         if df is None:
             df = new_df[["Iteration"]]
             iterations_to_process = new_df["Iteration"].to_list()
-            df[expe_name+"_time"] = new_df["Current Time Spent"]
+            df[expe_name + "_time"] = new_df["Current Time Spent"]
         else:
-            df[expe_name+"_time"] = new_df["Current Time Spent"]
+            df[expe_name + "_time"] = new_df["Current Time Spent"]
 
-    df.to_csv(save_folder+"compare_garden_adjust_mode.csv", index=False)
-
+    df.to_csv(save_folder + "compare_garden_adjust_mode.csv", index=False)
 
     fig, ax1 = plt.subplots(figsize=(42, 6))
 
     # 绘制当前时间和估计的最佳时间
     # color_current = 'tab:red'
     # color_estimated = 'tab:green'
-    ax1.set_xlabel('Iteration')
-    ax1.set_ylabel('Time')
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel("Time")
     for expe_name, c in zip(all_name, color):
-        ax1.plot(df['Iteration'], df[expe_name+"_time"], color=c, label=expe_name)
-    ax1.tick_params(axis='y')
+        ax1.plot(df["Iteration"], df[expe_name + "_time"], color=c, label=expe_name)
+    ax1.tick_params(axis="y")
     ax1.xaxis.set_ticks(iterations_to_process)  # 确保迭代显示在X轴上
-    ax1.legend(loc='upper left')
+    ax1.legend(loc="upper left")
 
     # save the figure
     plt.savefig(save_folder + "compare_garden_adjust_mode.png")
+
 
 def redistribute_analyze_comm_and_count3dgs(folders):
     dict_i2jsend_stats = {}
@@ -2045,25 +2281,26 @@ def redistribute_analyze_comm_and_count3dgs(folders):
     for folder in folders:
         expe_name = folder.split("/")[-2]
 
-
         i2jsend_stats, i2jsend_iterations = extract_comm_count_from_i2jsend_log(folder)
         if dict_i2jsend_stats == {}:
             dict_i2jsend_stats["iterations"] = i2jsend_iterations
         # merge i2jsend_stats into dict_i2jsend_stats
-        dict_i2jsend_stats[expe_name+":total_comm_count"] = i2jsend_stats["total_comm_count"]
-        
+        dict_i2jsend_stats[expe_name + ":total_comm_count"] = i2jsend_stats[
+            "total_comm_count"
+        ]
 
-        count3dgs_stats, count3dgs_iterations = extract_3dgs_count_from_python_log(folder)
+        count3dgs_stats, count3dgs_iterations = extract_3dgs_count_from_python_log(
+            folder
+        )
         if dict_count3dgs_stats == {}:
             dict_count3dgs_stats["iterations"] = count3dgs_iterations
         for key in count3dgs_stats:
-            dict_count3dgs_stats[expe_name+":"+key] = count3dgs_stats[key]
+            dict_count3dgs_stats[expe_name + ":" + key] = count3dgs_stats[key]
 
     df_i2jsend_stats = pd.DataFrame(dict_i2jsend_stats)
-    df_i2jsend_stats.to_csv(folders[0]+"compare_i2jsend_stats.csv", index=False)
+    df_i2jsend_stats.to_csv(folders[0] + "compare_i2jsend_stats.csv", index=False)
     df_count3dgs_stats = pd.DataFrame(dict_count3dgs_stats)
-    df_count3dgs_stats.to_csv(folders[0]+"compare_count3dgs_stats.csv", index=False)
-
+    df_count3dgs_stats.to_csv(folders[0] + "compare_count3dgs_stats.csv", index=False)
 
 
 def analyze_heuristics(folder, image_count=6, working_image_ids=None):
@@ -2083,27 +2320,46 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
     if working_image_ids is not None:
         sampled_image_id = working_image_ids
 
-    df = pd.DataFrame(columns=["image_id", "iteration", "n_tiles_0", "time_0", "n_tiles_1", "time_1", "n_tiles_2", "time_2", "n_tiles_3", "time_3"])
+    df = pd.DataFrame(
+        columns=[
+            "image_id",
+            "iteration",
+            "n_tiles_0",
+            "time_0",
+            "n_tiles_1",
+            "time_1",
+            "n_tiles_2",
+            "time_2",
+            "n_tiles_3",
+            "time_3",
+        ]
+    )
     for image_id in sampled_image_id:
         history_for_one_image = data[str(image_id)]
         for tmp in history_for_one_image:
             iteration = tmp["iteration"]
             global_strategy_str = tmp["strategy"]["gloabl_strategy_str"]
             global_strategy = [int(x) for x in global_strategy_str.split(",")]
-            global_n_tiles = [global_strategy[i+1]-global_strategy[i] for i in range(len(global_strategy)-1)]
+            global_n_tiles = [
+                global_strategy[i + 1] - global_strategy[i]
+                for i in range(len(global_strategy) - 1)
+            ]
             global_time = tmp["strategy"]["global_running_times"]
-            df = df._append({
-                "image_id": int(image_id),
-                "iteration": int(iteration),
-                "n_tiles_0": global_n_tiles[0],
-                "time_0": round(global_time[0], 5),
-                "n_tiles_1": global_n_tiles[1],
-                "time_1": round(global_time[1], 5),
-                "n_tiles_2": global_n_tiles[2],
-                "time_2": round(global_time[2], 5),
-                "n_tiles_3": global_n_tiles[3],
-                "time_3": round(global_time[3], 5),
-            }, ignore_index=True)
+            df = df._append(
+                {
+                    "image_id": int(image_id),
+                    "iteration": int(iteration),
+                    "n_tiles_0": global_n_tiles[0],
+                    "time_0": round(global_time[0], 5),
+                    "n_tiles_1": global_n_tiles[1],
+                    "time_1": round(global_time[1], 5),
+                    "n_tiles_2": global_n_tiles[2],
+                    "time_2": round(global_time[2], 5),
+                    "n_tiles_3": global_n_tiles[3],
+                    "time_3": round(global_time[3], 5),
+                },
+                ignore_index=True,
+            )
 
     df.to_csv(folder + "heuristics.csv", index=False)
 
@@ -2115,32 +2371,47 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
         epochs = range(0, len(one_image_id_df))
 
         fig, axs = plt.subplots(nrows=3, ncols=1, figsize=(35, 18))
-        four_colors = ['tab:red', 'tab:blue', 'tab:green', 'tab:orange']
+        four_colors = ["tab:red", "tab:blue", "tab:green", "tab:orange"]
 
         # 在第一个子图上绘制y1
         # axs[0].plot(x, y1, 'r')  # 'r'是红色的意思
-        axs[0].set_title('N_tiles', fontsize=20)
+        axs[0].set_title("N_tiles", fontsize=20)
         # axs[0].set_xlabel('epochs')
-        axs[0].set_ylabel('N_tiles', fontsize=16)
-        axs[0].plot(epochs, one_image_id_df['n_tiles_0'], color=four_colors[0], label='rk=0')
-        axs[0].plot(epochs, one_image_id_df['n_tiles_1'], color=four_colors[1], label='rk=1')
-        axs[0].plot(epochs, one_image_id_df['n_tiles_2'], color=four_colors[2], label='rk=2')
-        axs[0].plot(epochs, one_image_id_df['n_tiles_3'], color=four_colors[3], label='rk=3')
-        axs[0].tick_params(axis='y')
+        axs[0].set_ylabel("N_tiles", fontsize=16)
+        axs[0].plot(
+            epochs, one_image_id_df["n_tiles_0"], color=four_colors[0], label="rk=0"
+        )
+        axs[0].plot(
+            epochs, one_image_id_df["n_tiles_1"], color=four_colors[1], label="rk=1"
+        )
+        axs[0].plot(
+            epochs, one_image_id_df["n_tiles_2"], color=four_colors[2], label="rk=2"
+        )
+        axs[0].plot(
+            epochs, one_image_id_df["n_tiles_3"], color=four_colors[3], label="rk=3"
+        )
+        axs[0].tick_params(axis="y")
         axs[0].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
         # make it larger
-        axs[0].legend(loc='upper left', fontsize=16)
-
+        axs[0].legend(loc="upper left", fontsize=16)
 
         # 在第二个子图上绘制y2
-        axs[1].set_title('N_tiles_time', fontsize=20)
+        axs[1].set_title("N_tiles_time", fontsize=20)
         # axs[1].set_xlabel('epochs')
-        axs[1].set_ylabel('time', fontsize=16)
-        axs[1].plot(epochs, one_image_id_df['time_0'], linestyle='-', color=four_colors[0])
-        axs[1].plot(epochs, one_image_id_df['time_1'], linestyle='-', color=four_colors[1])
-        axs[1].plot(epochs, one_image_id_df['time_2'], linestyle='-', color=four_colors[2])
-        axs[1].plot(epochs, one_image_id_df['time_3'], linestyle='-', color=four_colors[3])
-        axs[1].tick_params(axis='y')
+        axs[1].set_ylabel("time", fontsize=16)
+        axs[1].plot(
+            epochs, one_image_id_df["time_0"], linestyle="-", color=four_colors[0]
+        )
+        axs[1].plot(
+            epochs, one_image_id_df["time_1"], linestyle="-", color=four_colors[1]
+        )
+        axs[1].plot(
+            epochs, one_image_id_df["time_2"], linestyle="-", color=four_colors[2]
+        )
+        axs[1].plot(
+            epochs, one_image_id_df["time_3"], linestyle="-", color=four_colors[3]
+        )
+        axs[1].tick_params(axis="y")
         axs[1].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
         # axs[1].legend(loc='upper left')
 
@@ -2148,25 +2419,58 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
             # n_tiles, time are both column of a dataframe
             return time / n_tiles
 
-        axs[2].set_title('per_tile_time', fontsize=20)
-        axs[2].set_xlabel('epochs', fontsize=16)
-        axs[2].set_ylabel('time', fontsize=16)
-        per_tile_time_0 = per_tile_time(one_image_id_df['n_tiles_0'], one_image_id_df['time_0'])
-        per_tile_time_1 = per_tile_time(one_image_id_df['n_tiles_1'], one_image_id_df['time_1'])
-        per_tile_time_2 = per_tile_time(one_image_id_df['n_tiles_2'], one_image_id_df['time_2'])
-        per_tile_time_3 = per_tile_time(one_image_id_df['n_tiles_3'], one_image_id_df['time_3'])
-        axs[2].plot(epochs, per_tile_time_0, linestyle='--', color=four_colors[0], label='rk=0')
-        axs[2].plot(epochs, per_tile_time_1, linestyle='--', color=four_colors[1], label='rk=1')
-        axs[2].plot(epochs, per_tile_time_2, linestyle='--', color=four_colors[2], label='rk=2')
-        axs[2].plot(epochs, per_tile_time_3, linestyle='--', color=four_colors[3], label='rk=3')
-        axs[2].tick_params(axis='y')
+        axs[2].set_title("per_tile_time", fontsize=20)
+        axs[2].set_xlabel("epochs", fontsize=16)
+        axs[2].set_ylabel("time", fontsize=16)
+        per_tile_time_0 = per_tile_time(
+            one_image_id_df["n_tiles_0"], one_image_id_df["time_0"]
+        )
+        per_tile_time_1 = per_tile_time(
+            one_image_id_df["n_tiles_1"], one_image_id_df["time_1"]
+        )
+        per_tile_time_2 = per_tile_time(
+            one_image_id_df["n_tiles_2"], one_image_id_df["time_2"]
+        )
+        per_tile_time_3 = per_tile_time(
+            one_image_id_df["n_tiles_3"], one_image_id_df["time_3"]
+        )
+        axs[2].plot(
+            epochs, per_tile_time_0, linestyle="--", color=four_colors[0], label="rk=0"
+        )
+        axs[2].plot(
+            epochs, per_tile_time_1, linestyle="--", color=four_colors[1], label="rk=1"
+        )
+        axs[2].plot(
+            epochs, per_tile_time_2, linestyle="--", color=four_colors[2], label="rk=2"
+        )
+        axs[2].plot(
+            epochs, per_tile_time_3, linestyle="--", color=four_colors[3], label="rk=3"
+        )
+        axs[2].tick_params(axis="y")
         axs[2].xaxis.set_ticks(epochs)  # 确保迭代显示在X轴上
         # axs[2].legend(loc='upper left')
 
-        plt.savefig(folder + "analyze_heuristics_"+str(image_id)+".png")
+        plt.savefig(folder + "analyze_heuristics_" + str(image_id) + ".png")
 
     # tiles_stats analysis.
-    df = pd.DataFrame(columns=["camera_id", "epoch", "sum_n_render_0", "sum_n_render_1", "sum_n_render_2", "sum_n_render_3", "sum_n_consider_0", "sum_n_consider_1", "sum_n_consider_2", "sum_n_consider_3", "sum_n_contrib_0", "sum_n_contrib_1", "sum_n_contrib_2", "sum_n_contrib_3"])
+    df = pd.DataFrame(
+        columns=[
+            "camera_id",
+            "epoch",
+            "sum_n_render_0",
+            "sum_n_render_1",
+            "sum_n_render_2",
+            "sum_n_render_3",
+            "sum_n_consider_0",
+            "sum_n_consider_1",
+            "sum_n_consider_2",
+            "sum_n_consider_3",
+            "sum_n_contrib_0",
+            "sum_n_contrib_1",
+            "sum_n_contrib_2",
+            "sum_n_contrib_3",
+        ]
+    )
     data = []
     for rk, suffix in enumerate(suffix_list):
         data_rki = json.load(open(folder + f"strategy_history_ws=4_rk={rk}.json", "r"))
@@ -2183,7 +2487,7 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
             sum_n_consider_rki = []
             sum_n_contrib_rki = []
             history_for_one_image = data_rki[str(image_id)]
-            
+
             for tmp in history_for_one_image:
                 iteration = tmp["iteration"]
                 sum_n_render_rki.append(tmp["strategy"]["sum_n_render"])
@@ -2195,22 +2499,25 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
             # print(len(sum_n_render_rki))
 
         for epoch in range(len(sum_n_render[0])):
-            df = df._append({
-                "image_id": int(image_id),
-                "epoch": epoch,
-                "sum_n_render_0": sum_n_render[0][epoch],
-                "sum_n_render_1": sum_n_render[1][epoch],
-                "sum_n_render_2": sum_n_render[2][epoch],
-                "sum_n_render_3": sum_n_render[3][epoch],
-                "sum_n_consider_0": sum_n_consider[0][epoch],
-                "sum_n_consider_1": sum_n_consider[1][epoch],
-                "sum_n_consider_2": sum_n_consider[2][epoch],
-                "sum_n_consider_3": sum_n_consider[3][epoch],
-                "sum_n_contrib_0": sum_n_contrib[0][epoch],
-                "sum_n_contrib_1": sum_n_contrib[1][epoch],
-                "sum_n_contrib_2": sum_n_contrib[2][epoch],
-                "sum_n_contrib_3": sum_n_contrib[3][epoch],
-            }, ignore_index=True)
+            df = df._append(
+                {
+                    "image_id": int(image_id),
+                    "epoch": epoch,
+                    "sum_n_render_0": sum_n_render[0][epoch],
+                    "sum_n_render_1": sum_n_render[1][epoch],
+                    "sum_n_render_2": sum_n_render[2][epoch],
+                    "sum_n_render_3": sum_n_render[3][epoch],
+                    "sum_n_consider_0": sum_n_consider[0][epoch],
+                    "sum_n_consider_1": sum_n_consider[1][epoch],
+                    "sum_n_consider_2": sum_n_consider[2][epoch],
+                    "sum_n_consider_3": sum_n_consider[3][epoch],
+                    "sum_n_contrib_0": sum_n_contrib[0][epoch],
+                    "sum_n_contrib_1": sum_n_contrib[1][epoch],
+                    "sum_n_contrib_2": sum_n_contrib[2][epoch],
+                    "sum_n_contrib_3": sum_n_contrib[3][epoch],
+                },
+                ignore_index=True,
+            )
 
     # save df in the file.
     df.to_csv(folder + "tiles_stats.csv", index=False)
@@ -2221,58 +2528,125 @@ def analyze_heuristics(folder, image_count=6, working_image_ids=None):
         print(len(one_image_id_df))
 
         fig, axs = plt.subplots(nrows=4, ncols=1, figsize=(50, 18))
-        four_colors = ['tab:red', 'tab:blue', 'tab:green', 'tab:orange']
+        four_colors = ["tab:red", "tab:blue", "tab:green", "tab:orange"]
 
         # render on one graph;
-        axs[0].set_title('n_render', fontsize=20)
+        axs[0].set_title("n_render", fontsize=20)
         # axs[0].set_xlabel('epochs')
-        axs[0].set_ylabel('count', fontsize=16)
-        axs[0].plot(epochs, one_image_id_df['sum_n_render_0'], color=four_colors[0], label='rk=0')
-        axs[0].plot(epochs, one_image_id_df['sum_n_render_1'], color=four_colors[1], label='rk=1')
-        axs[0].plot(epochs, one_image_id_df['sum_n_render_2'], color=four_colors[2], label='rk=2')
-        axs[0].plot(epochs, one_image_id_df['sum_n_render_3'], color=four_colors[3], label='rk=3')
-        axs[0].tick_params(axis='y')
+        axs[0].set_ylabel("count", fontsize=16)
+        axs[0].plot(
+            epochs,
+            one_image_id_df["sum_n_render_0"],
+            color=four_colors[0],
+            label="rk=0",
+        )
+        axs[0].plot(
+            epochs,
+            one_image_id_df["sum_n_render_1"],
+            color=four_colors[1],
+            label="rk=1",
+        )
+        axs[0].plot(
+            epochs,
+            one_image_id_df["sum_n_render_2"],
+            color=four_colors[2],
+            label="rk=2",
+        )
+        axs[0].plot(
+            epochs,
+            one_image_id_df["sum_n_render_3"],
+            color=four_colors[3],
+            label="rk=3",
+        )
+        axs[0].tick_params(axis="y")
         axs[0].xaxis.set_ticks(epochs)
 
-        # consider and contrib on another graph. 
-        axs[1].set_title('n_consider', fontsize=20)
+        # consider and contrib on another graph.
+        axs[1].set_title("n_consider", fontsize=20)
         # axs[1].set_xlabel('epochs')
-        axs[1].set_ylabel('count', fontsize=16)
-        axs[1].plot(epochs, one_image_id_df['sum_n_consider_0'], color=four_colors[0], label='n_consider_0')
-        axs[1].plot(epochs, one_image_id_df['sum_n_consider_1'], color=four_colors[1], label='n_consider_1')
-        axs[1].plot(epochs, one_image_id_df['sum_n_consider_2'], color=four_colors[2], label='n_consider_2')
-        axs[1].plot(epochs, one_image_id_df['sum_n_consider_3'], color=four_colors[3], label='n_consider_3')
-        axs[1].tick_params(axis='y')
+        axs[1].set_ylabel("count", fontsize=16)
+        axs[1].plot(
+            epochs,
+            one_image_id_df["sum_n_consider_0"],
+            color=four_colors[0],
+            label="n_consider_0",
+        )
+        axs[1].plot(
+            epochs,
+            one_image_id_df["sum_n_consider_1"],
+            color=four_colors[1],
+            label="n_consider_1",
+        )
+        axs[1].plot(
+            epochs,
+            one_image_id_df["sum_n_consider_2"],
+            color=four_colors[2],
+            label="n_consider_2",
+        )
+        axs[1].plot(
+            epochs,
+            one_image_id_df["sum_n_consider_3"],
+            color=four_colors[3],
+            label="n_consider_3",
+        )
+        axs[1].tick_params(axis="y")
         axs[1].xaxis.set_ticks(epochs)
 
-        # consider and contrib on another graph. 
-        axs[2].set_title('n_contrib', fontsize=20)
+        # consider and contrib on another graph.
+        axs[2].set_title("n_contrib", fontsize=20)
         # axs[2].set_xlabel('epochs')
-        axs[2].set_ylabel('count', fontsize=16)
-        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_0'], color=four_colors[0], label='n_contrib_0')
-        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_1'], color=four_colors[1], label='n_contrib_1')
-        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_2'], color=four_colors[2], label='n_contrib_2')
-        axs[2].plot(epochs, one_image_id_df['sum_n_contrib_3'], color=four_colors[3], label='n_contrib_3')
-        axs[2].tick_params(axis='y')
+        axs[2].set_ylabel("count", fontsize=16)
+        axs[2].plot(
+            epochs,
+            one_image_id_df["sum_n_contrib_0"],
+            color=four_colors[0],
+            label="n_contrib_0",
+        )
+        axs[2].plot(
+            epochs,
+            one_image_id_df["sum_n_contrib_1"],
+            color=four_colors[1],
+            label="n_contrib_1",
+        )
+        axs[2].plot(
+            epochs,
+            one_image_id_df["sum_n_contrib_2"],
+            color=four_colors[2],
+            label="n_contrib_2",
+        )
+        axs[2].plot(
+            epochs,
+            one_image_id_df["sum_n_contrib_3"],
+            color=four_colors[3],
+            label="n_contrib_3",
+        )
+        axs[2].tick_params(axis="y")
         axs[2].xaxis.set_ticks(epochs)
 
-
         # contrib/consider on the third graph.
-        axs[3].set_title('contrib/consider', fontsize=20)
-        axs[3].set_xlabel('epochs')
-        axs[3].set_ylabel('ratio', fontsize=16)
-        ratio_0 = one_image_id_df['sum_n_contrib_0'] / one_image_id_df['sum_n_consider_0']
-        ratio_1 = one_image_id_df['sum_n_contrib_1'] / one_image_id_df['sum_n_consider_1']
-        ratio_2 = one_image_id_df['sum_n_contrib_2'] / one_image_id_df['sum_n_consider_2']
-        ratio_3 = one_image_id_df['sum_n_contrib_3'] / one_image_id_df['sum_n_consider_3']
-        axs[3].plot(epochs, ratio_0, linestyle='--', color=four_colors[0], label='rk=0')
-        axs[3].plot(epochs, ratio_1, linestyle='--', color=four_colors[1], label='rk=1')
-        axs[3].plot(epochs, ratio_2, linestyle='--', color=four_colors[2], label='rk=2')
-        axs[3].plot(epochs, ratio_3, linestyle='--', color=four_colors[3], label='rk=3')
-        axs[3].tick_params(axis='y')
+        axs[3].set_title("contrib/consider", fontsize=20)
+        axs[3].set_xlabel("epochs")
+        axs[3].set_ylabel("ratio", fontsize=16)
+        ratio_0 = (
+            one_image_id_df["sum_n_contrib_0"] / one_image_id_df["sum_n_consider_0"]
+        )
+        ratio_1 = (
+            one_image_id_df["sum_n_contrib_1"] / one_image_id_df["sum_n_consider_1"]
+        )
+        ratio_2 = (
+            one_image_id_df["sum_n_contrib_2"] / one_image_id_df["sum_n_consider_2"]
+        )
+        ratio_3 = (
+            one_image_id_df["sum_n_contrib_3"] / one_image_id_df["sum_n_consider_3"]
+        )
+        axs[3].plot(epochs, ratio_0, linestyle="--", color=four_colors[0], label="rk=0")
+        axs[3].plot(epochs, ratio_1, linestyle="--", color=four_colors[1], label="rk=1")
+        axs[3].plot(epochs, ratio_2, linestyle="--", color=four_colors[2], label="rk=2")
+        axs[3].plot(epochs, ratio_3, linestyle="--", color=four_colors[3], label="rk=3")
+        axs[3].tick_params(axis="y")
         axs[3].xaxis.set_ticks(epochs)
 
-        plt.savefig(folder + "analyze_tiles_stats_"+str(image_id)+".png")
+        plt.savefig(folder + "analyze_tiles_stats_" + str(image_id) + ".png")
 
 
 def check_GPU_utilization(folder):
@@ -2286,14 +2660,34 @@ def check_GPU_utilization(folder):
     data = {}
     for suffix in suffix_list:
         file_path = folder + f"gpu_time_{suffix}.log"
-        gpu_time_json = extract_json_from_gpu_time_log(file_path, load_genereated_json=True)
+        gpu_time_json = extract_json_from_gpu_time_log(
+            file_path, load_genereated_json=True
+        )
         data[suffix] = gpu_time_json
 
     file_paths = [folder + f"gpu_time_{suffix}.json" for suffix in suffix_list]
 
-    iterations_to_process = [250*i+1 for i in range(1, 80, 2)]
-    compare_sum_time_df_ws1 = pd.DataFrame(columns=["iteration", "ws", "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"])
-    compare_sum_time_df_ws4 = pd.DataFrame(columns=["iteration", "ws", "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"])
+    iterations_to_process = [250 * i + 1 for i in range(1, 80, 2)]
+    compare_sum_time_df_ws1 = pd.DataFrame(
+        columns=[
+            "iteration",
+            "ws",
+            "b10 render time",
+            "b20 preprocess time",
+            "70 render time",
+            "10 preprocess time",
+        ]
+    )
+    compare_sum_time_df_ws4 = pd.DataFrame(
+        columns=[
+            "iteration",
+            "ws",
+            "b10 render time",
+            "b20 preprocess time",
+            "70 render time",
+            "10 preprocess time",
+        ]
+    )
     for iteration in iterations_to_process:
         extract_time_excel_from_json(folder, file_paths, iteration, mode="gpu")
         save_path = folder + f"gpu_time_it={iteration}.csv"
@@ -2302,32 +2696,41 @@ def check_GPU_utilization(folder):
         # 4 columns: "b10 render time", "b20 preprocess time", "70 render time", "10 preprocess time"
         ws1_df = df[df["ws"] == 1]
         if not ws1_df.empty:
-            compare_sum_time_df_ws1 = compare_sum_time_df_ws1._append({
-                "iteration": iteration,
-                "ws": 1,
-                "b10 render time": round(ws1_df["b10 render time"].sum(), 6),
-                "b20 preprocess time": round(ws1_df["b20 preprocess time"].sum(), 6),
-                "70 render time": round(ws1_df["70 render time"].sum(), 6),
-                "10 preprocess time": round(ws1_df["10 preprocess time"].sum(), 6),
-            }, ignore_index=True)
+            compare_sum_time_df_ws1 = compare_sum_time_df_ws1._append(
+                {
+                    "iteration": iteration,
+                    "ws": 1,
+                    "b10 render time": round(ws1_df["b10 render time"].sum(), 6),
+                    "b20 preprocess time": round(
+                        ws1_df["b20 preprocess time"].sum(), 6
+                    ),
+                    "70 render time": round(ws1_df["70 render time"].sum(), 6),
+                    "10 preprocess time": round(ws1_df["10 preprocess time"].sum(), 6),
+                },
+                ignore_index=True,
+            )
         ws4_df = df[df["ws"] == 4]
-        compare_sum_time_df_ws4 = compare_sum_time_df_ws4._append({
-            "iteration": iteration,
-            "ws": 4,
-            "b10 render time": round(ws4_df["b10 render time"].sum(), 6),
-            "b20 preprocess time": round(ws4_df["b20 preprocess time"].sum(), 6),
-            "70 render time": round(ws4_df["70 render time"].sum(), 6),
-            "10 preprocess time": round(ws4_df["10 preprocess time"].sum(), 6),
-        }, ignore_index=True)
+        compare_sum_time_df_ws4 = compare_sum_time_df_ws4._append(
+            {
+                "iteration": iteration,
+                "ws": 4,
+                "b10 render time": round(ws4_df["b10 render time"].sum(), 6),
+                "b20 preprocess time": round(ws4_df["b20 preprocess time"].sum(), 6),
+                "70 render time": round(ws4_df["70 render time"].sum(), 6),
+                "10 preprocess time": round(ws4_df["10 preprocess time"].sum(), 6),
+            },
+            ignore_index=True,
+        )
         # remove save_path
         if os.path.exists(save_path):
             os.remove(save_path)
     compare_sum_time_df_ws1.to_csv(folder + "compare_sum_time_ws=1.csv", index=False)
     compare_sum_time_df_ws4.to_csv(folder + "compare_sum_time_ws=4.csv", index=False)
 
+
 def compare_GPU_utilization(save_folder, file_paths):
-    # compare `b10 render time` for different df file_paths. 
-    # draw a df with iteration as x-axis, file_paths as y-axis. 
+    # compare `b10 render time` for different df file_paths.
+    # draw a df with iteration as x-axis, file_paths as y-axis.
 
     all_df = None
     for file_path in file_paths:
@@ -2339,23 +2742,25 @@ def compare_GPU_utilization(save_folder, file_paths):
         all_df[file_path] = df["b10 render time"] / all_df["baseline"]
     all_df.to_csv(save_folder + "compare_multiple_GPU_utilization.csv", index=False)
 
+
 def draw_epoch_loss(file_paths):
     epoch_losses = []
     for file_path in file_paths:
         epoch_loss = []
         lines = open(file_path, "r").readlines()
         for line in lines:
-            #epoch 2 loss: 0.17376218013391145
+            # epoch 2 loss: 0.17376218013391145
             if line.startswith("epoch "):
                 epoch_loss.append(float(line.split(" ")[-1]))
         epoch_losses.append(epoch_loss)
-    
+
     fig, ax = plt.subplots(figsize=(20, 10))
     for i, epoch_loss in enumerate(epoch_losses):
         ax.plot(range(len(epoch_loss)), epoch_loss, label=file_paths[i])
-    ax.legend(loc='upper right')
+    ax.legend(loc="upper right")
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
-    plt.savefig(folder+"compare_epoch_loss.png")
+    plt.savefig(folder + "compare_epoch_loss.png")
+
 
 def draw_iteration_loss(file_paths, window_length=41, polyorder=3):
     # if file exists
@@ -2383,26 +2788,37 @@ def draw_iteration_loss(file_paths, window_length=41, polyorder=3):
                 losses = reg_exp_match.group(2).split(", ")
                 loss = np.mean([float(x) for x in losses])
                 iteration_loss.append(loss)
-                
+
         # smooth out the iteration_loss
-        iteration_loss = savgol_filter(iteration_loss, window_length // bsz, min(polyorder, window_length // bsz - 1)) if window_length > 0 and window_length // bsz >= 3 else iteration_loss
+        iteration_loss = (
+            savgol_filter(
+                iteration_loss,
+                window_length // bsz,
+                min(polyorder, window_length // bsz - 1),
+            )
+            if window_length > 0 and window_length // bsz >= 3
+            else iteration_loss
+        )
 
         iterations.append(iteration)
         iteration_losses.append(iteration_loss)
 
     fig, ax = plt.subplots(figsize=(20, 10))
-    for file_path, iteration, iteration_loss in zip(file_paths, iterations, iteration_losses):
+    for file_path, iteration, iteration_loss in zip(
+        file_paths, iterations, iteration_losses
+    ):
         ax.plot(iteration, iteration_loss, label=file_path)
-    ax.legend(loc='upper right')
+    ax.legend(loc="upper right")
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
-    plt.savefig(folder+"compare_iteration_loss.png")
+    plt.savefig(folder + "compare_iteration_loss.png")
+
 
 def parse_metrics(file_path, metric_name):
     """
     Parses specified metrics (grad_norm or grad_cosine_similarity) from the log files.
     """
     metric_dict = {}
-    metric_dict['iterations'] = []
+    metric_dict["iterations"] = []
     with open(file_path, "r") as f:
         for line in f:
             # iteration xxx {metric_name}: {xxx}
@@ -2411,7 +2827,7 @@ def parse_metrics(file_path, metric_name):
             iter_match = reg_exp1.match(line) or reg_exp2.match(line)
             if iter_match:
                 iteration = int(iter_match.group(1))
-                metric_dict['iterations'].append(iteration)
+                metric_dict["iterations"].append(iteration)
                 metric_dict_line = ast.literal_eval(iter_match.group(2))
                 for key, value in metric_dict_line.items():
                     if key not in metric_dict:
@@ -2419,16 +2835,20 @@ def parse_metrics(file_path, metric_name):
                     metric_dict[key].append(value)
     return metric_dict
 
+
 def smooth_metrics(metrics_dict, window_length=41, polyorder=3):
     """
     Smooths the metrics using Savitzky-Golay filter.
     """
     for key in metrics_dict:
-        if key == 'iterations' or window_length == 0:
+        if key == "iterations" or window_length == 0:
             metrics_dict[key] = np.array(metrics_dict[key])
         else:
-            metrics_dict[key] = savgol_filter(metrics_dict[key], window_length, polyorder)
+            metrics_dict[key] = savgol_filter(
+                metrics_dict[key], window_length, polyorder
+            )
     return metrics_dict
+
 
 def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
     """
@@ -2443,23 +2863,30 @@ def draw_metrics(file_paths, metric_name, window_length=41, polyorder=3):
         except:
             bsz = 1
         bszs.append(bsz)
-    window_lengths = [window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0 for bsz in bszs]
-    metric_dicts = [smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1)) for metric_dict, window_length in zip(metric_dicts, window_lengths)]
+    window_lengths = [
+        window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0
+        for bsz in bszs
+    ]
+    metric_dicts = [
+        smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1))
+        for metric_dict, window_length in zip(metric_dicts, window_lengths)
+    ]
 
     for key in metric_dicts[0]:
-        if key == 'iterations':
+        if key == "iterations":
             continue
         fig, ax = plt.subplots(figsize=(20, 10))
         for file_path, metric_dict in zip(file_paths, metric_dicts):
-            ax.plot(metric_dict['iterations'], metric_dict[key], label=file_path)
-        ax.legend(loc='upper right')
+            ax.plot(metric_dict["iterations"], metric_dict[key], label=file_path)
+        ax.legend(loc="upper right")
         ax.set_title(metric_name)
-        ax.set_xlabel('Iteration')
+        ax.set_xlabel("Iteration")
         ax.set_ylabel(key)
         folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
         fig.tight_layout()
-        fig.savefig(folder+"compare_"+key+"_"+metric_name+".png")
+        fig.savefig(folder + "compare_" + key + "_" + metric_name + ".png")
         fig.show()
+
 
 def group_bins(metric_dict, groups=4):
     """The metric dict is a dictionary with keys as bin and values as the number of values in that bin.
@@ -2467,51 +2894,62 @@ def group_bins(metric_dict, groups=4):
     The key of the new dict is f"{start} to {end}"
     """
     all_bins = list(metric_dict.keys())
-    all_bins.pop(all_bins.index('iterations'))
+    all_bins.pop(all_bins.index("iterations"))
     all_bins.sort()
     group_size = len(all_bins) // groups
     new_metric_dict = {}
     for i in range(groups):
         start = i * group_size
         end = (i + 1) * group_size if i != groups - 1 else len(all_bins)
-        new_metric_dict[f"{start} to {end - 1}"] = sum([metric_dict[bin] for bin in all_bins[start:end]])
-    new_metric_dict['iterations'] = metric_dict['iterations']
+        new_metric_dict[f"{start} to {end - 1}"] = sum(
+            [metric_dict[bin] for bin in all_bins[start:end]]
+        )
+    new_metric_dict["iterations"] = metric_dict["iterations"]
     return new_metric_dict
-    
-            
+
+
 def draw_histogram(file_paths, metric_name, window_length=41, polyorder=3, groups=4):
     """
     Draws histogram of specified metrics (grad_norm or grad_cosine_similarity) from the log files.
     For each file draw one figure, which contains several curves each representing the ratio of a bin.
     """
     metric_dicts = [parse_metrics(file_path, metric_name) for file_path in file_paths]
-    bszs = [int(re.search(r"bsz?_?(\d+)", file_path).group(1)) for file_path in file_paths]
-    window_lengths = [window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0 for bsz in bszs]
-    metric_dicts = [smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1)) for metric_dict, window_length in zip(metric_dicts, window_lengths)]
-    
+    bszs = [
+        int(re.search(r"bsz?_?(\d+)", file_path).group(1)) for file_path in file_paths
+    ]
+    window_lengths = [
+        window_length // bsz if window_length > 0 and window_length // bsz >= 3 else 0
+        for bsz in bszs
+    ]
+    metric_dicts = [
+        smooth_metrics(metric_dict, window_length, min(polyorder, window_length - 1))
+        for metric_dict, window_length in zip(metric_dicts, window_lengths)
+    ]
+
     metric_dicts = [group_bins(metric_dict, groups) for metric_dict in metric_dicts]
-    
+
     for metric_dict, file_path in zip(metric_dicts, file_paths):
         fig, ax = plt.subplots(figsize=(20, 10))
         for key in metric_dict:
-            if key == 'iterations':
+            if key == "iterations":
                 continue
-            ax.plot(metric_dict['iterations'], metric_dict[key], label=key)
-        ax.legend(loc='upper right')
+            ax.plot(metric_dict["iterations"], metric_dict[key], label=key)
+        ax.legend(loc="upper right")
         ax.set_title(file_path + " " + metric_name)
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Ratio')
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Ratio")
         folder = "/".join(file_path.split("/")[:-1]) + "/"
         fig.tight_layout()
-        fig.savefig(folder+"compare_histogram_"+metric_name+".png")
+        fig.savefig(folder + "compare_histogram_" + metric_name + ".png")
         fig.show()
- 
+
+
 def draw_evaluation_results(file_paths):
     eval_tests_PSNR = []
     eval_trains_PSNR = []
     test_iterations = []
     train_iterations = []
-    # Evaluating test: 
+    # Evaluating test:
     for file_path in file_paths:
         lines = open(file_path, "r").readlines()
         eval_test_PSNR = []
@@ -2534,26 +2972,30 @@ def draw_evaluation_results(file_paths):
 
     # draw the two figures on the same graph.
     fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(20, 10))
-    for file_path, eval_test_PSNR, iterations in zip(file_paths, eval_tests_PSNR, test_iterations):
+    for file_path, eval_test_PSNR, iterations in zip(
+        file_paths, eval_tests_PSNR, test_iterations
+    ):
         # x-axis is iteration
         # y-axis is PSNR
         ax[0].plot(iterations, eval_test_PSNR, label=file_path)
-    
-    ax[0].set_ylabel('PSNR')
-    secax = ax[0].secondary_yaxis('right')
-    secax.set_ylabel('PSNR')
-    ax[0].legend(loc='lower right')
+
+    ax[0].set_ylabel("PSNR")
+    secax = ax[0].secondary_yaxis("right")
+    secax.set_ylabel("PSNR")
+    ax[0].legend(loc="lower right")
     ax[0].set_title("Evaluating test PSNR")
 
-    for file_path, eval_train_PSNR, iterations in zip(file_paths, eval_trains_PSNR, train_iterations):
+    for file_path, eval_train_PSNR, iterations in zip(
+        file_paths, eval_trains_PSNR, train_iterations
+    ):
         # x-axis is iteration
         # y-axis is PSNR
         ax[1].plot(iterations, eval_train_PSNR, label=file_path)
 
-    ax[1].set_ylabel('PSNR')
-    secax = ax[1].secondary_yaxis('right')
-    secax.set_ylabel('PSNR')
-    ax[1].legend(loc='lower right')
+    ax[1].set_ylabel("PSNR")
+    secax = ax[1].secondary_yaxis("right")
+    secax.set_ylabel("PSNR")
+    ax[1].legend(loc="lower right")
     ax[1].set_title("Evaluating train PSNR")
 
     # #only train
@@ -2567,7 +3009,7 @@ def draw_evaluation_results(file_paths):
     # ax.set_title("Evaluating train PSNR")
 
     folder = "/".join(file_paths[0].split("/")[:-1]) + "/"
-    plt.savefig(folder+"compare_evaluation_results.png")
+    plt.savefig(folder + "compare_evaluation_results.png")
 
 
 def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=True):
@@ -2581,7 +3023,9 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
         "ws=4_rk=3",
     ]
 
-    strategy_history_rk0 = json.load(open(folder + "strategy_history_ws=4_rk=0.json", "r"))
+    strategy_history_rk0 = json.load(
+        open(folder + "strategy_history_ws=4_rk=0.json", "r")
+    )
 
     # get map_iteration_to_epoch
     map_iter_to_epoch = {}
@@ -2590,8 +3034,8 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
     log_file = open(folder + "python_ws=4_rk=0.log", "r").readlines()
     for line in log_file:
         if line.startswith("iteration "):
-            iteration += 1 # iteration starts from 1. 
-            map_iter_to_epoch[iteration] = epoch  # epoch starts from 0. 
+            iteration += 1  # iteration starts from 1.
+            map_iter_to_epoch[iteration] = epoch  # epoch starts from 0.
         if line.startswith("epoch "):
             epoch += 1
 
@@ -2612,20 +3056,22 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
             if "densify_and_prune. " in line:
                 cur_n_3dgs = int(line.split("Now num of 3dgs: ")[1].split(".")[0])
         return map_iteration_to_n_3dgs, map_epoch_to_n_3dgs
+
     rki_map_iter_to_n_3dgs = []
     rki_map_epoch_to_n_3dgs = []
     for suffix in suffix_list:
         file_path = folder + f"python_{suffix}.log"
-        map_iteration_to_n_3dgs, map_epoch_to_n_3dgs = get_map_to_n_3dgs_for_a_worker(file_path)
+        map_iteration_to_n_3dgs, map_epoch_to_n_3dgs = get_map_to_n_3dgs_for_a_worker(
+            file_path
+        )
         rki_map_iter_to_n_3dgs.append(map_iteration_to_n_3dgs)
         rki_map_epoch_to_n_3dgs.append(map_epoch_to_n_3dgs)
-
 
     def draw_3():
         # if file exists
         if os.path.exists(folder + "n_3dgs.png"):
             return
-        
+
         # change y axis to be log mode.
 
         max_size = np.array(rki_map_epoch_to_n_3dgs).max()
@@ -2642,9 +3088,9 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
                 label=f"rk={rk}'s n_3dgs'",
             )
 
-        ax[0].set_xlabel('epoch', fontsize=25)
-        ax[0].set_ylabel('count', fontsize=25)
-        ax[0].legend(loc='lower right', fontsize=25)
+        ax[0].set_xlabel("epoch", fontsize=25)
+        ax[0].set_ylabel("count", fontsize=25)
+        ax[0].legend(loc="lower right", fontsize=25)
         ax[0].xaxis.set_major_locator(MultipleLocator(5))
         ax[0].yaxis.set_major_locator(MultipleLocator(y_axis_interval))
         ax[0].set_title("n_3dgs Changes During Training", fontsize=25)
@@ -2657,13 +3103,15 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
             color="black",
             linewidth=5,
         )
-        ax[1].set_xlabel('epoch', fontsize=25)
-        ax[1].set_ylabel('count', fontsize=25)
-        ax[1].legend(loc='lower right', fontsize=25)
+        ax[1].set_xlabel("epoch", fontsize=25)
+        ax[1].set_ylabel("count", fontsize=25)
+        ax[1].legend(loc="lower right", fontsize=25)
         ax[1].xaxis.set_major_locator(MultipleLocator(5))
         ax[1].set_title("sum 3dgs among 4 workers", fontsize=25)
 
-        rki_map_epoch_to_n_3dgs_percent = np.array(rki_map_epoch_to_n_3dgs) / np.array(rki_map_epoch_to_n_3dgs).sum(axis=0, keepdims=True)
+        rki_map_epoch_to_n_3dgs_percent = np.array(rki_map_epoch_to_n_3dgs) / np.array(
+            rki_map_epoch_to_n_3dgs
+        ).sum(axis=0, keepdims=True)
 
         for rk in range(4):
             ax[2].plot(
@@ -2672,15 +3120,18 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
                 label=f"rk={rk}'s n_3dgs percent",
             )
         max_y = rki_map_epoch_to_n_3dgs_percent.max()
-        ax[2].set_xlabel('epoch', fontsize=25)
-        ax[2].set_ylabel('percentage', fontsize=25)
-        ax[2].legend(loc='lower right', fontsize=25)
+        ax[2].set_xlabel("epoch", fontsize=25)
+        ax[2].set_ylabel("percentage", fontsize=25)
+        ax[2].legend(loc="lower right", fontsize=25)
         ax[2].xaxis.set_major_locator(MultipleLocator(5))
-        ax[2].yaxis.set_major_locator(MultipleLocator(round(max_y/10, 2)))
-        ax[2].set_ylim(0, max_y*2)
-        ax[2].set_title("(local n_3dgs) / (global n_edgs) Changes During Training", fontsize=25)
+        ax[2].yaxis.set_major_locator(MultipleLocator(round(max_y / 10, 2)))
+        ax[2].set_ylim(0, max_y * 2)
+        ax[2].set_title(
+            "(local n_3dgs) / (global n_edgs) Changes During Training", fontsize=25
+        )
 
         plt.savefig(folder + "n_3dgs.png")
+
     if draw3:
         draw_3()
 
@@ -2689,7 +3140,7 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
         if os.path.exists(folder + f"i2j_send_size_image_{image_id}.png"):
             return
         print("Generating ", folder + f"i2j_send_size_image_{image_id}.png")
-        
+
         max_size = np.array(all_i2jsend_size).max()
         max_size = max_size // 10000 * 10000 + 10000
         y_axis_interval = max_size // 20 // 1000 * 1000
@@ -2712,7 +3163,7 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
                     ax[i][j].set_ylabel("n_3dgs", fontsize=24)
                 ax[i][j].xaxis.set_major_locator(MultipleLocator(10))
                 ax[i][j].yaxis.set_major_locator(MultipleLocator(y_axis_interval))
-                ax[i][j].tick_params(axis='both', which='major', labelsize=22)
+                ax[i][j].tick_params(axis="both", which="major", labelsize=22)
                 ax[i][j].set_ylim(0, max_size)
 
         plt.savefig(folder + f"i2j_send_size_image_{image_id}.png")
@@ -2721,20 +3172,23 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
         # if file exists
         if os.path.exists(folder + f"i2j_send_size_image_{image_id}_distribution.png"):
             return
-        print("Generating ", folder + f"i2j_send_size_image_{image_id}_distribution.png")
+        print(
+            "Generating ", folder + f"i2j_send_size_image_{image_id}_distribution.png"
+        )
 
         # 4 by 4 grid and each subplot is a line chart.
         fig, ax = plt.subplots(nrows=2, ncols=4, figsize=(40, 20))
         # seperate the first row and the second row by a blank line.
         fig.subplots_adjust(hspace=1)
 
-
         all_i2jsend_size_np = np.array(all_i2jsend_size)
 
         # first row is the send volume distribution of i2j_send_size.
         for i in range(4):
             # = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-1, keepdims=True)
-            distribution_along_row = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-1, keepdims=True)
+            distribution_along_row = all_i2jsend_size_np / all_i2jsend_size_np.sum(
+                axis=-1, keepdims=True
+            )
             ax[0][i].set_title(f"gpu_{i}_send_volume_distribution", fontsize=30)
             ax[0][i].set_xlabel("epoch", fontsize=24)
             if i == 0:
@@ -2750,12 +3204,14 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
             ax[0][i].xaxis.set_major_locator(MultipleLocator(10))
             ax[0][i].yaxis.set_major_locator(MultipleLocator(0.1))
             ax[0][i].set_ylim(0, 1.0)
-            ax[0][i].tick_params(axis='both', which='major', labelsize=22)
-            ax[0][i].legend(loc='upper right')
+            ax[0][i].tick_params(axis="both", which="major", labelsize=22)
+            ax[0][i].legend(loc="upper right")
 
         # Second row is the receive volume distribution of i2j_send_size.
         for i in range(4):
-            distribution_along_column = all_i2jsend_size_np / all_i2jsend_size_np.sum(axis=-2, keepdims=True)
+            distribution_along_column = all_i2jsend_size_np / all_i2jsend_size_np.sum(
+                axis=-2, keepdims=True
+            )
             ax[1][i].set_title(f"gpu_{i}_recv_volume_distribution", fontsize=30)
             ax[1][i].set_xlabel("epoch", fontsize=24)
             if i == 0:
@@ -2771,8 +3227,8 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
             ax[1][i].xaxis.set_major_locator(MultipleLocator(10))
             ax[1][i].yaxis.set_major_locator(MultipleLocator(0.1))
             ax[1][i].set_ylim(0, 1.0)
-            ax[1][i].tick_params(axis='both', which='major', labelsize=22)
-            ax[1][i].legend(loc='upper right', fontsize=20)
+            ax[1][i].tick_params(axis="both", which="major", labelsize=22)
+            ax[1][i].legend(loc="upper right", fontsize=20)
 
         plt.savefig(folder + f"i2j_send_size_image_{image_id}_distribution.png")
 
@@ -2780,14 +3236,15 @@ def i2jsend_size_(folder, working_image_ids=[0], draw1=True, draw2=True, draw3=T
         cur_strategy_history_rk0 = strategy_history_rk0[str(image_id)]
         all_i2jsend_size = []
         for epoch_id in range(len(cur_strategy_history_rk0)):
-            all_i2jsend_size.append(cur_strategy_history_rk0[epoch_id]["strategy"]["i2j_send_size"])
+            all_i2jsend_size.append(
+                cur_strategy_history_rk0[epoch_id]["strategy"]["i2j_send_size"]
+            )
 
         if draw1:
             draw_1(image_id, all_i2jsend_size)
         if draw2:
             draw_2(image_id, all_i2jsend_size)
         pass
-    
 
 
 def analyze_3dgs_change(folder):
@@ -2832,10 +3289,14 @@ def analyze_3dgs_change(folder):
 
             assert len(iterations) % n_image_in_this_epoch == 0
 
-            n_3dgs_every_epoch.append(cur_n_3dgs/n_image_in_this_epoch)
-            visible_3dgs_every_epoch.append(cur_visible_3dgs/n_image_in_this_epoch)
-            ave_3dgs_radii_every_epoch.append(cur_ave_3dgs_radii/n_image_in_this_epoch)
-            ave_3dgs_grad_norm_every_epoch.append(cur_ave_3dgs_grad_norm/n_image_in_this_epoch)
+            n_3dgs_every_epoch.append(cur_n_3dgs / n_image_in_this_epoch)
+            visible_3dgs_every_epoch.append(cur_visible_3dgs / n_image_in_this_epoch)
+            ave_3dgs_radii_every_epoch.append(
+                cur_ave_3dgs_radii / n_image_in_this_epoch
+            )
+            ave_3dgs_grad_norm_every_epoch.append(
+                cur_ave_3dgs_grad_norm / n_image_in_this_epoch
+            )
             n_image_in_this_epoch = 0
             cur_n_3dgs = 0
             cur_visible_3dgs = 0
@@ -2850,15 +3311,21 @@ def analyze_3dgs_change(folder):
             for rk in range(4):
                 cur_line = data[rk][line_id]
                 local_n_3dgs += int(cur_line.split("local_n_3dgs: ")[1].split(";")[0])
-                local_visible_3dgs += int(cur_line.split("local_visible_3dgs: ")[1].split(";")[0])
-                local_sum_3dgs_radii += float(cur_line.split("local_sum_3dgs_radii: ")[1].split(";")[0])
-                local_sum_3dgs_grad_norm += float(cur_line.split("local_sum_3dgs_grad_norm: ")[1].split(";")[0])
+                local_visible_3dgs += int(
+                    cur_line.split("local_visible_3dgs: ")[1].split(";")[0]
+                )
+                local_sum_3dgs_radii += float(
+                    cur_line.split("local_sum_3dgs_radii: ")[1].split(";")[0]
+                )
+                local_sum_3dgs_grad_norm += float(
+                    cur_line.split("local_sum_3dgs_grad_norm: ")[1].split(";")[0]
+                )
 
             cur_n_3dgs += local_n_3dgs
             cur_visible_3dgs += local_visible_3dgs
-            cur_ave_3dgs_radii += local_sum_3dgs_radii/local_visible_3dgs
-            cur_ave_3dgs_grad_norm += local_sum_3dgs_grad_norm/local_visible_3dgs
-        
+            cur_ave_3dgs_radii += local_sum_3dgs_radii / local_visible_3dgs
+            cur_ave_3dgs_grad_norm += local_sum_3dgs_grad_norm / local_visible_3dgs
+
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(20, 20))
     fig.subplots_adjust(hspace=0.5)
     ax[0].plot(epochs, n_3dgs_every_epoch, label="n_of_3dgs")
@@ -2866,26 +3333,29 @@ def analyze_3dgs_change(folder):
     # set y axis to be log mode.
     # ax[0].set_yscale('log')
     ax[0].set_title("n_of_3dgs and n_of_visible_3dgs", fontsize=24)
-    ax[0].set_xlabel('epoch', fontsize=20)
-    ax[0].set_ylabel('count', fontsize=20)
+    ax[0].set_xlabel("epoch", fontsize=20)
+    ax[0].set_ylabel("count", fontsize=20)
     ax[0].xaxis.set_major_locator(MultipleLocator(3))
-    ax[0].legend(loc='lower right', fontsize=20)
+    ax[0].legend(loc="lower right", fontsize=20)
 
     ax[1].plot(epochs, ave_3dgs_radii_every_epoch, label="ave_3dgs_radii")
     ax[1].set_title("average radii of visible 3dgs' covered area", fontsize=24)
-    ax[1].set_xlabel('epoch', fontsize=20)
-    ax[1].set_ylabel('radii', fontsize=20)
+    ax[1].set_xlabel("epoch", fontsize=20)
+    ax[1].set_ylabel("radii", fontsize=20)
     ax[1].xaxis.set_major_locator(MultipleLocator(3))
-    ax[1].legend(loc='upper right', fontsize=20)
+    ax[1].legend(loc="upper right", fontsize=20)
 
     ax[2].plot(epochs, ave_3dgs_grad_norm_every_epoch, label="ave_3dgs_grad_norm")
-    ax[2].set_title("average grad_norm of visible 3dgs position on the screen", fontsize=24)
-    ax[2].set_xlabel('epoch', fontsize=20)
-    ax[2].set_ylabel('grad_norm', fontsize=20)
+    ax[2].set_title(
+        "average grad_norm of visible 3dgs position on the screen", fontsize=24
+    )
+    ax[2].set_xlabel("epoch", fontsize=20)
+    ax[2].set_ylabel("grad_norm", fontsize=20)
     ax[2].xaxis.set_major_locator(MultipleLocator(3))
-    ax[2].legend(loc='upper right', fontsize=20)
+    ax[2].legend(loc="upper right", fontsize=20)
 
     plt.savefig(folder + "analyze_3dgs_change.png")
+
 
 def redis_mode(folder):
     suffix_list = [
@@ -2919,10 +3389,11 @@ def redis_mode(folder):
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
     delete_all_file_paths(file_paths)
 
+
 def compare_total_communication_volume_and_time(save_folder, folders):
     dict_i2jsend_stats = {
-        "all_to_all_ave" : {},
-        "all_to_all_max_ave" : {},
+        "all_to_all_ave": {},
+        "all_to_all_max_ave": {},
     }
     for folder in folders:
         expe_name = folder.split("/")[-2]
@@ -2934,16 +3405,33 @@ def compare_total_communication_volume_and_time(save_folder, folders):
         python_time_df = pd.read_csv(python_time_csv)
         python_time_df = python_time_df[python_time_df["ws"] == 4]
         # get the column `forward_all_to_all_communication`
-        forward_all_to_all_communication = python_time_df["forward_all_to_all_communication"].to_list()
-        forward_all_to_all_communication_ave = sum(forward_all_to_all_communication) / len(forward_all_to_all_communication)
+        forward_all_to_all_communication = python_time_df[
+            "forward_all_to_all_communication"
+        ].to_list()
+        forward_all_to_all_communication_ave = sum(
+            forward_all_to_all_communication
+        ) / len(forward_all_to_all_communication)
         forward_all_to_all_communication_max = []
         for i in range(0, len(forward_all_to_all_communication), 4):
-            forward_all_to_all_communication_max.append(max(forward_all_to_all_communication[i:i+4]))
-        forward_all_to_all_communication_max_ave = sum(forward_all_to_all_communication_max) / len(forward_all_to_all_communication_max)
-        dict_i2jsend_stats["all_to_all_ave"][expe_name] = forward_all_to_all_communication_ave
-        dict_i2jsend_stats["all_to_all_max_ave"][expe_name] = forward_all_to_all_communication_max_ave
+            forward_all_to_all_communication_max.append(
+                max(forward_all_to_all_communication[i : i + 4])
+            )
+        forward_all_to_all_communication_max_ave = sum(
+            forward_all_to_all_communication_max
+        ) / len(forward_all_to_all_communication_max)
+        dict_i2jsend_stats["all_to_all_ave"][
+            expe_name
+        ] = forward_all_to_all_communication_ave
+        dict_i2jsend_stats["all_to_all_max_ave"][
+            expe_name
+        ] = forward_all_to_all_communication_max_ave
 
-    json.dump(dict_i2jsend_stats, open(save_folder + "compare_communication_stats.json", "w"), indent=4)
+    json.dump(
+        dict_i2jsend_stats,
+        open(save_folder + "compare_communication_stats.json", "w"),
+        indent=4,
+    )
+
 
 def average_csv(file_path, save_path):
     df_all_ws = pd.read_csv(file_path)
@@ -2965,13 +3453,14 @@ def average_csv(file_path, save_path):
             line_id = 0
             new_col_data = []
             while line_id < len(df):
-                new_col_data.append(col_data[line_id:line_id+ws].sum())
+                new_col_data.append(col_data[line_id : line_id + ws].sum())
                 line_id += ws
             # average
             data_to_save_ws[column] = round(np.mean(new_col_data), 3)
         data_to_save[f"ws={ws}"] = data_to_save_ws
     # json.dump(data_to_save, open(save_path, "w"), indent=4)
     return data_to_save
+
 
 def average_gpu_python_time_csv(gpu_file_path, python_file_path, save_path):
     if os.path.exists(gpu_file_path):
@@ -2989,9 +3478,9 @@ def average_gpu_python_time_csv(gpu_file_path, python_file_path, save_path):
         "python": python_data,
     }
     json.dump(data, open(save_path, "w"), indent=4)
-        
 
-def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
+
+def analyze_time(folder, process_iterations=[i for i in range(51, 7000, 50)]):
     # suffix_list = [
     #     "ws=1_rk=0",
     #     "ws=4_rk=0",
@@ -3027,13 +3516,18 @@ def analyze_time(folder, process_iterations = [i for i in range(51, 7000, 50)]):
     merge_csv_which_have_same_columns(file_paths, folder + f"merged_python_time.csv")
     delete_all_file_paths(file_paths)
     # average_csv(folder + f"merged_python_time.csv", folder + f"averaged_python_time.json")
-    average_gpu_python_time_csv(folder + f"merged_gpu_time.csv", folder + f"merged_python_time.csv", folder + f"averaged_time.json")
+    average_gpu_python_time_csv(
+        folder + f"merged_gpu_time.csv",
+        folder + f"merged_python_time.csv",
+        folder + f"averaged_time.json",
+    )
+
 
 def compare_1gpu_and_4gpu_time(file1, file2, column, save_folder):
     if not os.path.exists(file1) or not os.path.exists(file2):
         return
 
-    if os.path.exists(save_folder+f"/compare_1gpu_and_4gpu_{column}.csv"):
+    if os.path.exists(save_folder + f"/compare_1gpu_and_4gpu_{column}.csv"):
         return
     df1 = pd.read_csv(file1)
     df2 = pd.read_csv(file2)
@@ -3045,50 +3539,79 @@ def compare_1gpu_and_4gpu_time(file1, file2, column, save_folder):
         column1 = column
         column4 = column
 
-
     df1_line_start = 0
     df4_line_start = 0
 
     # df_compare = pd.DataFrame(columns=["iteration", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.sum)", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
-    df_compare = pd.DataFrame(columns=["iteration", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
+    df_compare = pd.DataFrame(
+        columns=[
+            "iteration",
+            "1gpu",
+            "4gpu.sum",
+            "4gpu.max",
+            "1gpu/(4gpu.max)",
+            "1gpu/(4gpu.ave)",
+        ]
+    )
     iterations = []
-    while df1_line_start<len(df1) and df4_line_start<len(df2):
+    while df1_line_start < len(df1) and df4_line_start < len(df2):
         # experiments/analyze_time_train/gpu_time_it=251.csv
-        cur_iteration = int(df1.iloc[df1_line_start]["file_path"].split("/")[-1].split("=")[-1].split(".")[0])
+        cur_iteration = int(
+            df1.iloc[df1_line_start]["file_path"]
+            .split("/")[-1]
+            .split("=")[-1]
+            .split(".")[0]
+        )
         iterations.append(cur_iteration)
         _1gpu = df1.iloc[df1_line_start][column1]
-        _4gpu_sum = df2.iloc[df4_line_start:df4_line_start+4][column4].sum()
-        _4gpu_max = df2.iloc[df4_line_start:df4_line_start+4][column4].max()
-        _4gpu_ave = df2.iloc[df4_line_start:df4_line_start+4][column4].mean()
+        _4gpu_sum = df2.iloc[df4_line_start : df4_line_start + 4][column4].sum()
+        _4gpu_max = df2.iloc[df4_line_start : df4_line_start + 4][column4].max()
+        _4gpu_ave = df2.iloc[df4_line_start : df4_line_start + 4][column4].mean()
         # round to 2 digits
-        df_compare = df_compare._append({
-            "iteration": cur_iteration,
-            "1gpu": round(_1gpu, 2),
-            "4gpu.sum": round(_4gpu_sum, 2),
-            "4gpu.max": round(_4gpu_max, 2),
-            # "1gpu/(4gpu.sum)": round(_1gpu/_4gpu_sum, 2),
-            "1gpu/(4gpu.max)": round(_1gpu/_4gpu_max, 2),
-            "1gpu/(4gpu.ave)": round(_1gpu/_4gpu_ave, 2),
-        }, ignore_index=True)
+        df_compare = df_compare._append(
+            {
+                "iteration": cur_iteration,
+                "1gpu": round(_1gpu, 2),
+                "4gpu.sum": round(_4gpu_sum, 2),
+                "4gpu.max": round(_4gpu_max, 2),
+                # "1gpu/(4gpu.sum)": round(_1gpu/_4gpu_sum, 2),
+                "1gpu/(4gpu.max)": round(_1gpu / _4gpu_max, 2),
+                "1gpu/(4gpu.ave)": round(_1gpu / _4gpu_ave, 2),
+            },
+            ignore_index=True,
+        )
 
         df1_line_start += 1 + 1
         df4_line_start += 4 + 1
 
     # the last row df_compare is average of all rows in df_compare
-    df_compare = df_compare._append({
-        "iteration": "average",
-        "1gpu": round(df_compare["1gpu"].mean(), 2),
-        "4gpu.sum": round(df_compare["4gpu.sum"].mean(), 2),
-        "4gpu.max": round(df_compare["4gpu.max"].mean(), 2),
-        # "1gpu/(4gpu.sum)": round(df_compare["1gpu/(4gpu.sum)"].mean(), 2),
-        "1gpu/(4gpu.max)": round(df_compare["1gpu/(4gpu.max)"].mean(), 2),
-        "1gpu/(4gpu.ave)": round(df_compare["1gpu/(4gpu.ave)"].mean(), 2),
-    }, ignore_index=True)
+    df_compare = df_compare._append(
+        {
+            "iteration": "average",
+            "1gpu": round(df_compare["1gpu"].mean(), 2),
+            "4gpu.sum": round(df_compare["4gpu.sum"].mean(), 2),
+            "4gpu.max": round(df_compare["4gpu.max"].mean(), 2),
+            # "1gpu/(4gpu.sum)": round(df_compare["1gpu/(4gpu.sum)"].mean(), 2),
+            "1gpu/(4gpu.max)": round(df_compare["1gpu/(4gpu.max)"].mean(), 2),
+            "1gpu/(4gpu.ave)": round(df_compare["1gpu/(4gpu.ave)"].mean(), 2),
+        },
+        ignore_index=True,
+    )
 
-    df_compare.to_csv(save_folder+f"/compare_1gpu_and_4gpu_{column}.csv", index=False)
+    df_compare.to_csv(save_folder + f"/compare_1gpu_and_4gpu_{column}.csv", index=False)
+
 
 def merged_compare_1gpu_and_4gpu_time(columns, folder):
-    df = pd.DataFrame(columns=["name", "1gpu", "4gpu.sum", "4gpu.max", "1gpu/(4gpu.max)", "1gpu/(4gpu.ave)"])
+    df = pd.DataFrame(
+        columns=[
+            "name",
+            "1gpu",
+            "4gpu.sum",
+            "4gpu.max",
+            "1gpu/(4gpu.max)",
+            "1gpu/(4gpu.ave)",
+        ]
+    )
 
     # average scaling for different components in the training process.
     for column in columns:
@@ -3096,16 +3619,20 @@ def merged_compare_1gpu_and_4gpu_time(columns, folder):
         if not os.path.exists(csv_path):
             continue
         df_compare = pd.read_csv(csv_path)
-        df = df._append({
-            "name": column,
-            "1gpu": df_compare.iloc[-1]["1gpu"],
-            "4gpu.sum": df_compare.iloc[-1]["4gpu.sum"],
-            "4gpu.max": df_compare.iloc[-1]["4gpu.max"],
-            "1gpu/(4gpu.max)": df_compare.iloc[-1]["1gpu/(4gpu.max)"],
-            "1gpu/(4gpu.ave)": df_compare.iloc[-1]["1gpu/(4gpu.ave)"],
-        }, ignore_index=True)
-    
+        df = df._append(
+            {
+                "name": column,
+                "1gpu": df_compare.iloc[-1]["1gpu"],
+                "4gpu.sum": df_compare.iloc[-1]["4gpu.sum"],
+                "4gpu.max": df_compare.iloc[-1]["4gpu.max"],
+                "1gpu/(4gpu.max)": df_compare.iloc[-1]["1gpu/(4gpu.max)"],
+                "1gpu/(4gpu.ave)": df_compare.iloc[-1]["1gpu/(4gpu.ave)"],
+            },
+            ignore_index=True,
+        )
+
     df.to_csv(folder + "/merged_compare_1gpu_and_4gpu.csv", index=False)
+
 
 def compare_different_block_sizes(baseline_folder, folders):
     step_names_to_compare = [
@@ -3113,7 +3640,7 @@ def compare_different_block_sizes(baseline_folder, folders):
         "50 SortPairs time",
         "70 render time",
         "b10 render time",
-        "b20 preprocess time"
+        "b20 preprocess time",
     ]
 
     def get_BLOCK_sizes_and_end2end_throughput(folder):
@@ -3133,18 +3660,24 @@ def compare_different_block_sizes(baseline_folder, folders):
             if "cuda_block_y" in line:
                 BLOCK_Y = int(line.split("cuda_block_y: ")[1].split(";")[0])
             if "one_dim_block_size" in line:
-                ONE_DIM_BLOCK_SIZE = int(line.split("one_dim_block_size: ")[1].split(";")[0])
+                ONE_DIM_BLOCK_SIZE = int(
+                    line.split("one_dim_block_size: ")[1].split(";")[0]
+                )
             # end2end total_time: 687.932720 ms, iterations: 30000, throughput 43.61 it/s
             if ", throughput " in line:
-                end2end_throughput = float(line.split(", throughput ")[1].split(" it/s")[0])
+                end2end_throughput = float(
+                    line.split(", throughput ")[1].split(" it/s")[0]
+                )
             # [ITER 30000] Evaluating train: L1 0.036896323785185814 PSNR 24.66712532043457
             if "Evaluating train: L1" in line:
-                L1 = round(float(line.split("Evaluating train: L1 ")[1].split(" PSNR")[0]), 3)
+                L1 = round(
+                    float(line.split("Evaluating train: L1 ")[1].split(" PSNR")[0]), 3
+                )
                 PSNR = round(float(line.split(" PSNR ")[1].strip("\n")), 3)
         return BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE, end2end_throughput, L1, PSNR
 
     def get_step_times(folder, step_names_to_compare):
-        #folder+averaged_time.json
+        # folder+averaged_time.json
         json_data = json.load(open(folder + "averaged_time.json", "r"))
         step_times = []
         for name in step_names_to_compare:
@@ -3154,27 +3687,46 @@ def compare_different_block_sizes(baseline_folder, folders):
                 step_times.append(json_data["gpu"]["ws=4"][name])
         return step_times
 
-    df = pd.DataFrame(columns=
-                ["experiment_name", "BLOCK_X", "BLOCK_Y", "ONE_DIM_BLOCK_SIZE", "end2end_throughput", "L1", "PSNR"]
-                +step_names_to_compare)
+    df = pd.DataFrame(
+        columns=[
+            "experiment_name",
+            "BLOCK_X",
+            "BLOCK_Y",
+            "ONE_DIM_BLOCK_SIZE",
+            "end2end_throughput",
+            "L1",
+            "PSNR",
+        ]
+        + step_names_to_compare
+    )
     all_folders = [baseline_folder] + folders
     for folder in all_folders:
-        BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE, end2end_throughput, L1, PSNR = get_BLOCK_sizes_and_end2end_throughput(folder)
+        BLOCK_X, BLOCK_Y, ONE_DIM_BLOCK_SIZE, end2end_throughput, L1, PSNR = (
+            get_BLOCK_sizes_and_end2end_throughput(folder)
+        )
         step_times = get_step_times(folder, step_names_to_compare)
-        df = df._append({
-            "experiment_name": folder.split("/")[-2],
-            "BLOCK_X": BLOCK_X,
-            "BLOCK_Y": BLOCK_Y,
-            "ONE_DIM_BLOCK_SIZE": ONE_DIM_BLOCK_SIZE,
-            "end2end_throughput": end2end_throughput,
-            "L1": L1,
-            "PSNR": PSNR,
-            **{step_names_to_compare[i]: step_times[i] for i in range(len(step_names_to_compare))}
-        }, ignore_index=True)
+        df = df._append(
+            {
+                "experiment_name": folder.split("/")[-2],
+                "BLOCK_X": BLOCK_X,
+                "BLOCK_Y": BLOCK_Y,
+                "ONE_DIM_BLOCK_SIZE": ONE_DIM_BLOCK_SIZE,
+                "end2end_throughput": end2end_throughput,
+                "L1": L1,
+                "PSNR": PSNR,
+                **{
+                    step_names_to_compare[i]: step_times[i]
+                    for i in range(len(step_names_to_compare))
+                },
+            },
+            ignore_index=True,
+        )
     df.to_csv(baseline_folder + "/compare_different_block_sizes.csv", index=False)
+
 
 def analyze_quality(folder):
     pass
+
 
 def get_final_n_3dgs(folder):
     data, iterations = extract_3dgs_count_from_python_log(folder)
@@ -3182,6 +3734,7 @@ def get_final_n_3dgs(folder):
     for key in data:
         n_3dgs += data[key][-1]
     return n_3dgs
+
 
 def get_all_evalutations(file_path):
     lines = open(file_path, "r").readlines()
@@ -3202,27 +3755,56 @@ def get_all_evalutations(file_path):
             eval_train_PSNR.append(float(line.split(" ")[-1]))
             eval_train_l1.append(float(line.split(" ")[-3]))
             train_iteration.append(int(line.split(" ")[1][:-1]))
-    return eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration
+    return (
+        eval_test_PSNR,
+        eval_train_PSNR,
+        eval_test_l1,
+        eval_train_l1,
+        test_iteration,
+        train_iteration,
+    )
+
 
 def get_final_evaluation(folder):
     suffixes = get_suffix_in_folder(folder)
-    eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
+    (
+        eval_test_PSNR,
+        eval_train_PSNR,
+        eval_test_l1,
+        eval_train_l1,
+        test_iteration,
+        train_iteration,
+    ) = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
     return eval_test_l1[-1], eval_test_PSNR[-1], eval_train_l1[-1], eval_train_PSNR[-1]
 
+
 def compare_n_3dgs(folders):
-    df = pd.DataFrame(columns=["experiment_name", "n_3dgs", "test_l1", "test_PSNR", "train_l1", "train_PSNR"])
+    df = pd.DataFrame(
+        columns=[
+            "experiment_name",
+            "n_3dgs",
+            "test_l1",
+            "test_PSNR",
+            "train_l1",
+            "train_PSNR",
+        ]
+    )
     for folder in folders:
         n_3dgs = get_final_n_3dgs(folder)
         test_l1, test_psnr, train_l1, train_psnr = get_final_evaluation(folder)
-        df = df._append({
-            "experiment_name": folder.split("/")[-2],
-            "n_3dgs": n_3dgs,
-            "test_l1": round(test_l1, 4),
-            "test_PSNR": round(test_psnr, 4),
-            "train_l1": round(train_l1, 4),
-            "train_PSNR": round(train_psnr, 4),
-        }, ignore_index=True)
+        df = df._append(
+            {
+                "experiment_name": folder.split("/")[-2],
+                "n_3dgs": n_3dgs,
+                "test_l1": round(test_l1, 4),
+                "test_PSNR": round(test_psnr, 4),
+                "train_l1": round(train_l1, 4),
+                "train_PSNR": round(train_psnr, 4),
+            },
+            ignore_index=True,
+        )
     df.to_csv(folders[0] + "/compare_final_results.csv", index=False)
+
 
 def extract_sum_3dgs_count_from_python_log(folder):
     rk2count_3dgs, iterations = extract_3dgs_count_from_python_log(folder)
@@ -3234,6 +3816,7 @@ def extract_sum_3dgs_count_from_python_log(folder):
         sum_3dgs_at_iterations.append(n)
     return sum_3dgs_at_iterations, iterations
 
+
 def loss_and_3dgs_curves(folders):
 
     fig, ax = plt.subplots(nrows=5, ncols=1, figsize=(30, 20))
@@ -3244,45 +3827,51 @@ def loss_and_3dgs_curves(folders):
             folder += "/"
         n_3dgs, iterations = extract_sum_3dgs_count_from_python_log(folder)
         suffixes = get_suffix_in_folder(folder)
-        eval_test_PSNR, eval_train_PSNR, eval_test_l1, eval_train_l1, test_iteration, train_iteration = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
+        (
+            eval_test_PSNR,
+            eval_train_PSNR,
+            eval_test_l1,
+            eval_train_l1,
+            test_iteration,
+            train_iteration,
+        ) = get_all_evalutations(folder + f"python_{suffixes[0]}.log")
 
         ax[0].plot(iterations, n_3dgs, label=folder.split("/")[-2])
         ax[1].plot(train_iteration, eval_train_l1, label=folder.split("/")[-2])
         ax[2].plot(train_iteration, eval_train_PSNR, label=folder.split("/")[-2])
         ax[3].plot(test_iteration, eval_test_l1, label=folder.split("/")[-2])
         ax[4].plot(test_iteration, eval_test_PSNR, label=folder.split("/")[-2])
-    
+
     ax[0].set_title("n_3dgs", fontsize=24)
-    ax[0].set_xlabel('iteration', fontsize=20)
-    ax[0].set_ylabel('count', fontsize=20)
-    ax[0].legend(loc='lower right', fontsize=20)
+    ax[0].set_xlabel("iteration", fontsize=20)
+    ax[0].set_ylabel("count", fontsize=20)
+    ax[0].legend(loc="lower right", fontsize=20)
 
     ax[1].set_title("train_l1", fontsize=24)
-    ax[1].set_xlabel('iteration', fontsize=20)
-    ax[1].set_ylabel('l1', fontsize=20)
-    ax[1].legend(loc='upper right', fontsize=20)
+    ax[1].set_xlabel("iteration", fontsize=20)
+    ax[1].set_ylabel("l1", fontsize=20)
+    ax[1].legend(loc="upper right", fontsize=20)
 
     ax[2].set_title("train_PSNR", fontsize=24)
-    ax[2].set_xlabel('iteration', fontsize=20)
-    ax[2].set_ylabel('PSNR', fontsize=20)
-    ax[2].legend(loc='lower right', fontsize=20)
+    ax[2].set_xlabel("iteration", fontsize=20)
+    ax[2].set_ylabel("PSNR", fontsize=20)
+    ax[2].legend(loc="lower right", fontsize=20)
 
     ax[3].set_title("test_l1", fontsize=24)
-    ax[3].set_xlabel('iteration', fontsize=20)
-    ax[3].set_ylabel('l1', fontsize=20)
-    ax[3].legend(loc='upper right', fontsize=20)
+    ax[3].set_xlabel("iteration", fontsize=20)
+    ax[3].set_ylabel("l1", fontsize=20)
+    ax[3].legend(loc="upper right", fontsize=20)
 
     ax[4].set_title("test_PSNR", fontsize=24)
-    ax[4].set_xlabel('iteration', fontsize=20)
-    ax[4].set_ylabel('PSNR', fontsize=20)
-    ax[4].legend(loc='lower right', fontsize=20)
+    ax[4].set_xlabel("iteration", fontsize=20)
+    ax[4].set_ylabel("PSNR", fontsize=20)
+    ax[4].legend(loc="lower right", fontsize=20)
 
     plt.savefig(folders[0] + "/loss_and_3dgs_curves.png")
 
 
 if __name__ == "__main__":
     # NOTE: folder_path must end with "/" !!!
-
 
     # python_timer_0()
     # python_timer_1()
@@ -3358,7 +3947,6 @@ if __name__ == "__main__":
     # adjust("experiments/repeat/adjust_2_garden4k_3/")
     # adjust_analyze_optimal("experiments/repeat/adjust_2_garden4k_3/")
 
-
     # compare_end2end_stats("experiments/adjust_baseline_garden4k_1/")
     # compare_garden_adjust_mode("experiments/adjust_baseline_garden4k_1/")
 
@@ -3414,7 +4002,6 @@ if __name__ == "__main__":
     # adjust("experiments/iteration_memory_4k_adjust2_4/")
     # adjust_analyze_optimal("experiments/iteration_memory_4k_adjust2_4/")
 
-
     # compare_end2end_stats(
     #     save_folder="experiments/iter_mem_bi_adjust1/",
     #     file_paths=[
@@ -3448,9 +4035,8 @@ if __name__ == "__main__":
     #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=0.log",
     #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=1.log",
     #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=2.log",
-    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=3.log",            
+    #         "experiments/iter_mem_bi_adjust2_5/python_ws=4_rk=3.log",
     #     ])
-
 
     # adjust("experiments/iter_mem_bi_adjust1/")
     # adjust_analyze_optimal("experiments/iter_mem_bi_adjust1/")
@@ -3460,7 +4046,6 @@ if __name__ == "__main__":
     # adjust_analyze_optimal("experiments/iter_mem_bi_adjust2_1n/")
     # adjust("experiments/iter_mem_bi_adjust2_4/")
     # adjust_analyze_optimal("experiments/iter_mem_bi_adjust2_4/")
-
 
     # compare_end2end_stats(
     #     save_folder="experiments/iter_mem_bi15_adjust1/",
@@ -3483,7 +4068,7 @@ if __name__ == "__main__":
     #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=2.log",
     #         "experiments/iter_mem_bi15_adjust2_4/python_ws=4_rk=3.log",
     #     ])
-    
+
     # adjust("experiments/iter_mem_bi15_adjust1/")
     # adjust_analyze_optimal("experiments/iter_mem_bi15_adjust1/")
     # adjust("experiments/iter_mem_bi15_adjust2_1/")
@@ -3516,7 +4101,6 @@ if __name__ == "__main__":
     # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_4/")
     # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust2_5/")
     # analyze_heuristics("experiments/heu_tiles_stats_gar_adjust4/")
-
 
     # compare_end2end_stats(
     #     save_folder="experiments/heu_tiles_stats_bi_adjust1/",
@@ -3580,8 +4164,6 @@ if __name__ == "__main__":
     # )
 
     ########################################################################
-
-
 
     # draw_epoch_loss(
     #     [
@@ -3667,7 +4249,6 @@ if __name__ == "__main__":
     # redis_mode("experiments/redis_mode_0/")
     # redis_mode("experiments/redis_mode_1/")
 
-
     # def mode_str(mode):
     #     if mode < 4:
     #         return str(mode)
@@ -3691,11 +4272,6 @@ if __name__ == "__main__":
     #         folders=[f"experiments/redis_mode_{scene}_{mode_str(mode)}/" for mode in range(5)]
     #     )
 
-
-
-
-
-
     # for file_path in ["experiments/analyze_time_train/",
     #              "experiments/analyze_time_garden/",
     #              "experiments/analyze_time_bicycle/"]:
@@ -3705,19 +4281,23 @@ if __name__ == "__main__":
     #         process_iterations
     #     )
 
-    columns_python = ["forward",
-                    "forward_prepare_gaussians",
-                    "forward_preprocess_gaussians",
-                    "forward_compute_locally",
-                    "forward_render_gaussians",
-                    "gt_image_load_to_gpu",
-                    "local_loss_computation",
-                    "optimizer_step",
-                    "backward"]
-    columns_gpu = ["70 render time",
-                    "50 SortPairs time",
-                    "b10 render time",
-                    "b20 preprocess time"]
+    columns_python = [
+        "forward",
+        "forward_prepare_gaussians",
+        "forward_preprocess_gaussians",
+        "forward_compute_locally",
+        "forward_render_gaussians",
+        "gt_image_load_to_gpu",
+        "local_loss_computation",
+        "optimizer_step",
+        "backward",
+    ]
+    columns_gpu = [
+        "70 render time",
+        "50 SortPairs time",
+        "b10 render time",
+        "b20 preprocess time",
+    ]
     # for col in columns_python:
     #     compare_1gpu_and_4gpu_time(
     #         "experiments/analyze_time_train/merged_python_time.csv",
@@ -3788,7 +4368,6 @@ if __name__ == "__main__":
     #         "experiments/analyze_time_train1_bx8by8_256/"
     #     )
 
-
     # compare_different_block_sizes(
     #     baseline_folder="experiments/redis_mode_train_1_adjust2/",
     #     folders=[
@@ -3800,9 +4379,8 @@ if __name__ == "__main__":
     #     ]
     # )
 
-    #dist_stra5_1
+    # dist_stra5_1
     # analyze_heuristics("experiments/dist_stra5_1/", working_image_ids=[0,10,20,30,40])
-
 
     # for folder in ["no_avoid_pixel_all2all_train",
     #                "avoid_pixel_all2all_train",
@@ -3829,7 +4407,6 @@ if __name__ == "__main__":
 
     # # draw_evaluation_results([f"experiments/{folder}/python_ws=1_rk=0.log" for folder in train_densify_folders])
 
-
     # train_densify_folders = [
     #     "train_drop0dot75_1gpu",
     #     "train_drop0dot5_1gpu",
@@ -3844,7 +4421,7 @@ if __name__ == "__main__":
     #     "train_den_to_15000_1gpu_t3",
     # ]
     # compare_n_3dgs([f"experiments/{folder}/" for folder in train_densify_folders])
-    
+
     # train_densify_folders = [
     #     "bicycle_den_to_0",
     #     "bicycle_den_to_6000",
@@ -3889,5 +4466,3 @@ if __name__ == "__main__":
     loss_and_3dgs_curves(["/pscratch/sd/j/jy-nyu/final_expes/rub_16g_1_b16/"])
 
     pass
-
-
