@@ -167,7 +167,7 @@ class DistributionParams(ParamGroup):
         self.preload_dataset_to_gpu_threshold = (
             10  # unit is GB, by default 10GB memory limit for dataset.
         )
-        self.multiprocesses_image_loading = False
+        self.multiprocesses_image_loading = True
         self.num_train_cameras = -1
         self.num_test_cameras = -1
 

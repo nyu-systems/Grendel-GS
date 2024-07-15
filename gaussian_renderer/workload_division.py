@@ -858,9 +858,9 @@ def start_strategy_final(batched_cameras, strategy_history):
     if args.local_sampling:
         batched_strategies = []
         gpuid2tasks = [[] for _ in range(utils.DEFAULT_GROUP.size())]
-        bsz_each_gpu = args.bsz // utils.WORLD_SIZE
+        bsz_per_gpu = args.bsz // utils.WORLD_SIZE
         for idx, camera in enumerate(batched_cameras):
-            gpu_id = (idx // bsz_each_gpu) % utils.WORLD_SIZE
+            gpu_id = idx // bsz_per_gpu
             gpu_for_this_camera = [gpu_id]
             gpu_for_this_camera_tilelr = [(0, n_tiles_per_image)]
             gpuid2tasks[gpu_id].append((idx, 0, n_tiles_per_image))

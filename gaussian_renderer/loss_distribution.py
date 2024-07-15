@@ -2354,11 +2354,11 @@ def load_camera_from_cpu_to_all_gpu_for_eval(
                     camera.original_image = torch.zeros(
                         (3, utils.IMG_H, utils.IMG_W), dtype=torch.uint8, device="cuda"
                     )
-                    mask = args.bsz // utils.WORLD_SIZE
+                    bsz_per_gpu = args.bsz // utils.WORLD_SIZE
                     torch.distributed.scatter(
                         camera.original_image,
                         scatter_list=None,
-                        src=idx // mask,
+                        src=idx // bsz_per_gpu,
                         group=utils.IN_NODE_GROUP,
                     )
                 torch.distributed.barrier(group=utils.DEFAULT_GROUP)

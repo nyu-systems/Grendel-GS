@@ -84,30 +84,29 @@ def loadCam(args, id, cam_info, decompressed_image=None, return_image=False):
 
 
 def load_decompressed_image(params):
-    args, id, cam_info, resolution_scale = params
-    return loadCam(
-        args, id, cam_info, resolution_scale, decompressed_image=None, return_image=True
-    )
+    args, id, cam_info = params
+    return loadCam(args, id, cam_info, decompressed_image=None, return_image=True)
 
 
 # Modify this code to support shared_memory.SharedMemory to make inter-process communication faster
-def decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, args):
+def decompressed_images_from_camInfos_multiprocess(cam_infos, args):
     args = get_args()
     decompressed_images = []
     total_cameras = len(cam_infos)
 
     # Create a pool of processes
-    with multiprocessing.Pool(processes=16) as pool:
+    with multiprocessing.Pool(processes=2) as pool:
         # Prepare data for processing
-        tasks = [
-            (args, id, cam_info, resolution_scale)
-            for id, cam_info in enumerate(cam_infos)
-        ]
+        tasks = [(args, id, cam_info) for id, cam_info in enumerate(cam_infos)]
 
         # Map load_camera_data to the tasks
         # results = pool.map(load_decompressed_image, tasks)
         results = list(
-            tqdm(pool.imap(load_decompressed_image, tasks), total=total_cameras)
+            tqdm(
+                pool.imap(load_decompressed_image, tasks),
+                total=total_cameras,
+                disable=(utils.LOCAL_RANK != 0),
+            )
         )
 
         for id, result in enumerate(results):
@@ -212,9 +211,9 @@ def cameraList_from_camInfos(cam_infos, args):
     args = get_args()
 
     if args.multiprocesses_image_loading:
-        decompressed_images = [None for _ in cam_infos]
-        # FIXME: current multiprocess implementations do not have any speed up.
-        # decompressed_images = decompressed_images_from_camInfos_multiprocess(cam_infos, resolution_scale, args)
+        decompressed_images = decompressed_images_from_camInfos_multiprocess(
+            cam_infos, args
+        )
         # decompressed_images = decompressed_images_from_camInfos_multiprocess_sharedmem(cam_infos, resolution_scale, args)
     else:
         decompressed_images = [None for _ in cam_infos]
