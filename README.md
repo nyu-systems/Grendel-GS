@@ -65,6 +65,8 @@ For examples, with 4 GPU, Grendel-GS allows you to:
 <!-- 
 *Many more new features are developing now, following us!*
 -->
+> ### 📢 News 
+> - 7.15.2024 - We now support gsplat as the CUDA backend during training!
 
 > ### 🌟 Follow us for future updates! Interested in collaborating or contributing? [**Email us!**](mailto:hz3496@nyu.edu)
 
@@ -209,6 +211,8 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to
   Add this flag to use a MipNeRF360-style training/test split for evaluation.
   #### --bsz
   The batch size(the number of camera views) in single step training. ```1``` by default.
+  #### --backend
+  The CUDA backend to use in training. Valid options include ```diff``` ([diff-gaussian-rasterization](https://github.com/nyu-systems/diff-gaussian-rasterization)) and ```gsplat```. ```diff``` by default.
   #### --lr_scale_mode
   The mode of scaling learning rate given larger batch size. ```sqrt``` by default.
   #### --preload_dataset_to_gpu
