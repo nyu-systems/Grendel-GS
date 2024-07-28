@@ -192,12 +192,12 @@ Advantages of using our distributed implementation for gaussians splatting:
 
 For single-GPU non-distributed training with batch size of 1:
 ```shell
-python train.py -s <path to COLMAP dataset>
+python train.py -s <path to COLMAP dataset> --eval
 ```
 
 For 4 GPU distributed training and batch size of 4:
 ```shell
-torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to COLMAP dataset>
+torchrun --standalone --nnodes=1 --nproc-per-node=4 train.py --bsz 4 -s <path to COLMAP dataset> --eval
 ```
 
 <details>
