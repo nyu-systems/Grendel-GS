@@ -1469,7 +1469,7 @@ def gsplat_render_final(batched_screenspace_pkg, batched_strategies, tile_size=1
                     masks=compute_locally.unsqueeze(0),
                 )
 
-            rendered_image = rendered_image.squeeze(0).permute(2, 0, 1).contiguous()
+                rendered_image = rendered_image.squeeze(0).permute(2, 0, 1).contiguous()
             batched_rendered_image.append(rendered_image)
             batched_compute_locally.append(compute_locally)
 
