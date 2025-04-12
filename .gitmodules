@@ -6,4 +6,4 @@
 	url = git@github.com:nyu-systems/diff-gaussian-rasterization.git
 [submodule "submodules/gsplat"]
 	path = submodules/gsplat
-	url = git@github.com:alexis-mmm/gsplat.git
+	url = git@github.com:nerfstudio-project/gsplat.git
